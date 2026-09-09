@@ -589,7 +589,7 @@ Entrada: "cria uma campanha de conversas usando a página CaquiAI Loja" (ou "…
 ### S16-3b — Página SEM ser dita + acento + rótulo do objetivo (3 incidentes reais numa criação de conversas)
 Entrada: "cria uma campanha de conversas WhatsApp, ABO, 30/dia, 1 conjunto, 4 anúncios, público advantage, pausada" — **sem mencionar Página**.
 1. **Sentinela do modelo não pune.** O LLM às vezes manda um artefato (`:null`, `null`, `{}`) no campo `page` quando nada foi dito. `cleanPageQuery` agora **descarta** sentinelas/artefatos (núcleo alfanumérico vazio OU na denylist) → trata como "sem escolha" → usa a Página **padrão** do anúncio-base (a conta tem 1 Página → cria direto). Nunca mais "Não achei uma Página que bata com ':null'". ✓
-2. **Acento não separa.** Se o dono digitar o nome com acento diferente ("Autômato") e a Página for "Automato" (ou vice-versa), `matchPagesByQuery` casa (dobra por `NFD`+minúsculas, `foldForMatch`). Nunca mais "não achei 'Autômato'" tendo "Automato". ✓
+2. **Mesmo matcher fuzzy das outras entidades.** O casamento de Página por NOME usa o `resolveNamedMatch` (o mesmo de campanha/criativo): tolera **acento** ("Autômato"≡"Automato"), **caixa** ("AUTOMATO"), **typo** ("atomato") e **parcial/contenção** ("auto"), autoescolhendo com folga clara e perguntando quando ambíguo. Número segue por substring dos dígitos (o dono dá só os últimos). Nunca mais "não achei 'Autômato'" tendo "Automato". ✓
 3. **Rótulo humano do objetivo.** O eco diz "criar uma campanha de **conversa**" (via `goalNounPt`), **nunca** o id técnico cru "messaging_started" (§7/§13 — sem jargão/id pro dono). ✓
 
 ### S16-4 — Trocar a Página de um rascunho pendente (W2)

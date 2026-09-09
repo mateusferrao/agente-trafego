@@ -751,6 +751,12 @@ describe("matchPagesByQuery / pageChoiceLabel (picker de Página — W2)", () =>
     // e o inverso: query sem acento casa nome com acento.
     expect(matchPagesByQuery(pages, "consultorio").map((x) => x.pageId)).toEqual(["P3"]);
   });
+  it("mesmo matcher fuzzy das outras entidades: typo/caixa toleradas (resolveNamedMatch)", () => {
+    const p: PageInfo[] = [{ pageId: "PA", name: "Automato" }];
+    expect(matchPagesByQuery(p, "atomato").map((x) => x.pageId)).toEqual(["PA"]); // typo (falta 'u')
+    expect(matchPagesByQuery(p, "AUTOMATO").map((x) => x.pageId)).toEqual(["PA"]); // caixa
+    expect(matchPagesByQuery(p, "auto").map((x) => x.pageId)).toEqual(["PA"]); // parcial (contenção)
+  });
   it("número (dígitos, substring, mín. 6) → casa pela linha do WhatsApp", () => {
     expect(matchPagesByQuery(pages, "3491398").map((p) => p.pageId)).toEqual(["P1"]);
     expect(matchPagesByQuery(pages, "+55 (31) 99999-0000").map((p) => p.pageId)).toEqual(["P2"]);

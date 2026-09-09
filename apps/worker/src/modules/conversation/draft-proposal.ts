@@ -1767,16 +1767,6 @@ const MAX_PAGE_QUERY_LEN = 80;
  *  como "sem escolha" (usa a Página padrão), nunca como um nome a casar (senão "não achei :null"). */
 const SENTINEL_PAGE_QUERIES: ReadonlySet<string> = new Set(["null", "undefined", "nil", "none", "na", "false", "true", "page", "pagina"]);
 
-/** Normaliza pra casar Página sem depender de acento/caixa: minúsculas + remove diacríticos (NFD).
- *  "Autômato" e "Automato" batem (incidente real: o dono digitou com circunflexo, a Página não tinha). */
-function foldForMatch(s: string): string {
-  return s
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim();
-}
-
 /** Sanitiza a referência de Página vinda do LLM ANTES de casar/ecoar (§7/§13): colapsa pra UMA linha,
  *  tira caracteres de controle/formato, e descarta o que for vazio, longo demais (alucinação) OU um
  *  valor-sentinela/artefato (ex: `:null`, `null`, `{}`) → null. O caller trata null como "sem escolha"
@@ -1796,16 +1786,21 @@ export function cleanPageQuery(raw?: string | null): string | null {
   return oneLine;
 }
 
+/** Casa a Página pela referência do dono. NOME → o MESMO matcher fuzzy das outras entidades
+ *  (`resolveNamedMatch`: typo/acento/caixa/ordem de palavra toleradas — §13 reuso-primeiro, sem
+ *  matcher paralelo). NÚMERO → substring dos dígitos (o dono costuma dar só os últimos dígitos do
+ *  WhatsApp, que o match por nome não pega). Devolve `PageInfo[]`: o número casa direto; pro nome,
+ *  `one`→[1] (autoescolhe com folga) / `ambiguous`→[N] (o caller pergunta) / `none`→[]. */
 export function matchPagesByQuery(pages: readonly PageInfo[], query: string): PageInfo[] {
-  // casa por nome SEM depender de acento/caixa ("Autômato" bate "Automato") — incidente real.
-  const q = foldForMatch(query);
-  if (!q) return [];
   const digits = query.replace(/\D+/g, "");
-  return pages.filter((p) => {
-    const byName = p.name ? foldForMatch(p.name).includes(q) : false;
-    const byNumber = digits.length >= MIN_PHONE_MATCH_DIGITS && p.whatsappNumber ? p.whatsappNumber.includes(digits) : false;
-    return byName || byNumber;
-  });
+  if (digits.length >= MIN_PHONE_MATCH_DIGITS) {
+    const byNumber = pages.filter((p) => p.whatsappNumber?.includes(digits));
+    if (byNumber.length > 0) return byNumber; // 0 → cai pro nome (pode ser um nome com dígitos)
+  }
+  const m = resolveNamedMatch(pages, query, { name: (p) => p.name ?? null });
+  if (m.kind === "one") return [m.row];
+  if (m.kind === "ambiguous") return [...m.rows];
+  return [];
 }
 
 /** Rótulo de UMA Página pra listar na desambiguação (nome + WhatsApp quando houver). PURO. */
