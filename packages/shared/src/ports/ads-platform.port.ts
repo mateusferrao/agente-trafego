@@ -381,6 +381,10 @@ export interface AdsPlatformPort {
   getCampaignBudgetLayout(account: AdAccountRef, campaignId: string): Promise<CampaignBudgetLayout>;
   /** Saga de criação do zero — granular (a casca persiste ids parciais p/ retomada idempotente). */
   createCampaign(account: AdAccountRef, input: CreateCampaignInput): Promise<{ campaignId: string }>;
+  /** DELETE best-effort de uma campanha — limpa a órfã do-zero quando a criação falha DETERMINÍSTICA
+   *  (a saga do-zero não é atômica). `true` = apagou; `false` = a limpeza falhou (a órfã segue lá).
+   *  NUNCA lança (a limpeza não pode mascarar o erro original). */
+  deleteCampaign(account: AdAccountRef, campaignId: string): Promise<boolean>;
   /** `targetingFallback: true` = um `reuse_adset` foi pedido mas a fonte não estava disponível
    *  (caiu em Advantage+ amplo) — o caller usa isso pra avisar o dono, não fica silencioso. */
   createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string; targetingFallback: boolean }>;

@@ -15,6 +15,7 @@ import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
 import { applyActivation } from "./apply-activation.js";
+import { permanentMetaReason } from "../../lib/meta-failure.js";
 
 const ACTOR_AGENT = "agent";
 const USAGE_TYPE_CAMPAIGN_CREATED = "campaign_created";
@@ -270,12 +271,17 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
       return { kind: "blocked", reason: NOT_DUPLICABLE_REASON };
     }
     // G3: a saga do-zero NÃO é atômica (ao contrário da duplicação) — se parou depois de criar a
-    // campanha, sobrou uma campanha pausada e vazia na conta. Sinaliza pra o desfecho nomear o órfão
-    // (§7 nenhum lixo silencioso) — retomável (transiente) ou "ajuste/recrie" (determinístico).
-    const partialCampaign =
-      pausedDraft.kind !== "duplicate" && createdIds["campaignId"]
-        ? (pausedDraft.spec.campaignName ?? "a campanha nova")
-        : undefined;
+    // campanha, sobrou uma campanha pausada e vazia na conta. TRANSIENTE = retomável (o retry retoma dos
+    // ids parciais) → nomeia o órfão. DETERMINÍSTICO (B2) = o retry do mesmo spec sempre falha e a
+    // recriação duplicaria → ROLLBACK best-effort da campanha órfã (a saga do-zero fica atômica também
+    // nesse caso). Só nomeia o órfão se a limpeza falhar (a campanha segue lá).
+    const orphanCampaignId = pausedDraft.kind !== "duplicate" ? (createdIds["campaignId"] as string | undefined) : undefined;
+    let orphanRemains = Boolean(orphanCampaignId);
+    if (orphanCampaignId && permanentMetaReason(error) !== null) {
+      const deleted = await ports.ads.deleteCampaign(ref, orphanCampaignId);
+      if (deleted) orphanRemains = false;
+    }
+    const partialCampaign = orphanRemains ? (pausedDraft.spec.campaignName ?? "a campanha nova") : undefined;
     return { kind: "failed", error, ...(partialCampaign ? { partialCampaign } : {}) };
   }
 

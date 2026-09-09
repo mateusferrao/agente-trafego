@@ -584,6 +584,18 @@ export class MetaCreationService {
     }
   }
 
+  /** DELETE de uma campanha (best-effort) — usado pra limpar a órfã do-zero quando a criação falha de
+   *  forma DETERMINÍSTICA (a saga do-zero não é atômica). Retorna `true` se apagou; `false` se a limpeza
+   *  falhou (a órfã segue lá → a casca nomeia p/ o dono apagar). NUNCA lança. */
+  async deleteCampaign(account: AdAccountRef, campaignId: string): Promise<boolean> {
+    try {
+      await this.client.request({ method: "DELETE", path: campaignId, accessToken: account.accessToken });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Define o budget diário absoluto de uma entidade (unidade mínima). Idempotente (set). */
   async setEntityBudget(account: AdAccountRef, entityId: string, dailyBudgetMinor: number): Promise<void> {
     await this.client.request({

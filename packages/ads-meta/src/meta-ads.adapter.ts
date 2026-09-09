@@ -693,6 +693,10 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     return this.writeThroughGovernor(account, () => this.creation.createCampaign(account, input));
   }
 
+  async deleteCampaign(account: AdAccountRef, campaignId: string): Promise<boolean> {
+    return this.writeThroughGovernor(account, () => this.creation.deleteCampaign(account, campaignId));
+  }
+
   async createAdSet(account: AdAccountRef, input: Parameters<AdsPlatformPort["createAdSet"]>[1]) {
     return this.writeThroughGovernor(account, () => this.creation.createAdSet(account, input));
   }

@@ -499,6 +499,18 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     expect(decodeURIComponent(adsetPost.url)).toContain('"advantage_audience":1');
   });
 
+  it("B2: deleteCampaign apaga a órfã → true; falha na limpeza → false (best-effort, nunca lança)", async () => {
+    const okSpy = vi.fn(async (..._args: unknown[]) => new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", okSpy);
+    await expect(svc().deleteCampaign(account, "CAMP1")).resolves.toBe(true);
+    const call = String(okSpy.mock.calls[0]![0]);
+    expect(call).toContain("CAMP1");
+
+    // falha (400) → false, sem lançar (a limpeza não mascara o erro original da criação).
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { message: "no", code: 100 } }), { status: 400, headers: { "content-type": "application/json" } })));
+    await expect(svc().deleteCampaign(account, "CAMP1")).resolves.toBe(false);
+  });
+
   it("reuse_adset COM snapshot resolvido (subfatia 2) → monta targeting DIRETO, ZERO chamada Graph pra fonte", async () => {
     const posts: Array<{ url: string }> = [];
     vi.stubGlobal(
