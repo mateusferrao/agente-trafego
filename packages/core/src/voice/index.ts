@@ -45,5 +45,7 @@ export const BRAND_VOICE_KERNEL = [
  *  Reusado por chat/redator/pulso/concierge (fonte única — não duplicar a montagem).
  *  O analista usa `composeAgentVoice` cru (sem kernel/postura). PURO. */
 export function composeSpeakingVoice(v: AgentVoiceInput & { readonly posture: Posture }): string {
-  return `${composeAgentVoice(v)}\n\n${BRAND_VOICE_KERNEL}\n\n${composePostureBlock(v.posture)}`;
+  // Fala com o dono → SEM a metodologia do analista (§10: stance é só do analista; no chat/
+  // redator/pulso ela engessa a voz). Identidade/persona/tom/contexto/orientações seguem.
+  return `${composeAgentVoice(v, { includeMethodology: false })}\n\n${BRAND_VOICE_KERNEL}\n\n${composePostureBlock(v.posture)}`;
 }
