@@ -95,13 +95,14 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                       <!-- C2: teste multi-conjunto — lista os N conjuntos (nome + público + orçamento). -->
                       @if (d.adsets?.length) {
                         <div class="text-sm text-ink">
-                          <span class="text-muted">Conjuntos ({{ d.adsets!.length }}, mesmo criativo): </span>
+                          <span class="text-muted">Conjuntos ({{ d.adsets!.length }}): </span>
                           <ul class="mt-1 flex flex-col gap-1">
                             @for (aset of d.adsets!; track $index) {
                               <li class="rounded-md border border-line bg-panel px-2 py-1">
                                 <span class="font-semibold text-ink">{{ aset.name || ('Conjunto ' + ($index + 1)) }}</span>
                                 <span class="text-muted"> · {{ adsetAudienceSummary(aset) }}</span>
                                 @if (aset.dailyBudgetMajor != null) { <span class="text-muted"> · {{ money(aset.dailyBudgetMajor, d.currency) }}/dia</span> }
+                                <span class="text-muted"> · {{ aset.copyVariants?.length ? (aset.copyVariants!.length + ' anúncio(s) próprio(s)') : 'anúncios compartilhados' }}</span>
                               </li>
                             }
                           </ul>

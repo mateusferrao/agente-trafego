@@ -330,6 +330,41 @@ O bug: criar um teste pedindo ABO punha o valor no campo "Gasto por dia" da CAMP
 
 ---
 
+## Bloco L — Anúncios por conjunto no site (Fase 2)
+
+Antes: os anúncios eram uma lista PLANA no nível da campanha, separada dos conjuntos. Agora cada
+conjunto MOSTRA seus anúncios (recolhidos), compartilhados por padrão, com override opcional por
+conjunto (mesmo mecanismo shared+override do público).
+
+### L1. Anúncios recolhidos por conjunto (default = compartilhados)
+- **Ação:** abrir um teste multi-conjunto em `/approvals` → editar.
+- **Esperado:** sob cada conjunto, a linha "Anúncios: N anúncios · usa os compartilhados" + botão
+  "Personalizar anúncios". A seção de campanha vira "Anúncios compartilhados" com a nota de que valem
+  pra todos os conjuntos.
+
+### L2. Personalizar anúncios de UM conjunto (override)
+- **Ação:** num conjunto, "Personalizar anúncios" → editar o título/texto/descrição de um anúncio e/ou
+  trocar o criativo por anúncio.
+- **Esperado:** o conjunto passa a "N anúncios próprios"; salvar persiste o override SÓ nesse conjunto;
+  os demais seguem com os compartilhados. O picker de criativo único do conjunto some (o editor
+  por-anúncio cuida do criativo).
+
+### L3. Voltar aos compartilhados
+- **Ação:** "Voltar aos compartilhados" num conjunto com override.
+- **Esperado:** o override some; o conjunto volta a usar os anúncios compartilhados. Salvar persiste.
+
+### L4. Nota de honestidade
+- **Ação:** deixar um conjunto com anúncios próprios.
+- **Esperado:** o painel avisa (suave) que o teste deixa de comparar só o público (o criativo também
+  muda). O card em `/approvals` mostra "anúncios próprios (N)" × "anúncios compartilhados" por conjunto.
+
+### L5. Round-trip sem perda
+- **Ação:** salvar um override, reabrir, salvar OUTRA coisa (ex: orçamento) sem tocar nos anúncios.
+- **Esperado:** o override do conjunto é PRESERVADO (keepCopyVariantsIndex) — não volta pros
+  compartilhados em silêncio.
+
+---
+
 ## Suítes automatizadas (referência)
 
 - `pnpm --filter @trafego/core test` — 899 verdes (inclui `removeAdsetsAt`, `seedAdsetFromSingle`,
