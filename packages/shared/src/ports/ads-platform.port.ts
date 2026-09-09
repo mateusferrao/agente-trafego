@@ -4,6 +4,7 @@ import type {
   Action,
   ActivationTree,
   AdEntity,
+  AdMetric,
   AudienceProfile,
   BreakdownDimension,
   BreakdownSegment,
@@ -282,6 +283,11 @@ export interface AdsPlatformPort {
    *  agrupados. Cadência própria (mais lenta que `getInsights`), chamado pela casca. */
   getBreakdownInsights(query: BreakdownInsightsQuery): Promise<EntityBreakdownRow[]>;
   getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]>;
+  /** Métrica CRUA por anúncio (gasto + resultados de negócio), SÍNCRONA (1 GET com `insights`
+   *  inline, não o report job) — pra enriquecer a busca AO VIVO de criativos (ex: recomendar o
+   *  melhor entre pausados, cujo histórico existe). `window` = `date_preset` da Meta ("maximum",
+   *  "last_30d", …). Best-effort: falha → vazio. É desempenho BRUTO — sem o tier/qualidade do run. */
+  getAdMetrics(account: AdAccountRef, window: string): Promise<AdMetric[]>;
   /** Frames HD (URLs) de um vídeo por `video_id` — p/ a visão de criativo da biblioteca. */
   getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]>;
   /**

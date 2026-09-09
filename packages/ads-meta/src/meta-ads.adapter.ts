@@ -4,6 +4,7 @@ import type {
   Action,
   ActivationTree,
   AdEntity,
+  AdMetric,
   AudienceProfile,
   BidStrategy,
   CampaignStructure,
@@ -495,6 +496,10 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     } catch (error) {
       throw toAdsError(error);
     }
+  }
+
+  async getAdMetrics(account: AdAccountRef, window: string): Promise<AdMetric[]> {
+    return this.creation.getAdMetrics(account, window); // best-effort no service (falha → [])
   }
 
   async getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]> {

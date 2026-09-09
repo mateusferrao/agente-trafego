@@ -1225,7 +1225,7 @@ function toCreativeView(r: {
 
 /** View de um anúncio buscado AO VIVO (Fatia 2) — sem tier/desempenho (nunca teve run), mas com o
  *  STATUS rotulado (o dono precisa saber que é de campanha pausada). Fonte marcada "ao vivo". */
-function liveCreativeView(r: { adId: string; name: string | null; status: string; title?: string; copy?: string; cta?: string; format?: string }): Record<string, unknown> {
+function liveCreativeView(r: LiveCreativeItem): Record<string, unknown> {
   return {
     adId: r.adId,
     ...(r.name ? { name: r.name } : {}),
@@ -1234,7 +1234,20 @@ function liveCreativeView(r: { adId: string; name: string | null; status: string
     ...(r.copy ? { copy: r.copy } : {}),
     ...(r.cta ? { cta: r.cta } : {}),
     ...(r.format ? { formato: r.format } : {}),
+    ...liveMetricsView(r),
     fonte: "ao vivo (não capturado por análise)",
+  };
+}
+
+/** Campos de desempenho BRUTO de um item ao vivo pro chat (só quando a Meta retornou métrica).
+ *  Deixa explícito que é histórico bruto, sem o tier da análise (§7 — nunca declara "campeão"). */
+function liveMetricsView(r: LiveCreativeItem): Record<string, unknown> {
+  if (r.spend === undefined && r.results === undefined) return { desempenho: "sem métrica retornada pela Meta agora" };
+  return {
+    gastoHistorico: r.spend,
+    resultados: r.results,
+    ...(r.cpa !== undefined ? { cpaHistorico: r.cpa } : {}),
+    nota: "desempenho BRUTO do histórico (sem o tier/qualidade da análise)",
   };
 }
 
@@ -1269,16 +1282,31 @@ async function loadLibraryForList(deps: WorkerDeps, ctx: ReadToolContext): Promi
 
 /** teto de anúncios a inspecionar ao vivo (fallback quando o banco de veiculando está vazio). */
 const LIVE_CREATIVE_SCAN_LIMIT = 25;
+/** janela das métricas ao vivo: `maximum` = o histórico INTEIRO do anúncio — essencial porque os
+ *  pausados podem ter rodado há mais de 30 dias (o `date_preset` da Meta). */
+const LIVE_METRICS_WINDOW = "maximum";
+
+interface LiveCreativeItem {
+  readonly adId: string;
+  readonly name: string | null;
+  readonly status: string;
+  readonly title?: string;
+  readonly copy?: string;
+  readonly cta?: string;
+  readonly format?: string;
+  /** desempenho BRUTO (histórico) — só nos ao vivo; ausente = a Meta não retornou métrica. */
+  readonly spend?: number;
+  readonly results?: number;
+  readonly cpa?: number;
+}
 
 /** Fallback AO VIVO dos criativos veiculando/pausados (Fatia 2): quando a análise nunca capturou
  *  (ex.: conta com todas as campanhas pausadas), busca os anúncios direto na Meta (`listEntities`
- *  SEM filtro de status → inclui PAUSADOS) + os detalhes do criativo (`getCreatives`), rotulando o
- *  status. Só é chamado quando o banco de veiculando está vazio (decisão: barato). Falha/sem conta
- *  → null (o caller degrada honesto, nunca mente que a conta não tem criativo). */
-async function loadLiveServingCreatives(
-  deps: WorkerDeps,
-  ctx: ReadToolContext,
-): Promise<Array<{ adId: string; name: string | null; status: string; title?: string; copy?: string; cta?: string; format?: string }> | null> {
+ *  SEM filtro de status → inclui PAUSADOS) + os detalhes do criativo (`getCreatives`) + a MÉTRICA
+ *  BRUTA por anúncio (`getAdMetrics`, síncrono — gasto/resultados do histórico, pra o Roy recomendar
+ *  por desempenho, não só por nome). Rankeado (com resultado primeiro; entre eles menor CPA; senão
+ *  maior gasto). Só é chamado quando o banco de veiculando está vazio. Falha/sem conta → null. */
+async function loadLiveServingCreatives(deps: WorkerDeps, ctx: ReadToolContext): Promise<LiveCreativeItem[] | null> {
   const account = await createAnalysisRepo(deps.db).loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return null;
   const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
@@ -1296,9 +1324,18 @@ async function loadLiveServingCreatives(
   } catch {
     creatives = []; // sem os detalhes → lista só nome+status (honesto)
   }
+  // MÉTRICA BRUTA por anúncio (best-effort — só nos ao vivo; banco tem tier, biblioteca não tem métrica).
+  let metrics: Awaited<ReturnType<typeof deps.ports.ads.getAdMetrics>> = [];
+  try {
+    metrics = await withTimeout(deps.ports.ads.getAdMetrics(ref, LIVE_METRICS_WINDOW), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    metrics = []; // sem métrica → lista sem desempenho (honesto, não bloqueia)
+  }
   const byAd = new Map(creatives.map((c) => [c.adId, c]));
-  return usable.map((a) => {
+  const metricByAd = new Map(metrics.map((m) => [m.adId, m]));
+  const items: LiveCreativeItem[] = usable.map((a) => {
     const c = byAd.get(a.id);
+    const m = metricByAd.get(a.id);
     return {
       adId: a.id,
       name: a.name ?? null,
@@ -1307,7 +1344,16 @@ async function loadLiveServingCreatives(
       ...(c?.body ? { copy: c.body } : {}),
       ...(c?.callToAction ? { cta: c.callToAction } : {}),
       ...(c?.adFormat ? { format: c.adFormat } : {}),
+      ...(m ? { spend: m.spend, results: m.results, ...(m.results > 0 ? { cpa: m.spend / m.results } : {}) } : {}),
     };
+  });
+  // ranking por desempenho bruto (com resultado > sem; entre com-resultado menor CPA; senão maior gasto).
+  return items.sort((x, y) => {
+    const xHas = (x.results ?? 0) > 0;
+    const yHas = (y.results ?? 0) > 0;
+    if (xHas !== yHas) return xHas ? -1 : 1;
+    if (xHas && yHas) return (x.cpa ?? Infinity) - (y.cpa ?? Infinity);
+    return (y.spend ?? 0) - (x.spend ?? 0);
   });
 }
 
@@ -1391,16 +1437,20 @@ export async function getTopCreativesData(
           ...(r.copy ? { copy: r.copy } : {}),
           ...(r.cta ? { cta: r.cta } : {}),
           ...(r.format ? { formato: r.format } : {}),
+          ...liveMetricsView(r), // desempenho bruto do histórico (ranqueado, só nos ao vivo)
         }));
-  const biblioteca = library.map((l) => ({ origem: "biblioteca do site", id: l.assetId, formato: l.format, descricao: l.description }));
-  // §7: descreve SÓ as seções que a lista realmente tem (não menciona "veiculando" quando não há).
+  // biblioteca do site: uploads que NUNCA veicularam → sem métrica (honesto por natureza).
+  const biblioteca = library.map((l) => ({ origem: "biblioteca do site", id: l.assetId, formato: l.format, descricao: l.description, desempenho: "sem histórico (nunca veiculou)" }));
+  // §7: descreve SÓ as seções que a lista realmente tem, e a fonte da MÉTRICA de cada uma (distinção
+  // banco/Meta/biblioteca que o dono pediu): capturados = tier da análise; ao vivo = bruto do histórico;
+  // biblioteca = sem métrica.
   const servingScope =
     rows.length > 0
-      ? `os até ${TOP_CREATIVES_LIMIT} anúncios que já capturei por análise (veiculando)`
+      ? `os até ${TOP_CREATIVES_LIMIT} anúncios que já capturei por análise (veiculando, com tier/desempenho da análise)`
       : liveUsed
-        ? `os anúncios que busquei AO VIVO na Meta (inclui campanhas PAUSADAS), até ${TOP_CREATIVES_LIMIT}`
+        ? `os anúncios que busquei AO VIVO na Meta (inclui PAUSADAS), até ${TOP_CREATIVES_LIMIT}, ranqueados pelo desempenho BRUTO do histórico (sem o tier da análise)`
         : null;
-  const cobre = [servingScope, library.length > 0 ? "os criativos da sua biblioteca do site" : null].filter(Boolean).join(" + ");
+  const cobre = [servingScope, library.length > 0 ? "os criativos da sua biblioteca do site (uploads, SEM métrica — nunca veicularam)" : null].filter(Boolean).join(" + ");
   return {
     hasData: true,
     creatives: [...serving, ...biblioteca],

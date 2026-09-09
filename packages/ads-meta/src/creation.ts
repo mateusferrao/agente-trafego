@@ -11,7 +11,7 @@ import type {
   DuplicateResult,
   ModernizationNote,
 } from "@trafego/shared/ports";
-import type { AudienceProfile, ConversionGoal, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
+import type { AdMetric, AudienceProfile, ConversionGoal, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION, type BatchSubRequest, type BatchSubResponse } from "./client.js";
@@ -29,7 +29,7 @@ import {
   whatsappCreativeCta,
   WHATSAPP_SEND_LINK,
 } from "./meta-conversion-map.js";
-import { copyOf, creativeFormatOf, isReusableCreative, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
+import { copyOf, creativeFormatOf, isReusableCreative, metricsOf, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
 import { DEFAULT_TARGETING_GEO_COUNTRY, explicitTargetingToRaw } from "./targeting-map.js";
 
 /** Quantos anúncios buscar p/ ranquear o melhor criativo reusável (1 call, com insights). */
@@ -1040,5 +1040,33 @@ export class MetaCreationService {
       ...(unsupportedTopFormat ? { unsupportedTopFormat } : {}),
     };
     return result;
+  }
+
+  /**
+   * Métrica CRUA por anúncio (gasto + resultados), SÍNCRONA: 1 GET `/act_{id}/ads` com `insights`
+   * INLINE (não o report job async, que teria latência alta demais pro chat). Reusa `metricsOf`
+   * (mesma extração do `inferCreationDefaults`/rank). Best-effort: falha → vazio. `window` é um
+   * `date_preset` da Meta — validado (só `[a-z0-9_]`) antes de entrar no fields, sem interpolar cru.
+   */
+  async getAdMetrics(account: AdAccountRef, window: string): Promise<AdMetric[]> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const preset = /^[a-z0-9_]+$/.test(window) ? window : "maximum";
+    try {
+      const { data } = await this.client.request<{ data?: ReadonlyArray<RawAdCandidate> }>({
+        method: "GET",
+        path: `${accountId}/ads`,
+        accessToken: account.accessToken,
+        params: { fields: `id,insights.date_preset(${preset}){spend,actions}`, limit: String(INFER_CANDIDATES_LIMIT) },
+      });
+      const out: AdMetric[] = [];
+      for (const ad of data.data ?? []) {
+        if (!ad.id) continue;
+        const { spend, results } = metricsOf(ad);
+        out.push({ adId: ad.id, spend, results });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 }

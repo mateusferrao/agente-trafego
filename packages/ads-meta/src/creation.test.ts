@@ -961,3 +961,32 @@ describe("MetaCreationService.inferCreationDefaults", () => {
     expect(r.imageHash).toBe("COVER9"); // a capa do vídeo (antes ficava ausente → apply falhava na Meta)
   });
 });
+
+describe("MetaCreationService.getAdMetrics — gasto/resultados por anúncio (inline, best-effort)", () => {
+  it("extrai gasto + resultados de cada anúncio (reusa metricsOf) e valida o window no fields", async () => {
+    const spy = vi.fn(async (_input: string | URL | Request) => new Response(JSON.stringify({ data: [
+      { id: "AD1", insights: { data: [{ spend: "100", actions: [{ action_type: "lead", value: "5" }] }] } },
+      { id: "AD2", insights: { data: [{ spend: "40", actions: [] }] } },
+    ] }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", spy);
+    const out = await svc().getAdMetrics(account, "maximum");
+    expect(out).toEqual([
+      { adId: "AD1", spend: 100, results: 5 },
+      { adId: "AD2", spend: 40, results: 0 },
+    ]);
+    // window vira date_preset no fields, sem interpolar cru
+    expect(decodeURIComponent(String(spy.mock.calls[0]?.[0] ?? ""))).toContain("insights.date_preset(maximum)");
+  });
+
+  it("window inválido (não [a-z0-9_]) cai pra 'maximum' — nunca interpola string arbitrária", async () => {
+    const spy = vi.fn(async (_input: string | URL | Request) => new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", spy);
+    await svc().getAdMetrics(account, "last_30d){bad}//");
+    expect(decodeURIComponent(String(spy.mock.calls[0]?.[0] ?? ""))).toContain("insights.date_preset(maximum)");
+  });
+
+  it("falha da Meta (erro/403) → lista vazia (best-effort, o caller degrada honesto)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { message: "x", code: 100 } }), { status: 400, headers: { "content-type": "application/json" } })));
+    expect(await svc().getAdMetrics(account, "maximum")).toEqual([]);
+  });
+});

@@ -545,18 +545,31 @@ describe("getTopCreativesData — lookup por nome/id (C3)", () => {
   it("banco vazio → fallback AO VIVO inclui anúncios de campanha PAUSADA, rotulados (Fatia 2)", async () => {
     const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
     const db = fakeDb(new Map<unknown, unknown[]>([[adCreatives, []], [adAccounts, account], [creativeAssets, []], [creativeVisionAnalyses, []]]));
-    const ads = [{ id: "ad_p", level: "ad", name: "Anúncio Pausado", status: "paused" }];
-    const creatives = [{ id: "cr", adId: "ad_p", body: "texto do anúncio pausado", title: "Título", callToAction: "LEARN_MORE", adFormat: "image" }];
+    const ads = [
+      { id: "ad_flop", level: "ad", name: "Fraco", status: "paused" },
+      { id: "ad_win", level: "ad", name: "Anúncio Pausado", status: "paused" },
+    ];
+    const creatives = [
+      { id: "cr1", adId: "ad_win", body: "texto do anúncio pausado", title: "Título", callToAction: "LEARN_MORE", adFormat: "image" },
+      { id: "cr2", adId: "ad_flop", body: "texto fraco", adFormat: "image" },
+    ];
+    // ad_win tem resultado (melhor CPA) → deve vir ANTES do ad_flop (sem resultado) no ranking.
+    const metrics = [
+      { adId: "ad_win", spend: 100, results: 10 },
+      { adId: "ad_flop", spend: 50, results: 0 },
+    ];
     const deps = {
       db,
       visionAnalyzerVersion: 1,
       conversation: { liveFetchTimeoutMs: 1000 },
-      ports: { ads: { listEntities: vi.fn(async () => ads), getCreatives: vi.fn(async () => creatives) }, vault: { decrypt: (t: string) => t } },
+      ports: { ads: { listEntities: vi.fn(async () => ads), getCreatives: vi.fn(async () => creatives), getAdMetrics: vi.fn(async () => metrics) }, vault: { decrypt: (t: string) => t } },
     } as unknown as Parameters<typeof getTopCreativesData>[0];
     const res = await getTopCreativesData(deps, CTX);
     expect(res).toMatchObject({ hasData: true });
     if (!("creatives" in res)) throw new Error("esperava lista");
-    expect(res.creatives[0]).toMatchObject({ origem: "pausado (ao vivo)", adId: "ad_p", copy: "texto do anúncio pausado" });
+    // ranqueado por desempenho: o com resultado (ad_win) vem primeiro, com a métrica bruta anexada.
+    expect(res.creatives[0]).toMatchObject({ origem: "pausado (ao vivo)", adId: "ad_win", copy: "texto do anúncio pausado", gastoHistorico: 100, resultados: 10, cpaHistorico: 10 });
+    expect(res.creatives[1]).toMatchObject({ adId: "ad_flop" });
     expect("escopo" in res && res.escopo).toContain("AO VIVO");
   });
 

@@ -209,6 +209,17 @@ export interface StoredInsightMetrics {
  *  `CreativeVisionResult.format` (estilo visual inferido pela visão, ex: "UGC"/"antes-depois"). */
 export type AdFormat = "image" | "video" | "carousel" | "catalog" | "other";
 
+/** Métrica CRUA por anúncio (neutro, agnóstico de plataforma) — gasto + resultados de negócio
+ *  (conversões de fundo/meio de funil). Usado pra ranquear/recomendar criativos buscados AO VIVO
+ *  (ex: pausados). NÃO carrega tier/qualidade (isso é do run de análise). */
+export interface AdMetric {
+  readonly adId: string;
+  /** gasto na moeda da conta (unidade MAIOR — ex: reais), da janela consultada. */
+  readonly spend: number;
+  /** contagem de resultados de negócio (conversões) na janela — proxy neutro. */
+  readonly results: number;
+}
+
 export interface Creative {
   readonly id: string;
   readonly adId: string;
