@@ -488,6 +488,11 @@ export function makeConversationTools(
       budgetMode: z.enum(BUDGET_MODES).nullable().optional().describe("SÓ quando o dono pedir explicitamente ONDE mora a verba: 'cbo' = orçamento único na campanha (a Meta distribui entre os conjuntos); 'abo' = orçamento por conjunto. Omita pra eu usar o recomendado pra intenção. NUNCA diga a sigla ao dono — fale em linguagem de negócio."),
       advantage: z.boolean().nullable().optional().describe("Advantage+ (deixar a Meta EXPANDIR o público e AJUSTAR automaticamente o criativo pra performar melhor). Passe true quando o dono pedir explicitamente ('liga o Advantage', 'deixa a Meta otimizar'); false quando pedir tudo fixo. Omita pra eu inferir do contexto. O eco sempre confirma antes de aplicar e AVISA que as melhorias podem mudar a imagem/texto do anúncio."),
       localBusiness: z.boolean().nullable().optional().describe("true quando o negócio é LOCAL (atende só uma região/cidade — ex: clínica, restaurante, loja física de bairro), inferido do contexto do negócio. Guia a recomendação de Advantage (local → recomendo fixo/OFF; amplo/nacional → recomendo expansão). O dono sempre decide no eco."),
+      segments: z.array(z.object({
+        label: z.string().nullable().optional().describe("nome do conjunto (ex: 'Interesse em estética', 'Remarketing 90d')"),
+        audiences: z.array(z.string()).nullable().optional().describe("públicos SALVOS deste conjunto, pelo NOME/descrição — eu resolvo e pergunto se ambíguo"),
+        interests: z.array(z.string()).nullable().optional().describe("interesses deste conjunto, pelo NOME/termo — eu busco na Meta e pergunto se ambíguo"),
+      })).nullable().optional().describe("TESTE DE PÚBLICO multi-conjunto: passe 2+ segmentos quando o dono quiser comparar VÁRIOS públicos (ex: 'testa interesse em estética, meu público de remarketing e um lookalike'). Eu monto UM conjunto por segmento, com o público distinto de cada um SOBRE a base compartilhada (geo/idade/gênero dos campos acima), MESMO criativo em todos (isola a variável público) e orçamento único na campanha. Trocar o criativo por conjunto é no site. NÃO use pra 1 público só (aí use os campos includeAudiences/interests normais)."),
     }),
   });
 

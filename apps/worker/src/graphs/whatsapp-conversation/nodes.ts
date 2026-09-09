@@ -152,6 +152,28 @@ function parseCopyEdits(v: unknown): { index: number; headline?: string; primary
   return out;
 }
 
+/** Normaliza os segmentos do teste de público (C2 producer) vindos do LLM — cada um vira 1 conjunto.
+ *  Filtra strings vazias; descarta segmentos sem público algum (nem audiences nem interests). */
+export function parseSegments(v: unknown): { label?: string; audiences?: string[]; interests?: string[] }[] {
+  if (!Array.isArray(v)) return [];
+  const strs = (x: unknown): string[] =>
+    Array.isArray(x) ? x.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
+  const out: { label?: string; audiences?: string[]; interests?: string[] }[] = [];
+  for (const e of v) {
+    if (!e || typeof e !== "object") continue;
+    const o = e as Record<string, unknown>;
+    const audiences = strs(o["audiences"]);
+    const interests = strs(o["interests"]);
+    if (audiences.length === 0 && interests.length === 0) continue; // segmento sem público → descarta
+    out.push({
+      ...(typeof o["label"] === "string" && o["label"].trim() ? { label: o["label"].trim() } : {}),
+      ...(audiences.length > 0 ? { audiences } : {}),
+      ...(interests.length > 0 ? { interests } : {}),
+    });
+  }
+  return out;
+}
+
 /** Normaliza os setAdCreative vindos do LLM (índice + nome do criativo), filtrando entradas inválidas. */
 function parseSetAdCreative(v: unknown): { index: number; creative: string }[] {
   if (!Array.isArray(v)) return [];
@@ -959,6 +981,11 @@ export function makeConversationNodes(
                 // C3: Advantage (override explícito) + sinal de negócio local (inferência).
                 ...(typeof args["advantage"] === "boolean" ? { advantage: args["advantage"] } : {}),
                 ...(typeof args["localBusiness"] === "boolean" ? { localBusiness: args["localBusiness"] } : {}),
+                // C2 producer: segmentos do teste de público multi-conjunto.
+                ...(() => {
+                  const segs = parseSegments(args["segments"]);
+                  return segs.length >= 2 ? { segments: segs } : {};
+                })(),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

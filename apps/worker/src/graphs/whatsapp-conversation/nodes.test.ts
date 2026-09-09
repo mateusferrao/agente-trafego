@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AIMessage } from "@langchain/core/messages";
-import { assembleSystemPrompt, currentDateTimeLine, drainPendingCostPatches, lastAnalysisLine, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
+import { assembleSystemPrompt, currentDateTimeLine, drainPendingCostPatches, lastAnalysisLine, needsCostFallback, parseSegments, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
 import { GROUP_RULES } from "./system-prompt.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
@@ -306,5 +306,27 @@ describe("drainPendingCostPatches", () => {
     });
 
     await expect(drainPendingCostPatches(10)).resolves.toBeUndefined();
+  });
+});
+
+describe("parseSegments (C2 producer — teste de público multi-conjunto)", () => {
+  it("mantém label + audiences + interests, filtrando strings vazias", () => {
+    const out = parseSegments([
+      { label: "Estética", interests: ["estética", " "] },
+      { label: " ", audiences: ["remarketing 90d"] },
+    ]);
+    expect(out).toEqual([
+      { label: "Estética", interests: ["estética"] },
+      { audiences: ["remarketing 90d"] },
+    ]);
+  });
+
+  it("descarta segmento SEM público algum (nem audiences nem interests) — não vira conjunto vazio", () => {
+    expect(parseSegments([{ label: "vazio" }, { interests: [] }, {}])).toEqual([]);
+  });
+
+  it("não-array → []", () => {
+    expect(parseSegments(null)).toEqual([]);
+    expect(parseSegments("x")).toEqual([]);
   });
 });

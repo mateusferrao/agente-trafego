@@ -28,6 +28,7 @@ import {
   type AudienceProfile,
   type CampaignDraftSpec,
   type ConversionGoal,
+  type AdsetSpec,
   type BudgetMode,
   type CopyVariant,
   type CreativeAssetRef,
@@ -2215,6 +2216,15 @@ export async function proposeCreateCampaign(
     /** SINAL de negócio LOCAL (C3) que o LLM infere do businessContext (atende só uma região) —
      *  entra na inferência de Advantage (local → recomenda OFF). */
     readonly localBusiness?: boolean;
+    /** SEGMENTOS do teste de público multi-conjunto (C2 producer): ≥2 → um CONJUNTO por segmento,
+     *  cada um com seu público distinto (interesses/públicos salvos) sobre a base compartilhada
+     *  (geo/idade/gênero dos args top-level). Criativo COMPARTILHADO (Roy escolhe; ajuste por-conjunto
+     *  é no site). Nomes resolvidos determinístico (prepare-fns + D1); ambíguo → bloqueia honesto. */
+    readonly segments?: ReadonlyArray<{
+      readonly label?: string;
+      readonly audiences?: readonly string[];
+      readonly interests?: readonly string[];
+    }>;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -2293,6 +2303,40 @@ export async function proposeCreateCampaign(
   // raio (Slice 5): aplica às cidades resolvidas + monta áreas por endereço (clampado + notas).
   const geoRadius = applyCityRadius(geoPrep.geo, args.radiusKm);
   const areas = buildRadiusAreas(args.addressAreas);
+
+  // C2 PRODUCER — teste de público multi-conjunto: cada SEGMENTO vira 1 CONJUNTO com seu público
+  // distinto (interesses/públicos salvos) sobre a base COMPARTILHADA (geo/idade/gênero). Reusa o
+  // MESMO pipeline de resolução (prepare-fns + D1) por segmento. Criativo compartilhado (o do rascunho).
+  // Ambíguo/não-achado num segmento → bloqueia honesto (nomeando o conjunto); D1 auto-resolve por
+  // segmento = refinamento. budgetMode = CBO (verba única na campanha — o padrão do teste de público).
+  const segmentAdsets = await (async (): Promise<AdsetSpec[] | { blocked: string } | null> => {
+    if (!args.segments || args.segments.length < 2) return null;
+    const baseGeo = geoRadius.geo;
+    const baseAreas = areas.radiusAreas;
+    const out: AdsetSpec[] = [];
+    for (const [i, seg] of args.segments.entries()) {
+      const label = seg.label?.trim() || `Conjunto ${i + 1}`;
+      const segAud = await prepareAudiences(deps, ctx, ac.ref, seg.audiences ?? [], [], auto);
+      if (segAud.kind === "blocked") return { blocked: `no público do conjunto "${label}": ${segAud.reason}` };
+      const segInt = await prepareInterests(deps, ac.ref, seg.interests ?? [], auto);
+      if (segInt.kind === "blocked") return { blocked: `no público do conjunto "${label}": ${segInt.reason}` };
+      const parts: ExplicitTargetingParts = {
+        geo: baseGeo,
+        ...(baseAreas.length > 0 ? { radiusAreas: baseAreas } : {}),
+        ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
+        ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
+        ...(args.gender ? { gender: args.gender } : {}),
+        ...(segInt.interests.length > 0 ? { interests: segInt.interests } : {}),
+        ...(segAud.includeIds.length > 0 ? { includeAudienceIds: segAud.includeIds } : {}),
+      };
+      const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasExplicitContent(parts)
+        ? assembleExplicitTargeting(parts)
+        : { kind: "advantage_plus" };
+      out.push({ name: label, targeting });
+    }
+    return out;
+  })();
+  if (segmentAdsets && "blocked" in segmentAdsets) return { kind: "blocked", reason: segmentAdsets.blocked };
   const hasExplicitPrimitive =
     geoPrep.geo.length > 0 ||
     args.ageMin !== undefined ||
@@ -2362,7 +2406,8 @@ export async function proposeCreateCampaign(
   // daqui; multi-conjunto (structure.adsets) fica pro C2. O default de anúncios do playbook só
   // vale quando o dono NÃO pediu um nº específico (args.adCount vence).
   const structure = resolveStructure(args.intent ?? "create", args.adCount != null ? { ads: args.adCount } : {});
-  const budgetMode: BudgetMode = args.budgetMode ?? structure.budgetMode;
+  // Teste de público multi-conjunto → verba única na campanha (CBO) por padrão (o dono sobrepõe).
+  const budgetMode: BudgetMode = args.budgetMode ?? (segmentAdsets ? "cbo" : structure.budgetMode);
   // Piso da Meta (C1: 1 conjunto → piso simples; C2 escala com N). RECOMENDAÇÃO — avisa, não trava.
   const budgetFloorMinor = resolveBudgetFloorMinor(budgetMode, 1, MIN_BUDGET_MINOR);
   const belowFloor = dailyBudgetMinor < budgetFloorMinor;
@@ -2383,9 +2428,9 @@ export async function proposeCreateCampaign(
   // Honestidade 1-N-1 antes do C2 (diz×faz, determinístico — não depende do LLM lembrar): pediu
   // testar VÁRIOS públicos (structure.adsets > 1), mas por aqui eu só monto 1 conjunto. Monto o que
   // dá + recomendo os demais pro site (INVARIANTE: nunca travo sem próximo passo).
-  if (structure.adsets > 1) {
+  if (structure.adsets > 1 && !segmentAdsets) {
     compositionNotes.push(
-      "Você quer testar vários públicos — por aqui eu monto **1 conjunto** com o público mais forte (orçamento único na campanha). Pra rodar cada público no seu próprio conjunto (um por segmento, mesmo criativo), é só abrir este rascunho no site e adicionar os outros conjuntos — depois você aprova tudo de uma vez.",
+      "Você quer testar vários públicos — me diga os públicos (ex: \"testa interesse em estética, público de remarketing e lookalike\") que eu monto **um conjunto pra cada** (mesmo criativo, orçamento único na campanha), ou monta/edita os conjuntos no site. Sem os públicos, sigo com 1 conjunto no público mais forte.",
     );
   }
   if (pageChoiceNote) compositionNotes.push(pageChoiceNote); // W2: eco da Página escolhida (ou da degradação honesta)
@@ -2572,6 +2617,8 @@ export async function proposeCreateCampaign(
     dailyBudgetMinor,
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
     budgetMode,
+    // C2 producer: N conjuntos do teste de público (criativo compartilhado vem de creative/copyVariants).
+    ...(segmentAdsets ? { adsets: segmentAdsets } : {}),
     // C3: "liga tudo" = expansão de público + melhorias de criativo (mesmo toggle). Só grava quando
     // há sinal (undefined = mantém o comportamento pré-C3 no apply).
     ...(advantageOn !== undefined ? { advantageAudience: advantageOn, advantageCreative: advantageOn } : {}),
@@ -2635,8 +2682,20 @@ export async function proposeCreateCampaign(
     ...(audienceProfile ? { resolvedAudienceDescription: describeResolvedAudience(audienceProfile) } : {}),
     ...(spec.targeting?.kind === "explicit" ? { explicitAudienceDescription: describeExplicitAudience(spec.targeting) } : {}),
   });
+  // C2 producer: teste de público → lista os N conjuntos (nome + público), mesmo criativo. Senão,
+  // a linha de público única.
+  if (segmentAdsets) {
+    const conjuntos = segmentAdsets
+      .map((as, i) => {
+        const pub = as.targeting?.kind === "explicit" ? describeExplicitAudience(as.targeting) : "amplo (a Meta escolhe)";
+        return `  ${i + 1}. *${as.name ?? `Conjunto ${i + 1}`}* — ${pub}`;
+      })
+      .join("\n");
+    lines.push(`Teste de público, **${segmentAdsets.length} conjuntos** (mesmo criativo em todos, pra comparar só o público):\n${conjuntos}`);
+  } else {
+    lines.push(`Público: ${audiencePhrase}.`);
+  }
   lines.push(
-    `Público: ${audiencePhrase}.`,
     // G14: sem id cru (jargão pro não-técnico, §13) — a Página vem do seu anúncio ativo; o pixel,
     // quando há, é o de conversão da conta. O id técnico não ajuda o dono a decidir.
     // C1: orçamento em linguagem de negócio (nunca a sigla CBO/ABO crua) — onde a verba mora.
