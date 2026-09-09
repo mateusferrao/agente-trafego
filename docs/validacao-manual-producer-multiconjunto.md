@@ -365,6 +365,54 @@ conjunto (mesmo mecanismo shared+override do público).
 
 ---
 
+## Bloco M — Bugs de criação (Advantage×idade, campanha órfã, link espúrio)
+
+Dois bugs batidos pelo dono no chat do Roy, cada um com causa-raiz distinta. Fixes: B1 (prevenir a
+recusa da Meta), B3 (traduzir a recusa pra voz do Roy), B2 (não deixar campanha órfã) e Bug A (o Roy
+não fala de link quando o pedido é outro).
+
+### M1. Advantage + faixa de idade com teto → cria SEM recusa (B1)
+- **Ação:** no chat, criar um teste de conversas com um conjunto "Mulheres 45+" (ou qualquer faixa com
+  teto de idade) e **Advantage ligado** → aprovar.
+- **Esperado:** a Meta **aceita** o conjunto (o `age_max` é omitido sob Advantage+ audience — a idade
+  vira o mínimo-sugestão que a Meta aceita; `age_min` é mantido). Nada de "você pode adicionar uma idade
+  mínima maior como sugestão".
+- **Contra-prova (Advantage OFF):** o mesmo teste com Advantage desligado mantém a faixa fixa (`age_min`
+  **e** `age_max`).
+
+### M2. Eco honesto da idade sob Advantage (B1)
+- **Ação:** montar/refinar um rascunho com teto de idade **e** Advantage ligado.
+- **Esperado:** nota curta e honesta de que, com a otimização automática ligada, a idade vira um mínimo
+  (a Meta pode mostrar pra mais velhas) + o caminho pra faixa fixa ("me peça pra desligar a otimização").
+  Reativo, sem gate — a palavra final é do dono.
+
+### M3. Falha determinística na criação → campanha NÃO fica órfã (B2)
+- **Ação:** simular/forçar uma recusa **determinística** da Meta na criação do-zero (adset recusado)
+  depois da campanha já criada.
+- **Esperado:** a campanha órfã é **apagada** (rollback best-effort) → o desfecho NÃO menciona
+  "campanha pausada e vazia"/`partialCampaign`. "Me peça pra recriar" começa limpo, sem campanha
+  duplicada acumulando.
+- **Contra-prova (transiente):** numa falha **transiente** (rate-limit/timeout), a campanha é
+  **preservada** (retomável) — o retry retoma de onde parou, sem deletar.
+
+### M4. Erro da Meta na voz do Roy (B3)
+- **Ação:** provocar a recusa determinística de idade×Advantage (ou outra recusa determinística).
+- **Esperado:** o Roy **não** repassa o texto cru da Meta. Pro caso de idade, mensagem dedicada (a
+  faixa não combina com a otimização automática; oferece recriar sem o teto ou desligar a otimização).
+  Genérico = tradução amigável com próximo passo, sem "Error:"/stack (§13).
+
+### M5. Pedir "ativa o advantage" NÃO vira conversa sobre link (Bug A)
+- **Ação:** num rascunho de **conversas**, mandar "ativa o advantage" (ou "tenta ativar de novo" após
+  uma correção).
+- **Esperado:** o Roy **liga o Advantage** e **não** fala de link ("não dá pra pôr um link de
+  destino"). Se o LLM alucinar um `link` junto, ele é **ignorado em silêncio** (não bloqueia o pedido).
+  Idempotente: "tenta de novo" repete sem regredir.
+- **Contra-prova (link sozinho):** mandar só "põe o link X" num rascunho de conversas → mensagem
+  honesta de que conversas leva pro WhatsApp, não pra um site (o bloqueio continua quando o link é a
+  ÚNICA intenção).
+
+---
+
 ## Suítes automatizadas (referência)
 
 - `pnpm --filter @trafego/core test` — 899 verdes (inclui `removeAdsetsAt`, `seedAdsetFromSingle`,
