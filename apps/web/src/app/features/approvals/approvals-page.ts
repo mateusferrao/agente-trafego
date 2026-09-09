@@ -97,11 +97,11 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         <div class="text-sm text-ink">
                           <span class="text-muted">Conjuntos ({{ d.adsets!.length }}, mesmo criativo): </span>
                           <ul class="mt-1 flex flex-col gap-1">
-                            @for (as of d.adsets!; track $index) {
+                            @for (aset of d.adsets!; track $index) {
                               <li class="rounded-md border border-line bg-panel px-2 py-1">
-                                <span class="font-semibold text-ink">{{ as.name || ('Conjunto ' + ($index + 1)) }}</span>
-                                <span class="text-muted"> · {{ adsetAudienceSummary(as) }}</span>
-                                @if (as.dailyBudgetMajor != null) { <span class="text-muted"> · {{ money(as.dailyBudgetMajor, d.currency) }}/dia</span> }
+                                <span class="font-semibold text-ink">{{ aset.name || ('Conjunto ' + ($index + 1)) }}</span>
+                                <span class="text-muted"> · {{ adsetAudienceSummary(aset) }}</span>
+                                @if (aset.dailyBudgetMajor != null) { <span class="text-muted"> · {{ money(aset.dailyBudgetMajor, d.currency) }}/dia</span> }
                               </li>
                             }
                           </ul>
@@ -405,12 +405,12 @@ export class ApprovalsPage implements OnInit {
   protected budgetModeLabel = (bm: 'cbo' | 'abo'): string =>
     bm === 'cbo' ? 'único na campanha (a Meta distribui entre os conjuntos)' : 'por conjunto';
   /** Resumo do público de um conjunto (C2) — reuse/amplo/explícito, sem jargão. */
-  protected adsetAudienceSummary = (as: NonNullable<DraftApprovalOutput['adsets']>[number]): string => {
-    if (as.explicitAudience) {
-      const geo = as.explicitAudience.geo.map((g) => g.name);
+  protected adsetAudienceSummary = (aset: NonNullable<DraftApprovalOutput['adsets']>[number]): string => {
+    if (aset.explicitAudience) {
+      const geo = aset.explicitAudience.geo.map((g) => g.name);
       return geo.length > 0 ? `público em ${geo.slice(0, 3).join(', ')}${geo.length > 3 ? '…' : ''}` : 'público personalizado';
     }
-    return as.audience === 'reuse' ? 'herda o que já converte' : 'a Meta escolhe (mais amplo)';
+    return aset.audience === 'reuse' ? 'herda o que já converte' : 'a Meta escolhe (mais amplo)';
   };
   protected money = money;
   protected currencySymbol = currencySymbol;
