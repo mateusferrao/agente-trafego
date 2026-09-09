@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico } from "./draft-proposal.js";
 import type { PageInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
@@ -419,6 +419,49 @@ describe("buildRefineEcho — público (bug: refino não pode assumir 'amplo')",
     expect(echo).toContain("herda");
     expect(echo).not.toContain("amplo");
   });
+
+  it("P2: rascunho MULTI-CONJUNTO → lista os conjuntos + onde a verba mora (não o público único)", () => {
+    const echo = buildRefineEcho("from_scratch", {
+      ...base,
+      budgetMode: "cbo",
+      targeting: { kind: "advantage_plus" }, // targeting único NÃO deve ser ecoado num rascunho multi
+      adsets: [
+        { name: "Corredores", targeting: { kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }] } },
+        { name: "Ciclistas", targeting: { kind: "advantage_plus" } },
+      ],
+    });
+    expect(echo).toContain("Teste de público, **2 conjuntos**");
+    expect(echo).toContain("Corredores");
+    expect(echo).toContain("Ciclistas");
+    expect(echo).toContain("único na campanha");
+  });
+});
+
+describe("describeConjuntosBlock (fonte única do eco de conjuntos — create + refino)", () => {
+  it("lista nome + público resumido de cada conjunto; advantage → 'amplo'", () => {
+    const out = describeConjuntosBlock([
+      { name: "A", targeting: { kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }] } },
+      { name: "B", targeting: { kind: "advantage_plus" } },
+    ]);
+    expect(out).toContain("**2 conjuntos**");
+    expect(out).toContain("1. *A*");
+    expect(out).toContain("Belo Horizonte");
+    expect(out).toContain("2. *B*");
+    expect(out).toContain("amplo (a Meta escolhe)");
+  });
+});
+
+describe("patchTouchesSinglePublico (guard multi-conjunto — P2)", () => {
+  it("edições de público único → true; add/removeSegment e orçamento/nome → false", () => {
+    expect(patchTouchesSinglePublico({ addInterests: ["corrida"] })).toBe(true);
+    expect(patchTouchesSinglePublico({ ageMin: 25 })).toBe(true);
+    expect(patchTouchesSinglePublico({ addAudiences: ["remarketing"] })).toBe(true);
+    // operar OS conjuntos (não o público de um) NÃO é edição de público único:
+    expect(patchTouchesSinglePublico({ addSegment: [{ interests: ["corrida"] }] })).toBe(false);
+    expect(patchTouchesSinglePublico({ removeSegment: [1] })).toBe(false);
+    expect(patchTouchesSinglePublico({ budgetReais: 50 })).toBe(false);
+    expect(patchTouchesSinglePublico({ campaignName: "x" })).toBe(false);
+  });
 });
 
 
@@ -673,6 +716,9 @@ describe("scaleForbiddenRefineField (G16 — escala não edita o herdado)", () =
     expect(scaleForbiddenRefineField({ link: "https://loja.com" })).toBe("link");
     expect(scaleForbiddenRefineField({ setPage: "CaquiAI Loja" })).toBe("pageId");
     expect(scaleForbiddenRefineField({ campaignName: "x" })).toBe("campaignName");
+    // P2: add/remover conjunto (público) também é herdado numa escala.
+    expect(scaleForbiddenRefineField({ addSegment: [{ interests: ["corrida"] }] })).toBe("targeting");
+    expect(scaleForbiddenRefineField({ removeSegment: [1] })).toBe("targeting");
   });
   it("regenerateCopy:false NÃO é edição (não trava)", () => {
     expect(scaleForbiddenRefineField({ regenerateCopy: false })).toBeNull();

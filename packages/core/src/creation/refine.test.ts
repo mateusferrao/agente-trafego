@@ -1,6 +1,7 @@
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { describe, expect, it } from "vitest";
-import { applyDraftEdit, conversionRequiresPixel, normalizeLinkUrl } from "./refine.js";
+import { applyDraftEdit, conversionRequiresPixel, normalizeLinkUrl, removeAdsetsAt, seedAdsetFromSingle } from "./refine.js";
+import type { AdsetSpec } from "@trafego/shared";
 
 describe("normalizeLinkUrl (URL de destino — fonte única chat+site)", () => {
   it("aceita http/https absoluto (normaliza)", () => {
@@ -210,5 +211,47 @@ describe("applyDraftEdit — C2 multi-conjunto (adsets, substituição total)", 
     expect(r.ok).toBe(false);
     if (r.ok || r.error.code !== "field_not_editable") throw new Error("esperava field_not_editable");
     expect(r.error.field).toBe("adsets");
+  });
+
+  it("budgetMode (P2 conversão single→multi) grava no spec junto com adsets", () => {
+    const r = applyDraftEdit("from_scratch", fromScratch, { adsets: two, budgetMode: "cbo" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.adsets).toHaveLength(2);
+    expect(r.value.spec.budgetMode).toBe("cbo");
+  });
+});
+
+describe("removeAdsetsAt (P2 — remover conjunto por índice)", () => {
+  const abc: readonly AdsetSpec[] = [
+    { name: "A", targeting: { kind: "advantage_plus" } },
+    { name: "B", targeting: { kind: "advantage_plus" } },
+    { name: "C", targeting: { kind: "advantage_plus" } },
+  ];
+  it("remove pelo índice, preservando a ordem dos restantes", () => {
+    expect(removeAdsetsAt(abc, [1]).map((a) => a.name)).toEqual(["A", "C"]);
+    expect(removeAdsetsAt(abc, [0, 2]).map((a) => a.name)).toEqual(["B"]);
+  });
+  it("índices fora da faixa e repetidos são ignorados", () => {
+    expect(removeAdsetsAt(abc, [9, 1, 1]).map((a) => a.name)).toEqual(["A", "C"]);
+  });
+  it("lista vazia de índices → mantém tudo", () => {
+    expect(removeAdsetsAt(abc, [])).toHaveLength(3);
+  });
+});
+
+describe("seedAdsetFromSingle (P2 — converter 1 conjunto em teste multi-conjunto)", () => {
+  it("leva nome + público explícito atuais pro conjunto 1", () => {
+    const seeded = seedAdsetFromSingle({
+      adsetName: "Meu público",
+      targeting: { kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }] },
+    });
+    expect(seeded.name).toBe("Meu público");
+    expect(seeded.targeting).toEqual({ kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }] });
+  });
+  it("público ausente → advantage_plus explícito (amplo honesto), sem nome", () => {
+    const seeded = seedAdsetFromSingle({});
+    expect(seeded.targeting).toEqual({ kind: "advantage_plus" });
+    expect(seeded.name).toBeUndefined();
   });
 });

@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
@@ -994,6 +994,19 @@ export async function proposeScaleWinner(
   return { kind: "draft", echo, approvalId, draftId };
 }
 
+/** Lista os N conjuntos de um teste de público (nome + público resumido) — fonte ÚNICA do eco (§13),
+ *  reusada pela criação (P1) E pelo refino (P2). Mesmo criativo em todos = a variável comparada é só
+ *  o público. */
+export function describeConjuntosBlock(adsets: readonly AdsetSpec[]): string {
+  const conjuntos = adsets
+    .map((as, i) => {
+      const pub = as.targeting?.kind === "explicit" ? describeExplicitAudience(as.targeting) : "amplo (a Meta escolhe)";
+      return `  ${i + 1}. *${as.name ?? `Conjunto ${i + 1}`}* — ${pub}`;
+    })
+    .join("\n");
+  return `Teste de público, **${adsets.length} conjuntos** (mesmo criativo em todos, pra comparar só o público):\n${conjuntos}`;
+}
+
 /** Eco genérico de um rascunho (após refino) — o quê/quanto/ativação/copy. Exportado p/ teste. */
 export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   const head = kind === "duplicate" ? "Rascunho de escala atualizado" : "Rascunho de campanha atualizado";
@@ -1009,8 +1022,12 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
     if (spec.copyVariants.length >= 2) lines.push(`${spec.copyVariants.length} anúncios · ${distinct} criativo(s) distinto(s).`);
     lines.push(describeCopiesBlock(spec.copyVariants));
   }
+  // P2: teste de público (N conjuntos) → lista os conjuntos + onde a verba mora; senão a linha única.
   const t = spec.targeting;
-  if (kind === "from_scratch" && t) {
+  if (kind === "from_scratch" && spec.adsets && spec.adsets.length >= 2) {
+    lines.push(describeConjuntosBlock(spec.adsets));
+    lines.push(`Orçamento ${budgetModeLabel(spec.budgetMode ?? "cbo")}.`);
+  } else if (kind === "from_scratch" && t) {
     // fonte ÚNICA do eco de público (§13 reuso): antes duplicava a lógica aqui e assumia "amplo"
     // p/ explicit/custom_audiences — mesma classe do bug já corrigido em `audienceEchoPhrase`.
     lines.push(
@@ -1137,6 +1154,13 @@ export interface RefineDraftPatch {
    *  dono disse — resolvido determinístico contra as Páginas da conta; ambíguo/não-achado → bloqueia
    *  honesto (lista as opções). Em campanha de conversas muda pra qual WhatsApp o clique leva. */
   readonly setPage?: string;
+  /** ADICIONAR conjunto(s) ao teste de público (P2 — paridade com adicionar anúncio). Cada segmento
+   *  vira um conjunto próprio (público por interesses/públicos salvos, resolvidos como na criação).
+   *  Rascunho de 1 conjunto → vira teste multi-conjunto (o público atual é o conjunto 1; verba única
+   *  na campanha, mesmo criativo em todos — criativo diferente por conjunto é no site). */
+  readonly addSegment?: readonly { readonly label?: string; readonly audiences?: readonly string[]; readonly interests?: readonly string[] }[];
+  /** REMOVER conjunto(s) do teste de público pelo índice (começa em 0). Sobrar 1 = volta a 1 conjunto. */
+  readonly removeSegment?: readonly number[];
 }
 
 export type RefineResult =
@@ -1172,17 +1196,27 @@ function refineErrorReason(error: RefineError): string {
  * herdado que o usuário tentou mexer, ou null. Fonte da honestidade: em vez de re-ecoar mudo o mesmo
  * spec (o usuário fica sem saber por que "não mudou"), a casca responde por que não dá (§7).
  */
+const hasValue = (v: unknown): boolean => v !== undefined && v !== null && (!Array.isArray(v) || v.length > 0);
+
+/** O patch mexe no público do ÚNICO conjunto (converter/geo/idade/gênero/interesses/comportamentos/
+ *  públicos salvos)? NÃO inclui add/removeSegment (isso é operar OS conjuntos, não o público de um).
+ *  Fonte única do guard de escala E do guard multi-conjunto (P2). PURO. */
+export function patchTouchesSinglePublico(patch: RefineDraftPatch): boolean {
+  return (
+    hasValue(patch.audience) || hasValue(patch.addGeo) || hasValue(patch.removeGeo) || patch.ageMin !== undefined || patch.ageMax !== undefined ||
+    hasValue(patch.gender) || hasValue(patch.addInterests) || hasValue(patch.removeInterests) || hasValue(patch.narrowInterests) ||
+    hasValue(patch.addBehaviors) || hasValue(patch.removeBehaviors) || hasValue(patch.narrowBehaviors) || hasValue(patch.radiusKm) ||
+    hasValue(patch.addressAreas) || hasValue(patch.addAudiences) || hasValue(patch.excludeAudiences) || hasValue(patch.removeAudiences)
+  );
+}
+
 export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | null {
-  const has = (v: unknown): boolean => v !== undefined && v !== null && (!Array.isArray(v) || v.length > 0);
+  const has = hasValue;
   if (has(patch.objective)) return "objective";
   if (has(patch.link)) return "link";
   if (has(patch.setPage)) return "pageId";
-  const touchesAudience =
-    has(patch.audience) || has(patch.addGeo) || has(patch.removeGeo) || patch.ageMin !== undefined || patch.ageMax !== undefined ||
-    has(patch.gender) || has(patch.addInterests) || has(patch.removeInterests) || has(patch.narrowInterests) ||
-    has(patch.addBehaviors) || has(patch.removeBehaviors) || has(patch.narrowBehaviors) || has(patch.radiusKm) ||
-    has(patch.addressAreas) || has(patch.addAudiences) || has(patch.excludeAudiences) || has(patch.removeAudiences);
-  if (touchesAudience) return "targeting";
+  // add/removeSegment = mexer nos conjuntos (público) → herdado numa escala, não editável.
+  if (patchTouchesSinglePublico(patch) || has(patch.addSegment) || has(patch.removeSegment)) return "targeting";
   if (patch.regenerateCopy === true || patch.variantsCount !== undefined || has(patch.copyEdits) || has(patch.setAdCreative) || has(patch.distinctCreatives) || has(patch.mediaPreference)) return "copyVariants";
   if (has(patch.campaignName)) return "campaignName";
   if (has(patch.adsetName)) return "adsetName";
@@ -1289,6 +1323,75 @@ export async function refineDraft(
       }
     }
     edit.copyVariants = variants;
+  }
+
+  // ── CONJUNTOS (P2): teste de público multi-conjunto no chat — add/remover conjuntos + GUARD ──
+  // O rascunho multi-conjunto entrega pelos `spec.adsets` e IGNORA `spec.targeting`. Então uma edição
+  // de público ÚNICO (addInterests/geo/idade/…) num rascunho multi seria um NO-OP silencioso na
+  // entrega (diz×faz §7): bloqueio honesto pedindo QUAL conjunto — ou add/remover conjunto, ou o site.
+  const currentAdsets = kind === "from_scratch" ? (spec.adsets ?? []) : [];
+  const isMultiConjunto = currentAdsets.length >= 2;
+  const wantsAddSegment = (patch.addSegment?.length ?? 0) > 0;
+  const wantsRemoveSegment = (patch.removeSegment?.length ?? 0) > 0;
+  const wantsConjuntoOp = wantsAddSegment || wantsRemoveSegment;
+  // Editar o público de UM conjunto do teste (não a lista de conjuntos) por aqui seria um no-op na
+  // entrega (o multi entrega por `adsets`, não por `targeting`) OU ambíguo (qual conjunto?). Bloqueio
+  // honesto: por aqui eu adiciono/removo conjuntos INTEIROS; editar o público de um é no site.
+  if (patchTouchesSinglePublico(patch) && (isMultiConjunto || wantsConjuntoOp)) {
+    return {
+      kind: "blocked",
+      reason:
+        'esse rascunho é um teste de público (vários conjuntos). Por aqui eu adiciono ou removo conjuntos inteiros — "adiciona um conjunto de corredores", "tira o conjunto 2" — mas pra mexer no público de um conjunto específico, edite cada um no site.',
+    };
+  }
+  if (kind === "from_scratch" && (wantsAddSegment || wantsRemoveSegment)) {
+    let base: AdsetSpec[] = [...currentAdsets];
+    const wasSingle = !isMultiConjunto;
+    // remover primeiro (índices sobre a lista ATUAL) — só faz sentido num teste JÁ multi-conjunto.
+    if (wantsRemoveSegment) {
+      if (!isMultiConjunto) {
+        return { kind: "blocked", reason: 'esse rascunho tem só 1 conjunto — não tem conjunto pra remover. Pra testar públicos, me diz quais (ex: "testa interesse A e B").' };
+      }
+      base = [...removeAdsetsAt(base, patch.removeSegment ?? [])];
+    }
+    // adicionar: rascunho de 1 conjunto → o público ATUAL vira o conjunto 1 (converte em teste).
+    if (wantsAddSegment) {
+      if (wasSingle) base = [seedAdsetFromSingle(spec)];
+      for (const seg of patch.addSegment ?? []) {
+        const label = seg.label?.trim() || `Conjunto ${base.length + 1}`;
+        const segAud = await prepareAudiences(deps, ctx, ac.ref, seg.audiences ?? [], []);
+        if (segAud.kind === "blocked") return { kind: "blocked", reason: `no público do conjunto "${label}": ${segAud.reason}` };
+        const segInt = await prepareInterests(deps, ac.ref, seg.interests ?? []);
+        if (segInt.kind === "blocked") return { kind: "blocked", reason: `no público do conjunto "${label}": ${segInt.reason}` };
+        const parts: ExplicitTargetingParts = {
+          geo: [],
+          ...(segInt.interests.length > 0 ? { interests: segInt.interests } : {}),
+          ...(segAud.includeIds.length > 0 ? { includeAudienceIds: segAud.includeIds } : {}),
+        };
+        const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasExplicitContent(parts) ? assembleExplicitTargeting(parts) : { kind: "advantage_plus" };
+        base.push({ name: label, targeting });
+      }
+    }
+    if (base.length === 0) {
+      return { kind: "blocked", reason: "toda campanha precisa de pelo menos um público — não dá pra remover todos os conjuntos." };
+    }
+    if (base.length >= 2) {
+      edit.adsets = base;
+      // teste de público = verba ÚNICA na campanha (CBO), dividida entre os conjuntos: isola a
+      // variável público E evita N× o gasto (no ABO cada conjunto novo cairia no diário cheio do
+      // spec). Conversão single→multi FORÇA CBO; num teste já multi, respeita o budgetMode existente.
+      if (wasSingle || !spec.budgetMode) edit.budgetMode = "cbo";
+      if (wasSingle) {
+        refineNotes.push("Virei um teste de público: mesmo criativo em todos os conjuntos (pra comparar só o público), orçamento único na campanha. Criativo diferente por conjunto é no site.");
+      }
+    } else {
+      // colapsou pra 1 conjunto → volta a campanha de 1 conjunto (público único). `adsets: []` limpa.
+      edit.adsets = [];
+      const only = base[0]!;
+      if (only.targeting) edit.targeting = only.targeting;
+      if (only.name) edit.adsetName = only.name;
+      refineNotes.push("Voltei pra 1 conjunto só.");
+    }
   }
 
   // público (só from_scratch): thunk lazy (broad/keep não tocam a conta). O reuse SEMPRE nasce com
@@ -2685,13 +2788,7 @@ export async function proposeCreateCampaign(
   // C2 producer: teste de público → lista os N conjuntos (nome + público), mesmo criativo. Senão,
   // a linha de público única.
   if (segmentAdsets) {
-    const conjuntos = segmentAdsets
-      .map((as, i) => {
-        const pub = as.targeting?.kind === "explicit" ? describeExplicitAudience(as.targeting) : "amplo (a Meta escolhe)";
-        return `  ${i + 1}. *${as.name ?? `Conjunto ${i + 1}`}* — ${pub}`;
-      })
-      .join("\n");
-    lines.push(`Teste de público, **${segmentAdsets.length} conjuntos** (mesmo criativo em todos, pra comparar só o público):\n${conjuntos}`);
+    lines.push(describeConjuntosBlock(segmentAdsets));
   } else {
     lines.push(`Público: ${audiencePhrase}.`);
   }

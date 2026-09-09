@@ -553,6 +553,18 @@ export function makeConversationTools(
       addAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a INCLUIR, pelo NOME — eu resolvo pro público real e pergunto se ambíguo"),
       excludeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a EXCLUIR, pelo NOME"),
       removeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a TIRAR do rascunho (incluir/excluir), pelo NOME"),
+      addSegment: z
+        .array(
+          z.object({
+            label: z.string().min(1).nullable().optional().describe("nome do conjunto (ex: 'Corredores'); omitido = 'Conjunto N'"),
+            audiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) desse conjunto, pelo NOME"),
+            interests: z.array(z.string()).nullable().optional().describe("interesse(s) desse conjunto — eu busco na Meta e pergunto se ambíguo"),
+          }),
+        )
+        .nullable()
+        .optional()
+        .describe("ADICIONAR conjunto(s) ao teste de público ('adiciona um conjunto de corredores'). Cada um vira um conjunto com SEU público (mesmo criativo em todos, pra comparar só o público). Se o rascunho tinha 1 conjunto, viro um teste multi-conjunto (o público atual é o 1º; orçamento único na campanha). Criativo diferente por conjunto é no site."),
+      removeSegment: z.array(z.number().int().min(0)).nullable().optional().describe("REMOVER conjunto(s) do teste de público pelo NÚMERO começando em 0 (o 1º = 0). Sobrar 1 = volta a campanha de 1 conjunto."),
       distinctCreatives: z.number().int().positive().nullable().optional().describe("RECOMPOR a distribuição de criativos: quantos DIFERENTES entre os anúncios (o resto repete). Ex: 'deixa 2 iguais e 2 diferentes' num rascunho de 4 = distinctCreatives 3. EU escolho quais."),
       mediaPreference: z.enum(["video", "image", "mixed"]).nullable().optional().describe("recompor com mídia 'video'/'image'/'mixed'. EU escolho quais assets."),
       setAdCreative: z

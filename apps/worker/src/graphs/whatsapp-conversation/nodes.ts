@@ -869,6 +869,12 @@ export function makeConversationNodes(
                 const sets = parseSetAdCreative(a["setAdCreative"]);
                 return sets.length > 0 ? { setAdCreative: sets } : {};
               })(),
+              // P2: adicionar/remover CONJUNTO do teste de público (reusa parseSegments do create).
+              ...((): { addSegment?: ReturnType<typeof parseSegments> } => {
+                const segs = parseSegments(a["addSegment"]);
+                return segs.length > 0 ? { addSegment: segs } : {};
+              })(),
+              ...(Array.isArray(a["removeSegment"]) ? { removeSegment: a["removeSegment"].filter((x): x is number => typeof x === "number" && Number.isInteger(x) && x >= 0) } : {}),
             };
       const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
       if (res.kind === "blocked") {

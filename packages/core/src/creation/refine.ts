@@ -1,5 +1,6 @@
 import {
   type AdsetSpec,
+  type BudgetMode,
   type CampaignDraftSpec,
   type ConversionGoal,
   type CopyVariant,
@@ -82,6 +83,9 @@ export interface DraftEdit {
    *  já resolvida). Vazio/1 = volta a single-conjunto. A casca converte público explícito →
    *  TargetingSpec + orçamento → dailyBudgetMinor antes de passar. */
   readonly adsets?: readonly AdsetSpec[];
+  /** Onde a verba mora (P2 — a conversão single→multi de um teste de público nasce CBO: verba única
+   *  na campanha, dividida entre os conjuntos). Só faz sentido junto com `adsets`. */
+  readonly budgetMode?: BudgetMode;
   readonly creative?: CreativeAssetRef;
   readonly copyVariants?: readonly CopyVariant[];
   /** PÁGINA de destino (object_story_spec) resolvida pela casca a partir do nome/número dito pelo dono
@@ -120,6 +124,7 @@ const FROM_SCRATCH_ONLY: readonly (keyof DraftEdit)[] = [
   "pixelId",
   "targeting",
   "adsets",
+  "budgetMode",
   "creative",
   "copyVariants",
   "linkUrl",
@@ -136,6 +141,29 @@ function clampBudget(requestedMinor: number, capMinor: number | null | undefined
  * `kind` vem da linha `campaign_drafts` (o spec não carrega). IO (targeting/creative/copy/pixel)
  * já resolvida na casca. Retorna erro TIPADO (§13) — a casca traduz p/ mensagem amigável.
  */
+/**
+ * Remove conjuntos por índice (P2 — paridade com remover anúncio no chat). Índices fora da faixa ou
+ * repetidos são ignorados; a ordem dos restantes é preservada. PURO — a casca resolve o público dos
+ * conjuntos que ADICIONA; a remoção é pura manipulação da lista.
+ */
+export function removeAdsetsAt(adsets: readonly AdsetSpec[], indices: readonly number[]): readonly AdsetSpec[] {
+  const drop = new Set(indices);
+  return adsets.filter((_, i) => !drop.has(i));
+}
+
+/**
+ * Semeia o 1º conjunto de um teste multi-conjunto a partir de um rascunho de 1 conjunto (P2 —
+ * "adiciona um conjunto" converte o público ATUAL no conjunto 1, e os novos entram como 2, 3…). PURO:
+ * leva o nome + o público atuais; público ausente/amplo → `advantage_plus` explícito (honesto). O
+ * orçamento não vai pro conjunto aqui — o teste de público nasce CBO (verba única na campanha).
+ */
+export function seedAdsetFromSingle(spec: Pick<CampaignDraftSpec, "adsetName" | "targeting">): AdsetSpec {
+  return {
+    ...(spec.adsetName ? { name: spec.adsetName } : {}),
+    targeting: spec.targeting ?? { kind: "advantage_plus" },
+  };
+}
+
 export function applyDraftEdit(
   kind: DraftKind,
   spec: CampaignDraftSpec,
@@ -180,6 +208,7 @@ export function applyDraftEdit(
     ...(edit.pixelId !== undefined ? { pixelId: edit.pixelId } : {}),
     ...(edit.targeting !== undefined ? { targeting: edit.targeting } : {}),
     ...(nextAdsets ? { adsets: nextAdsets } : {}),
+    ...(edit.budgetMode !== undefined ? { budgetMode: edit.budgetMode } : {}),
     ...(edit.creative !== undefined ? { creative: edit.creative } : {}),
     ...(edit.pageId !== undefined ? { pageId: edit.pageId } : {}),
     ...(edit.copyVariants !== undefined ? { copyVariants: edit.copyVariants, variantsCount: edit.copyVariants.length } : {}),
