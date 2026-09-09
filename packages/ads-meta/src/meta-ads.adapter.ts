@@ -510,6 +510,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async getImageUrlByHash(account: AdAccountRef, imageHash: string): Promise<string | null> {
+    try {
+      return await this.creatives.imageUrlByHash(account, imageHash);
+    } catch {
+      return null; // best-effort: a miniatura nunca derruba o fluxo (o card cai no placeholder)
+    }
+  }
+
   async getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination> {
     try {
       return await this.whatsapp.resolve(account, campaignId);

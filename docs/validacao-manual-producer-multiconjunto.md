@@ -227,6 +227,30 @@
 
 ---
 
+## Bloco H — Miniatura de criativo hash-based (Fase 3)
+
+Anúncio de **imagem** reusado da conta costuma trazer a imagem só em
+`object_story_spec.link_data.image_hash` — a Graph **não** preenche `creative.image_url` no topo. Antes,
+o card do rascunho e o picker caíam em **"sem prévia"** (só o vídeo resolvia, via `video_id`). Agora o
+`resolveLiveThumbUrl` resolve a URL pelo `image_hash` (fonte estável) via `getImageUrlByHash`
+(`GET /act_<id>/adimages?hashes=["<hash>"]&fields=url`), com fallback pro `getCreatives(adId).imageUrl`.
+
+### H1. Card do rascunho mostra a miniatura da imagem
+- **Ação:** propor um rascunho reusando um **anúncio de imagem** da conta (hash-based). Abrir o card em
+  `/approvals`.
+- **Esperado:** a miniatura da imagem **aparece** (não mais "sem prévia"); o vídeo continua com capa.
+
+### H2. Picker de criativo de anúncio da conta
+- **Ação:** no painel, abrir o picker de criativo de um anúncio de imagem hash-based.
+- **Esperado:** a prévia carrega (resolvida pelo hash).
+
+### H3. Degradação honesta — hash inacessível
+- **Ação:** hash indisponível/sem permissão (best-effort).
+- **Esperado:** cai no `getCreatives` e, se ainda vazio, mostra o placeholder "sem prévia" — **nunca**
+  derruba o fluxo (o adapter engole o erro e devolve `null`).
+
+---
+
 ## Suítes automatizadas (referência)
 
 - `pnpm --filter @trafego/core test` — 899 verdes (inclui `removeAdsetsAt`, `seedAdsetFromSingle`,

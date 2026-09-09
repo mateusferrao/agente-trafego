@@ -185,12 +185,19 @@ export function createDraftsService(deps: DraftsServiceDeps) {
    *  frame HD (`getVideoFrames`), fallback thumbnail do anúncio; imagem → imagem do anúncio. Fonte
    *  ÚNICA do reuse (miniatura de rascunho + de anúncio da conta). A URL do fbcdn expira → o caller
    *  baixa os bytes na hora (`fetchThumbImage`) e nunca a manda crua pro browser. */
-  async function resolveLiveThumbUrl(ref: AdAccountRef, adId: string, videoId: string | null): Promise<string | undefined> {
+  async function resolveLiveThumbUrl(ref: AdAccountRef, adId: string, videoId: string | null, imageHash?: string | null): Promise<string | undefined> {
     if (videoId) {
       const frame = (await deps.adsPlatform.getVideoFrames(ref, videoId))[0];
       if (frame) return frame;
       const [c] = await deps.adsPlatform.getCreatives(ref, [adId]);
       return c?.thumbnailUrl ?? c?.imageUrl;
+    }
+    // IMAGEM: o `image_url` no topo do criativo do anúncio costuma vir VAZIO em criativos hash-based
+    // (`object_story_spec.link_data.image_hash`) → resolve pelo `image_hash` (fonte estável) PRIMEIRO;
+    // fallback pro `getCreatives(adId).imageUrl` (anúncio sem hash à mão). Era a causa do "sem prévia".
+    if (imageHash) {
+      const byHash = await deps.adsPlatform.getImageUrlByHash(ref, imageHash);
+      if (byHash) return byHash;
     }
     const [c] = await deps.adsPlatform.getCreatives(ref, [adId]);
     return c?.imageUrl ?? c?.thumbnailUrl;
@@ -988,7 +995,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
 
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return null;
-      const url = await resolveLiveThumbUrl(ctx.ref, adId, row.videoId ?? null);
+      const url = await resolveLiveThumbUrl(ctx.ref, adId, row.videoId ?? null, row.imageHash);
       if (!url) return null;
       const img = await fetchThumbImage(url);
       return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;
@@ -1046,7 +1053,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       // frames HD do vídeo — MAS o System User token pode não ter permissão pro endpoint
       // `/{video_id}?fields=thumbnails` (erro Meta #10). Sem frames, cai no thumbnail do ANÚNCIO
       // (getCreatives), que é acessível — o card é 64px, então o selo já basta. (helper compartilhado)
-      const url = await resolveLiveThumbUrl(ctx.ref, creative.assetId, creative.format === "video" ? creative.metaVideoId ?? null : null);
+      const url = await resolveLiveThumbUrl(ctx.ref, creative.assetId, creative.format === "video" ? creative.metaVideoId ?? null : null, creative.metaImageHash);
       if (!url) return null;
       const img = await fetchThumbImage(url);
       return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;

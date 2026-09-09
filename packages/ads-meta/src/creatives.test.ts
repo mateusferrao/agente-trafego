@@ -193,3 +193,28 @@ describe("MetaCreativesService.videoFrames (visão da biblioteca)", () => {
     expect(await svc.videoFrames(account, "VID2")).toEqual([]);
   });
 });
+
+describe("MetaCreativesService.imageUrlByHash (miniatura de imagem hash-based)", () => {
+  /** GET simples (não-batch) → { data: [{ hash, url }] }. */
+  function stubGet(body: unknown) {
+    const spy = vi.fn(async (..._args: unknown[]) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", spy);
+    return spy;
+  }
+  it("resolve a URL pelo hash em /act_<id>/adimages?hashes=[hash]&fields=url", async () => {
+    const spy = stubGet({ data: [{ hash: "H1", url: "http://cdn/h1.jpg" }] });
+    const url = await makeService().imageUrlByHash(account, "H1");
+    expect(url).toBe("http://cdn/h1.jpg");
+    const calledUrl = String(spy.mock.calls[0]![0]);
+    expect(calledUrl).toContain("act_123/adimages");
+    expect(decodeURIComponent(calledUrl)).toContain('hashes=["H1"]');
+  });
+  it("casa pelo hash quando a Meta devolve vários", async () => {
+    stubGet({ data: [{ hash: "OTHER", url: "http://x" }, { hash: "H1", url: "http://cdn/h1.jpg" }] });
+    expect(await makeService().imageUrlByHash(account, "H1")).toBe("http://cdn/h1.jpg");
+  });
+  it("sem match / lista vazia → null", async () => {
+    stubGet({ data: [] });
+    expect(await makeService().imageUrlByHash(account, "NOPE")).toBeNull();
+  });
+});

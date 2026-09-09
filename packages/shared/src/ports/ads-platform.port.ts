@@ -298,6 +298,11 @@ export interface AdsPlatformPort {
   getAdMetrics(account: AdAccountRef, window: string): Promise<AdMetric[]>;
   /** Frames HD (URLs) de um vídeo por `video_id` — p/ a visão de criativo da biblioteca. */
   getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]>;
+  /** URL da imagem de um criativo a partir do seu `image_hash` — `GET /act_<id>/adimages?
+   *  hashes=[hash]&fields=url`. Anúncios de imagem montados com `object_story_spec.link_data.
+   *  image_hash` NÃO expõem `creative.image_url`; o hash é a fonte ESTÁVEL da miniatura (card do
+   *  rascunho / picker "anúncios da conta"). Best-effort: hash inacessível/indisponível → null. */
+  getImageUrlByHash(account: AdAccountRef, imageHash: string): Promise<string | null>;
   /**
    * Resolve o número de WhatsApp de DESTINO de uma campanha (Fatia 7), escopado à campanha:
    * CTA do criativo (`meta_cta`) → Página conectada (`meta_page`) → nome da campanha
