@@ -288,11 +288,13 @@ export interface AdsPlatformPort {
    */
   getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination>;
   /** Info de UMA Página pelo id (nome + WhatsApp conectado) — pra mostrar/confirmar o DESTINO de uma
-   *  campanha de conversas NO RASCUNHO (o número é da Página, conhecível antes de criar). `number`
-   *  best-effort: a Meta frequentemente não expõe o `whatsapp_number` da Página (403/vazio) → null. */
+   *  campanha de conversas NO RASCUNHO. O NOME vem do nó da Página e, se o token não tem a Página como
+   *  ativo (403), das PÁGINAS DO NEGÓCIO (fallback confiável via `listPages`). `number` é best-effort:
+   *  a Meta raramente expõe o `whatsapp_number` da Página (o número real mora no conjunto pós-criação). */
   getPageWhatsappInfo(account: AdAccountRef, pageId: string): Promise<PageInfo>;
-  /** Páginas da conta (id/nome + WhatsApp conectado de cada) — pra o dono ESCOLHER a Página/número
-   *  de destino quando há N. Best-effort/bounded: sem acesso/permissão → lista vazia (honesto). */
+  /** Páginas que a conta pode usar como destino (id + nome) — pra o dono ESCOLHER quando há N e pra
+   *  resolver o nome de uma Página. Fonte: páginas do NEGÓCIO dono da conta (owned + client_pages),
+   *  confiável. Sem negócio/acesso → lista vazia (honesto). `number` não vem daqui (best-effort só no nó). */
   listPages(account: AdAccountRef): Promise<PageInfo[]>;
   /** Lista os custom/saved audiences da conta (Fatia 7) — remarketing/exclusões reais. */
   listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;

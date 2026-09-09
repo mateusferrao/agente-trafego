@@ -1514,10 +1514,10 @@ export async function listAudiencesData(
 }
 
 /**
- * Páginas do Facebook que a conta pode usar como DESTINO (W2 — o dono tem N Páginas/números). Chamada
- * ao vivo (sem cache — o catálogo de Páginas muda raro e não temos tabela); best-effort: sem acesso
- * (403) ou nenhuma → nota honesta. Em campanha de conversas, a Página define pra qual WhatsApp o
- * clique leva; o `whatsappNumber` é best-effort (a Meta nem sempre expõe).
+ * Páginas do Facebook que a conta pode usar como DESTINO (W2 — o dono tem N Páginas). Chamada ao vivo
+ * (sem cache — o catálogo de Páginas muda raro e não temos tabela); fonte = páginas do negócio dono
+ * da conta (nome confiável); best-effort: sem negócio/acesso → nota honesta. Em campanha de conversas,
+ * a Página define pra qual WhatsApp o clique leva. O número por Página não vem daqui (só o nome).
  */
 export async function listPagesData(
   deps: WorkerDeps,
@@ -1539,7 +1539,7 @@ export async function listPagesData(
   if (pages.length === 0)
     return {
       hasData: false,
-      note: "não consegui listar suas Páginas agora — a Meta às vezes não retorna isso com o acesso do token, e isso NÃO quer dizer que não há Página ligada. A criação usa a Página do seu anúncio ativo; se você quer uma Página específica, me diga o nome ou o número.",
+      note: "não consegui listar suas Páginas agora — a Meta às vezes não retorna isso com o acesso do token, e isso NÃO quer dizer que não há Página ligada. A criação usa a Página do seu anúncio ativo; se você quer uma Página específica, me diga o nome dela.",
     };
   return { hasData: true, pages };
 }
