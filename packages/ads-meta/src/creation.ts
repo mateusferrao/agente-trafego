@@ -20,11 +20,14 @@ import type { MetaGovernor } from "./governor.js";
 import { normalizeAdAccountId } from "./ids.js";
 import { audienceFromTargeting, type RawTargeting } from "./meta-audience-map.js";
 import {
+  isWhatsappDestinationGoal,
   objectiveFromAdSet,
   objectiveFromCampaign,
   resolveAdSetConversion,
   resolveMetaCta,
   resolveMetaObjective,
+  whatsappCreativeCta,
+  WHATSAPP_SEND_LINK,
 } from "./meta-conversion-map.js";
 import { copyOf, creativeFormatOf, isReusableCreative, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
 import { DEFAULT_TARGETING_GEO_COUNTRY, explicitTargetingToRaw } from "./targeting-map.js";
@@ -667,16 +670,23 @@ export class MetaCreationService {
   }
 
   async createAdCreative(account: AdAccountRef, input: CreateAdCreativeInput): Promise<{ creativeId: string }> {
+    // CTWA (conversas no WhatsApp): o criativo NÃO é de site. Precisa do CTA `WHATSAPP_MESSAGE` +
+    // link genérico `api.whatsapp.com/send` (o número real vem do `promoted_object` do conjunto,
+    // `destination_type: WHATSAPP`). Um criativo de site (CTA de link + link do site) é recusado com
+    // "criativo inválido para o objetivo" + "campo de link obrigatório" (que foi o incidente).
+    const whatsapp = isWhatsappDestinationGoal(input.goal);
+    // link do criativo: WhatsApp → deep-link genérico; site → o link resolvido (site/tráfego).
+    const creativeLink = whatsapp ? WHATSAPP_SEND_LINK : input.linkUrl;
+    const callToAction = whatsapp
+      ? whatsappCreativeCta()
+      : { type: resolveMetaCta(input.copy.cta), ...(input.linkUrl ? { value: { link: input.linkUrl } } : {}) };
     const linkData: Record<string, unknown> = {
       message: input.copy.primaryText,
       name: input.copy.headline,
       ...(input.copy.description ? { description: input.copy.description } : {}),
-      ...(input.linkUrl ? { link: input.linkUrl } : {}),
+      ...(creativeLink ? { link: creativeLink } : {}),
       ...(input.imageHash ? { image_hash: input.imageHash } : {}),
-      call_to_action: {
-        type: resolveMetaCta(input.copy.cta),
-        ...(input.linkUrl ? { value: { link: input.linkUrl } } : {}),
-      },
+      call_to_action: callToAction,
     };
     const objectStorySpec: Record<string, unknown> = { page_id: input.pageId };
     if (input.videoId) {
@@ -690,10 +700,7 @@ export class MetaCreationService {
         title: input.copy.headline,
         ...(input.copy.description ? { link_description: input.copy.description } : {}),
         ...(input.imageHash ? { image_hash: input.imageHash } : thumbUrl ? { image_url: thumbUrl } : {}),
-        call_to_action: {
-          type: resolveMetaCta(input.copy.cta),
-          ...(input.linkUrl ? { value: { link: input.linkUrl } } : {}),
-        },
+        call_to_action: callToAction,
       };
     } else {
       objectStorySpec["link_data"] = linkData;

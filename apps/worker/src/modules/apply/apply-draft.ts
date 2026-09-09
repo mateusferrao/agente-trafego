@@ -492,6 +492,7 @@ async function runFromScratchSaga(
       const { creativeId } = await ads.createAdCreative(ref, {
         name: `${name} — criativo ${i + 1}`,
         pageId: spec.pageId!,
+        goal, // CTWA: o criativo muda por objetivo (WhatsApp exige CTA/link próprios)
         ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
         ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
         ...(spec.linkUrl ? { linkUrl: spec.linkUrl } : {}),

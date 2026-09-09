@@ -583,6 +583,12 @@ Conversa real: o dono pediu uma campanha de conversas, o Roy montou o rascunho, 
 1. Com um rascunho de conversas pendente, "qual página?" / "pra qual WhatsApp vai?" → o Roy chama `get_pending_draft` e lê o campo `destino`: nomeia a Página + número quando a Meta expõe; senão descreve pela **proveniência** ("o WhatsApp da Página do seu anúncio ativo") e afirma que a Página **está definida** e a campanha **pode ser criada**. Nunca vaza id cru. ✓
 2. `list_pages` vazio → a nota diz que **não conseguiu listar** (limite de visibilidade), *nunca* "não há Página ligada". O Roy nunca pede pra "verificar se há Página conectada" nem diz "sem Página não dá pra criar" havendo rascunho pendente. ✓
 
+### S16-8 — Criativo de conversas é CTWA de verdade (não criativo de site) — incidente real
+Reportado: criar uma campanha de conversas falhou na Meta com "Criativo inválido para o objetivo" + "O campo de link é obrigatório", criando só uma campanha parcial (o 1º anúncio falhou e travou o resto). Causa: reusávamos o criativo do melhor anúncio (de SITE, CTA "Saiba mais" + link de site) e — como o objetivo de conversas ignora o link do site — montávamos um `link_data` de site SEM link. A Meta recusa: um anúncio CTWA precisa de outra estrutura.
+1. Criar campanha de `messaging_started` → o criativo nasce com CTA **`WHATSAPP_MESSAGE`** + link genérico **`https://api.whatsapp.com/send`** (o número real vem do `promoted_object` do conjunto, `destination_type: WHATSAPP`), tanto em imagem quanto em vídeo. Não é mais um CTA/link de site. ✓
+2. Objetivo de site/tráfego/conversão segue com o CTA e link do site (comportamento anterior intacto). ✓
+3. O conjunto já estava correto (`CONVERSATIONS` + `destination_type: WHATSAPP` + `promoted_object.page_id`) — o fix é só o criativo. ✓
+
 ### S16-7 — Nome da Página vem das páginas do NEGÓCIO (owned/client_pages) — item 1
 Antes o nome saía só da leitura direta do nó da Página (`GET /{page_id}?fields=name`), que dá 403 quando o token não tem a Página como ativo — então o Roy raramente sabia o nome. Agora:
 1. `getPageWhatsappInfo` tenta o nó direto (nome + número) e, se não vier o nome, cai nas **páginas do negócio** dono da conta (`business{owned_pages,client_pages}`) — fonte confiável do nome mesmo sem a Página atribuída ao System User. Em conta bem-configurada, o Roy passa a **dizer o nome** ("Página *X*"). ✓

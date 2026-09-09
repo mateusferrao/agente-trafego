@@ -789,6 +789,7 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
     const r = await svc().createAdCreative(account, {
       name: "cr img",
       pageId: "PAGE1",
+      goal: "purchase",
       imageHash: "IMGHASH",
       linkUrl: "https://ex.com/lp",
       copy,
@@ -813,6 +814,7 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
     await svc().createAdCreative(account, {
       name: "cr vid",
       pageId: "PAGE1",
+      goal: "purchase",
       videoId: "VID1",
       linkUrl: "https://ex.com/lp",
       copy,
@@ -831,7 +833,7 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
 
   it("VÍDEO com imageHash → usa a capa dada (image_hash) e NÃO busca thumbnail", async () => {
     const { posts } = stubCreativeGraph("https://cover.jpg");
-    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", videoId: "VID1", imageHash: "COVERHASH", copy });
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", goal: "purchase", videoId: "VID1", imageHash: "COVERHASH", copy });
     const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
     expect(oss.video_data.image_hash).toBe("COVERHASH");
     expect(oss.video_data.image_url).toBeUndefined();
@@ -839,11 +841,31 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
 
   it("VÍDEO sem capa disponível → cria mesmo assim, sem image_url (o caller decide)", async () => {
     const { posts } = stubCreativeGraph(null); // vídeo sem thumbnails
-    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", videoId: "VID1", copy });
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", goal: "purchase", videoId: "VID1", copy });
     const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
     expect(oss.video_data.video_id).toBe("VID1");
     expect(oss.video_data.image_url).toBeUndefined();
     expect(oss.video_data.image_hash).toBeUndefined();
+  });
+
+  it("CONVERSAS (messaging_started) IMAGEM → CTA WHATSAPP_MESSAGE + link genérico (não CTA/link de site)", async () => {
+    // regressão do incidente "criativo inválido para o objetivo" + "campo de link obrigatório":
+    // um criativo de conversas precisa do CTA de WhatsApp + link api.whatsapp.com/send (o número real
+    // vem do promoted_object do conjunto), NUNCA um CTA de site sem link.
+    const { posts } = stubCreativeGraph(null);
+    await svc().createAdCreative(account, { name: "cr wa", pageId: "PAGE1", goal: "messaging_started", imageHash: "IMGHASH", copy });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.link_data.link).toBe("https://api.whatsapp.com/send"); // link SEMPRE presente (senão "campo obrigatório")
+    expect(oss.link_data.call_to_action.type).toBe("WHATSAPP_MESSAGE"); // não SIGN_UP/LEARN_MORE
+    expect(oss.link_data.call_to_action.value).toMatchObject({ app_destination: "WHATSAPP", link: "https://api.whatsapp.com/send" });
+  });
+
+  it("CONVERSAS (messaging_started) VÍDEO → mesmo CTA de WhatsApp no video_data", async () => {
+    const { posts } = stubCreativeGraph("https://cover.jpg");
+    await svc().createAdCreative(account, { name: "cr wa vid", pageId: "PAGE1", goal: "messaging_started", videoId: "VID1", copy });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.video_data.call_to_action.type).toBe("WHATSAPP_MESSAGE");
+    expect(oss.video_data.call_to_action.value).toMatchObject({ app_destination: "WHATSAPP", link: "https://api.whatsapp.com/send" });
   });
 });
 

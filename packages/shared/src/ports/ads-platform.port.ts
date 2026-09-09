@@ -166,6 +166,9 @@ export interface CreateAdSetInput {
 export interface CreateAdCreativeInput {
   readonly name: string;
   readonly pageId: string;
+  /** objetivo da campanha — o criativo muda por ele: conversas no WhatsApp (messaging_started) exige
+   *  CTA de WhatsApp + link genérico (não um CTA/link de site), senão a Meta recusa o criativo. */
+  readonly goal: ConversionGoal;
   readonly imageHash?: string;
   readonly videoId?: string;
   readonly linkUrl?: string;
