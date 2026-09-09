@@ -22,6 +22,7 @@ export * from "./analysis-guards/index.js";
 export * from "./scale-ressalvas/index.js";
 export * from "./activation/index.js";
 export * from "./matching/index.js";
+export * from "./matching/disambiguation.js";
 export * from "./chat-guards/index.js";
 export * from "./cost-cap/index.js";
 export * from "./message/index.js";

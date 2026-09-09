@@ -373,9 +373,22 @@ export async function loadAccountAudiences(deps: WorkerDeps, ctx: DraftProposalC
   return live;
 }
 
+/**
+ * Opções congeladas de uma desambiguação numerada (D1). Quando um resolvedor de público/
+ * interesse/geo acha 2+ candidatos, além da mensagem "Qual desses? 1..." ele devolve ISTO —
+ * o gate guarda no estado e o próximo turno resolve determinístico (índice/nome), sem o LLM
+ * reconstruir a intenção (fim do "1" virar outra coisa). Só nas trilhas de ADIÇÃO (re-rodar
+ * pelo nome exato aplica como "add") — nunca narrow/exclude/remove.
+ */
+export interface DisambiguationFreeze {
+  readonly field: "addInterests" | "geo" | "audience" | "page";
+  readonly query: string;
+  readonly options: readonly { readonly index: number; readonly id: string; readonly name: string }[];
+}
+
 type AudiencePrep =
   | { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[]; readonly sizeWarnings: string[]; readonly dropped: string[] }
-  | { readonly kind: "blocked"; readonly reason: string };
+  | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
 
 /**
  * Resolve os públicos pedidos (por NOME/descrição) → ids, de forma DETERMINÍSTICA (mesmo
@@ -401,19 +414,24 @@ async function prepareAudiences(
   const acc = { name: (a: CustomAudience) => a.name, keys: (a: CustomAudience) => [a.id] };
   const dropped: string[] = [];
 
-  const resolve = (q: string): { id: string } | { blocked: string } | { drop: true } => {
+  const resolve = (q: string): { id: string } | { blocked: string; options?: readonly { index: number; id: string; name: string }[] } | { drop: true } => {
     const m = resolveNamedMatch(audiences, q, acc);
     if (m.kind === "one") return { id: m.row.id };
     if (autonomous) return { drop: true }; // proativo: ambíguo/inexistente → descarta
     if (m.kind === "none") return { blocked: `não achei um público chamado "${q}" na conta. Chega perto? me diga o nome exato (posso listar com "quais públicos eu tenho").` };
     const opts = m.rows.map((r, i) => `${i + 1}. ${r.name}`).join("\n");
-    return { blocked: `achei mais de um público parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)` };
+    return {
+      blocked: `achei mais de um público parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)`,
+      options: m.rows.map((r, i) => ({ index: i + 1, id: r.id, name: r.name })),
+    };
   };
 
   const includeIds: string[] = [];
   for (const q of includeQueries) {
     const r = resolve(q);
-    if ("blocked" in r) return { kind: "blocked", reason: r.blocked };
+    // freeze só na INCLUSÃO (D1): re-rodar pelo nome aplica como addAudiences — exclusão iria pro
+    // caminho errado, então exclusão ambígua segue sem congelar (cai pro LLM).
+    if ("blocked" in r) return { kind: "blocked", reason: r.blocked, ...(r.options ? { disambiguation: { field: "audience", query: q, options: r.options } } : {}) };
     if ("drop" in r) { dropped.push(q); continue; }
     includeIds.push(r.id);
   }
@@ -457,7 +475,7 @@ const MAX_GEO_AMBIGUOUS_OPTIONS = 5;
 type GeoKind = "country" | "region" | "city" | "neighborhood";
 type GeoPrep =
   | { readonly kind: "ok"; readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: GeoKind }[]; readonly dropped: readonly string[] }
-  | { readonly kind: "blocked"; readonly reason: string };
+  | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
 
 /**
  * Resolve geo pedida (por NOME) → lugar real na Meta. Honestidade: 1 match/exato → resolve; 0 →
@@ -489,11 +507,15 @@ async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly
     // endereço (a Meta geocodifica qualquer string) — cobre bairro fora do catálogo da Meta. O dono
     // aceita → o LLM re-chama com `addressAreas` (G3). Confere o nome como fallback secundário.
     if (matches.length === 0) return { kind: "blocked", reason: `não achei "${q}" como cidade, região ou bairro no catálogo da Meta. Mas dá pra mirar um RAIO em torno dele (a Meta localiza pelo endereço) — quer que eu use um raio de ~2 km em torno de "${q}"? Se preferir outro raio ou for outro nome, me diz.` };
-    const opts = matches
-      .slice(0, MAX_GEO_AMBIGUOUS_OPTIONS)
+    const capped = matches.slice(0, MAX_GEO_AMBIGUOUS_OPTIONS);
+    const opts = capped
       .map((m, i) => `${i + 1}. ${m.name}${m.countryCode ? ` (${m.countryCode})` : ""} — ${geoKindPt(m.kind)}`)
       .join("\n");
-    return { kind: "blocked", reason: `achei mais de um lugar parecido com "${q}":\n${opts}\nQual desses? (responda o número, ou me diz a cidade por extenso)` };
+    return {
+      kind: "blocked",
+      reason: `achei mais de um lugar parecido com "${q}":\n${opts}\nQual desses? (responda o número, ou me diz a cidade por extenso)`,
+      disambiguation: { field: "geo", query: q, options: capped.map((m, i) => ({ index: i + 1, id: m.key, name: m.name })) },
+    };
   }
   return { kind: "ok", geo: resolved, dropped };
 }
@@ -502,7 +524,7 @@ const MAX_INTEREST_AMBIGUOUS_OPTIONS = 5;
 
 type InterestPrep =
   | { readonly kind: "ok"; readonly interests: readonly { readonly id: string; readonly name: string }[]; readonly dropped: readonly string[] }
-  | { readonly kind: "blocked"; readonly reason: string };
+  | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
 
 /** Remove o QUALIFICADOR após a última vírgula (ex: "Belo Horizonte, MG" → "Belo Horizonte";
  *  "Buritis, Belo Horizonte" → "Buritis") — a busca de geo da Meta casa pelo nome do lugar, não pela
@@ -538,7 +560,10 @@ async function resolveDetailedTargeting(
   labelSingular: string,
   autonomous = false,
   timeoutMs?: number,
-): Promise<{ kind: "ok"; ref: { id: string; name: string } } | { kind: "blocked"; reason: string } | { kind: "dropped" }> {
+  // quando presente, uma ambiguidade CONGELA as opções p/ o próximo turno resolver (D1). Só o
+  // interesse passa (mapeia p/ `addInterests`); comportamento não tem campo de estado → não congela.
+  disambiguationField?: "addInterests",
+): Promise<{ kind: "ok"; ref: { id: string; name: string } } | { kind: "blocked"; reason: string; disambiguation?: DisambiguationFreeze } | { kind: "dropped" }> {
   // G18: a busca de público por NOME (N termos × ida à Meta) rodava SEM teto → um termo lento
   // estourava o `turnTimeoutMs` do turno inteiro e o dono recebia o fallback genérico sem próximo
   // passo. `withTimeout` por-termo → timeout DESCARTA o termo (honesto: "deixei de fora"), sem travar.
@@ -567,11 +592,15 @@ async function resolveDetailedTargeting(
   // AUTÔNOMO (proativo, sem humano): ambíguo/inexistente → DESCARTA (nunca pergunta, nunca chuta).
   if (autonomous) return { kind: "dropped" };
   if (matches.length === 0) return { kind: "blocked", reason: `não achei ${labelSingular} "${query}" — confere o termo?` };
-  const opts = matches
-    .slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS)
+  const capped = matches.slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS);
+  const opts = capped
     .map((m, i) => `${i + 1}. ${m.name}${humanAudienceSize(m.audienceSize)}${m.path && m.path.length > 0 ? ` — ${m.path.join(" > ")}` : ""}`)
     .join("\n");
-  return { kind: "blocked", reason: `achei mais de um ${labelSingular} parecido com "${query}":\n${opts}\nQual desses? (me diz o nome exato da opção)` };
+  return {
+    kind: "blocked",
+    reason: `achei mais de um ${labelSingular} parecido com "${query}":\n${opts}\nQual desses? (me diz o nome exato da opção)`,
+    ...(disambiguationField ? { disambiguation: { field: disambiguationField, query, options: capped.map((m, i) => ({ index: i + 1, id: m.id, name: m.name })) } } : {}),
+  };
 }
 
 /** Resolve interesses pedidos (por NOME) → ids reais. `autonomous` (proativo) descarta o não-resolvido
@@ -580,7 +609,7 @@ async function prepareInterests(deps: WorkerDeps, ref: AdAccountRef, queries: re
   const resolved: { id: string; name: string }[] = [];
   const dropped: string[] = [];
   for (const q of queries) {
-    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse", autonomous, deps.conversation?.liveFetchTimeoutMs);
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse", autonomous, deps.conversation?.liveFetchTimeoutMs, "addInterests");
     if (r.kind === "blocked") return r;
     if (r.kind === "dropped") dropped.push(q);
     else resolved.push(r.ref);
@@ -1107,7 +1136,9 @@ export interface RefineDraftPatch {
   readonly setPage?: string;
 }
 
-export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
+export type RefineResult =
+  | { readonly kind: "ok"; readonly echo: string }
+  | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
 
 type MutableEdit = { -readonly [K in keyof DraftEdit]: DraftEdit[K] };
 
@@ -1299,7 +1330,7 @@ export async function refineDraft(
     // 2) geo (add/remove) + idade + gênero
     if (patch.removeGeo?.length || patch.addGeo?.length || patch.ageMin != null || patch.ageMax != null || patch.gender != null) {
       const addGeoPrep = patch.addGeo?.length ? await prepareGeo(deps, ac.ref, patch.addGeo) : { kind: "ok" as const, geo: [] };
-      if (addGeoPrep.kind === "blocked") return { kind: "blocked", reason: addGeoPrep.reason };
+      if (addGeoPrep.kind === "blocked") return { kind: "blocked", reason: addGeoPrep.reason, ...(addGeoPrep.disambiguation ? { disambiguation: addGeoPrep.disambiguation } : {}) };
       const r = applyExplicitGeoEdit(expl, {
         ...(patch.removeGeo ? { removeGeo: patch.removeGeo } : {}),
         ...(addGeoPrep.geo.length > 0 ? { addGeo: addGeoPrep.geo } : {}),
@@ -1321,7 +1352,8 @@ export async function refineDraft(
     // 4) interesses (OR-widen / AND narrow / remove)
     if (patch.removeInterests?.length || patch.addInterests?.length || patch.narrowInterests?.length) {
       const addP = patch.addInterests?.length ? await prepareInterests(deps, ac.ref, patch.addInterests) : { kind: "ok" as const, interests: [] };
-      if (addP.kind === "blocked") return { kind: "blocked", reason: addP.reason };
+      if (addP.kind === "blocked") return { kind: "blocked", reason: addP.reason, ...(addP.disambiguation ? { disambiguation: addP.disambiguation } : {}) };
+      // narrow NÃO congela: re-rodar pelo nome aplicaria como addInterests (OR-widen), não narrow.
       const narrowP = patch.narrowInterests?.length ? await prepareInterests(deps, ac.ref, patch.narrowInterests) : { kind: "ok" as const, interests: [] };
       if (narrowP.kind === "blocked") return { kind: "blocked", reason: narrowP.reason };
       const r = applyExplicitInterestEdit(expl, {
@@ -1349,7 +1381,7 @@ export async function refineDraft(
     // 6) públicos salvos (incluir/excluir/remover, por NOME → id determinístico; ambíguo→pergunta)
     if (patch.addAudiences?.length || patch.excludeAudiences?.length || patch.removeAudiences?.length) {
       const add = await prepareAudiences(deps, ctx, ac.ref, patch.addAudiences ?? [], patch.excludeAudiences ?? []);
-      if (add.kind === "blocked") return { kind: "blocked", reason: add.reason };
+      if (add.kind === "blocked") return { kind: "blocked", reason: add.reason, ...(add.disambiguation ? { disambiguation: add.disambiguation } : {}) };
       const rem = patch.removeAudiences?.length ? await prepareAudiences(deps, ctx, ac.ref, patch.removeAudiences, []) : { kind: "ok" as const, includeIds: [], excludeIds: [], notes: [], sizeWarnings: [] };
       if (rem.kind === "blocked") return { kind: "blocked", reason: rem.reason };
       const rmSet = new Set(rem.includeIds);

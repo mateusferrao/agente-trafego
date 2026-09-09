@@ -23,6 +23,7 @@ import {
   entityKeyOf,
   flagUngroundedNumbers,
   resolveAgentConfigChange,
+  resolveDisambiguationChoice,
   riskForAction,
   type EchoItem,
   type GuardrailContext,
@@ -71,7 +72,7 @@ import { latestAnalysisAsOf, renderWhatsappNumber, resolveWhatsappNumber } from 
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
 import { runReallocationSaga } from "../../modules/apply/reallocation-saga.js";
-import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
+import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft, type RefineDraftPatch } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext, reallocKindPeriod, type BudgetPeriodKind } from "../../modules/apply/write-context.js";
 import { adHasNoBudgetMessage, resolveMisplacedBudgetMessage } from "./budget-location.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
@@ -80,6 +81,7 @@ import { createNotifyRepo } from "../../modules/notify/repo.js";
 import { applyPlaybookOp } from "../../modules/conversation/config-writes.js";
 import type {
   PendingConfigChange,
+  PendingDisambiguation,
   PendingDraft,
   PendingRevert,
   PendingWrite,
@@ -280,6 +282,34 @@ async function recoverOrNull(deps: WorkerDeps, dctx: DraftProposalContext): Prom
 /** pendingConfigChange ainda válido (não expirado)? */
 function activePendingConfig(pc: PendingConfigChange | null): PendingConfigChange | null {
   return pc && Date.parse(pc.expiresAt) > Date.now() ? pc : null;
+}
+
+/** pendingDisambiguation ainda válido (não expirado)? (D1) */
+function activePendingDisambiguation(pd: PendingDisambiguation | null): PendingDisambiguation | null {
+  return pd && Date.parse(pd.expiresAt) > Date.now() ? pd : null;
+}
+
+/** Texto da última mensagem do usuário (a resposta à desambiguação). */
+function lastHumanText(messages: readonly BaseMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m instanceof HumanMessage && typeof m.content === "string") return m.content;
+  }
+  return "";
+}
+
+/** Campo desambiguado → patch de refino com o NOME exato escolhido (re-roda o refine, casa 1:1). */
+function refinePatchForDisambiguation(field: PendingDisambiguation["field"], name: string): RefineDraftPatch {
+  switch (field) {
+    case "addInterests":
+      return { addInterests: [name] };
+    case "geo":
+      return { addGeo: [name] };
+    case "audience":
+      return { addAudiences: [name] };
+    case "page":
+      return { setPage: name };
+  }
 }
 
 /** Oferta de rodar a análise após uma mudança relevante (NÃO dispara sozinho — §8). */
@@ -573,6 +603,33 @@ export function makeConversationNodes(
   /** Nó ReAct: LLM (OpenRouter) com as tools da allowlist + voz do agente. */
   async function agent(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
     logger.debug({ actor: actorLabel(ctx.ref) }, "conversation:agent");
+
+    // D1: desambiguação numerada congelada — resolve DETERMINÍSTICO antes do LLM. O "1"/nome
+    // aplica o id direto (re-roda o refine com o nome exato → casa 1:1), sem o LLM reconstruir a
+    // intenção e escorregar pra regra mais saliente (o bug do "1" virar link). Ambíguo/fora → cai
+    // pro LLM normal (a pendência é single-shot: não fica renumerando).
+    const disamb = activePendingDisambiguation(state.pendingDisambiguation);
+    if (disamb) {
+      const choice = resolveDisambiguationChoice(disamb.options, lastHumanText(state.messages));
+      if (choice.kind === "resolved") {
+        const dctxRefine = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+        const active = activePendingDraft(state.pendingDraft) ?? (disamb.draftId ? await recoverOrNull(deps, dctxRefine) : null);
+        if (active) {
+          const res = await refineDraft(deps, dctxRefine, active.draftId, refinePatchForDisambiguation(disamb.field, choice.option.name));
+          if (res.kind === "ok") {
+            return {
+              messages: [new AIMessage(res.echo)],
+              pendingDisambiguation: null,
+              pendingDraft: { ...active, echo: res.echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString() },
+            };
+          }
+          // re-bloqueou (raro): manda a razão e limpa (evita renumerar em loop).
+          return { messages: [new AIMessage(res.reason)], pendingDisambiguation: null };
+        }
+      }
+      // não resolveu / rascunho sumiu → segue pro LLM; a pendência é limpa no fim (single-shot).
+    }
+
     const { systemPrompt, model } = await loadConversationConfig(
       deps.db,
       ctx.orgId,
@@ -662,6 +719,9 @@ export function makeConversationNodes(
     if (state.pendingWrite && !pending) update.pendingWrite = null;
     if (state.pendingRevert && !pendingRevert) update.pendingRevert = null;
     if (state.pendingConfigChange && !pendingConfig) update.pendingConfigChange = null;
+    // D1: se chegamos ao LLM com uma desambiguação em aberto, a resposta não a resolveu
+    // (ou expirou) — limpa (single-shot: não fica renumerando as opções turno após turno).
+    if (state.pendingDisambiguation) update.pendingDisambiguation = null;
     return update;
   }
 
@@ -778,7 +838,13 @@ export function makeConversationNodes(
             };
       const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
       if (res.kind === "blocked") {
-        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(res.reason)] };
+        const out: WhatsappConversationUpdate = { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(res.reason)] };
+        // D1: ambiguidade de público/interesse/geo → CONGELA as opções resolvidas p/ o próximo
+        // turno resolver o "1"/nome determinístico (sem o LLM reconstruir a intenção).
+        if (res.disambiguation) {
+          out.pendingDisambiguation = { ...res.disambiguation, draftId: active.draftId, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString() };
+        }
+        return out;
       }
       return {
         messages: [...answerToolCalls(allCalls, "ajustado — aguardando confirmação"), new AIMessage(res.echo)],
