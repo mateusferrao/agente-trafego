@@ -280,6 +280,11 @@ export const notifyPolicySchema = z.object({
   // Saúde da conta Meta — ver schema acima. Default ON em TODOS os arquétipos (mais
   // urgente que reativação: isso aqui é dinheiro parado, não uma boa notícia opcional).
   accountHealthAlert: accountHealthAlertSchema.optional(),
+  // Próximo passo proativo (S1): fecha o push da análise com 1-2 linhas de movimento de
+  // CRESCIMENTO (escalar/testar público/preparar criativo), distinto das recs corretivas.
+  // Default ON (baixo volume — só quando há um movimento claro). Opcional (ausência = ON)
+  // p/ compat com policies gravadas antes do campo — mesmo padrão de `learning`.
+  nextStep: z.object({ enabled: z.boolean() }).optional(),
 });
 export type NotifyPolicy = z.infer<typeof notifyPolicySchema>;
 
@@ -296,6 +301,7 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
     spendThreshold: { source: "meta_cap" },
     balanceThreshold: { enabled: false },
   },
+  nextStep: { enabled: true },
 };
 
 // ─── Referência de mercado configurável (pivô — currency-aware) ───────────

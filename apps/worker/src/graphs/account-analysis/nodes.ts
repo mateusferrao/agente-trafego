@@ -62,6 +62,8 @@ import {
   selectCreatives,
   targetStatusOf,
   selectLessonsForBrief,
+  nextStepSuggestion,
+  nextStepContextFromEntities,
   type LastUnit,
 } from "@trafego/core";
 import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, BUDGET_MODE_INCREASE, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural, toMinorUnits } from "@trafego/shared";
@@ -1474,6 +1476,16 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       const attempted = state.guardrail?.allowed.length ?? 0;
       const applied = appliedSummary(state.results?.length ?? 0, attempted, state.guardrailConfig.dryRun);
       if (applied) outbound = `${outbound}\n\n${applied}`;
+      // Próximo passo proativo (S1): 1-2 linhas de movimento de CRESCIMENTO (forward-looking),
+      // distinto das recs corretivas. Sob notify_policy (ausência = ON, mesmo padrão de learning);
+      // degrada em silêncio quando não há movimento claro (nextStepSuggestion → null).
+      if (state.notifyPolicy?.nextStep?.enabled !== false) {
+        const allEntities = state.brief
+          ? [...state.brief.segments.campaigns, ...state.brief.segments.adsets, ...state.brief.segments.ads]
+          : [];
+        const nextStep = nextStepSuggestion(nextStepContextFromEntities(allEntities));
+        if (nextStep) outbound = `${outbound}\n\n${nextStep}`;
+      }
     }
     return { outboundMessage: outbound, narrative, usage };
   }

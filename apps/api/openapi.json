@@ -2097,6 +2097,17 @@
                   "spendThreshold",
                   "balanceThreshold"
                 ]
+              },
+              "nextStep": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
               }
             },
             "required": [

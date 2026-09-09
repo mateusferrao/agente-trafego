@@ -3,7 +3,7 @@
 // Advantage por negócio. Reusado pela CRIAÇÃO (defaults + eco honesto), pelo PLANO (S2) e
 // espelhado no prompt. INVARIANTE: tudo aqui é RECOMENDAÇÃO — a palavra final é do dono.
 
-import type { BudgetMode } from "@trafego/shared";
+import type { BudgetMode, EntitySummary, HealthSignal } from "@trafego/shared";
 
 /** Intenção de estrutura que o dono expressa (ou que o Roy infere da conversa). */
 export type CampaignIntent = "test" | "scale" | "isolated_test" | "audience_test" | "create";
@@ -61,4 +61,76 @@ export function resolveAdvantage(opts: { readonly localBusiness: boolean }): boo
 /** Notação do squad campanha-conjunto-anúncio (sempre 1 campanha): "1-5-1", "1-1-5". */
 export function structureNotation(rec: StructureRecommendation): string {
   return `1-${rec.adsets}-${rec.ads}`;
+}
+
+// ── Próximo passo proativo (S1) ────────────────────────────────────────────
+// Fecha a análise/push com UM movimento de CRESCIMENTO (forward-looking) — distinto das
+// recomendações CORRETIVAS (que consertam o que está errado): ele aponta o próximo salto
+// (escalar / testar público / preparar criativo), destilando o mesmo método do squad que o
+// `analysis-knowledge` (SCALE_METHOD_TEXT/CREATIVE_REFRESH_TEXT) usa na análise. PURO e
+// testável; `null` quando não há movimento claro (degrada em silêncio). INVARIANTE: é
+// RECOMENDAÇÃO — a palavra final é do dono; a linha convida, nunca força.
+
+/** Movimento de crescimento escolhido pelo run. */
+export type GrowthMove = "test_audience" | "scale_winner" | "refresh_creative";
+
+/** Sinais mínimos do run (derivados do brief) que decidem o movimento. */
+export interface NextStepContext {
+  /** vencedor provado (significância) com FOLGA de público — candidato a escalar verba. */
+  readonly hasScalableWinner: boolean;
+  /** vencedor que já SATUROU o público atual — só cresce por público novo, não subindo verba. */
+  readonly hasSaturatedWinner: boolean;
+  /** criativo com sinais de desgaste MAS que AINDA ENTREGA (creative_aging) — preparar o sucessor. */
+  readonly hasAgingCreative: boolean;
+}
+
+/**
+ * Escolhe UM movimento por prioridade de alavanca: escalar um vencedor fresco é o maior salto;
+ * saturado só cresce por público novo; criativo envelhecendo é preparar o próximo. `null` = sem
+ * movimento claro.
+ */
+export function pickGrowthMove(ctx: NextStepContext): GrowthMove | null {
+  if (ctx.hasScalableWinner) return "scale_winner";
+  if (ctx.hasSaturatedWinner) return "test_audience";
+  if (ctx.hasAgingCreative) return "refresh_creative";
+  return null;
+}
+
+/** Texto de negócio (sem sigla crua, sem travessão dramático) por movimento. */
+const GROWTH_MOVE_MESSAGE: Readonly<Record<GrowthMove, string>> = {
+  scale_winner:
+    "Pensando no próximo passo pra crescer: o vencedor tem espaço pra escalar. Dá pra subir o orçamento aos poucos, sem salto brusco, acompanhando o custo do último aumento pra não perder eficiência. Se quiser, a gente vê isso.",
+  test_audience:
+    "Pensando no próximo passo pra crescer: o vencedor já saturou o público atual, então o salto vem de testar públicos novos, um segmento por vez com o mesmo criativo, pra comparar só o público. Se quiser, a gente monta o teste.",
+  refresh_creative:
+    "Pensando no próximo passo pra crescer: o vencedor ainda entrega, mas começa a dar sinais de desgaste. Vale já deixar o próximo criativo pronto pra trocar sem perder ritmo quando ele cansar.",
+};
+
+/** Linha proativa de crescimento (1-2 linhas) pro fim do push; `null` quando não há movimento. */
+export function nextStepSuggestion(ctx: NextStepContext): string | null {
+  const move = pickGrowthMove(ctx);
+  return move ? GROWTH_MOVE_MESSAGE[move] : null;
+}
+
+const hasSignal = (e: EntitySummary, sig: HealthSignal): boolean => (e.healthSignals ?? []).includes(sig);
+const isProvenWinner = (e: EntitySummary): boolean =>
+  e.tier === "winner" && e.eligibility?.hasSignificance === true && e.eligibility?.inLearning !== true;
+
+/**
+ * Deriva os sinais de crescimento do conjunto de entidades do run (todas as campanhas/conjuntos/
+ * anúncios). Um winner que SATUROU o público não conta como escalável (só cresce por público novo).
+ * Espelha o guard de escala do §7 (nunca escalar sem significância / em learning).
+ */
+export function nextStepContextFromEntities(entities: readonly EntitySummary[]): NextStepContext {
+  let hasScalableWinner = false;
+  let hasSaturatedWinner = false;
+  let hasAgingCreative = false;
+  for (const e of entities) {
+    if (hasSignal(e, "creative_aging")) hasAgingCreative = true;
+    if (isProvenWinner(e)) {
+      if (hasSignal(e, "audience_saturation")) hasSaturatedWinner = true;
+      else hasScalableWinner = true;
+    }
+  }
+  return { hasScalableWinner, hasSaturatedWinner, hasAgingCreative };
 }
