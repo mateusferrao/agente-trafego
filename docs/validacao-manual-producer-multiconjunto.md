@@ -280,6 +280,56 @@ site**, com o aviso honesto de que a Meta pode ALTERAR imagem/texto.
 
 ---
 
+## Bloco J — Onde a verba mora editável (CBO/ABO) + flip de nível (Fase 1b)
+
+Num teste multi-conjunto, o dono troca entre **orçamento único na campanha** (a Meta distribui) e
+**orçamento por conjunto** — por chat E por site. Trocar MOVE a verba de nível (nunca a sigla CBO/ABO
+crua ao dono).
+
+### J1. Trocar pra "por conjunto" no chat
+- **Ação:** num teste multi-conjunto com verba na campanha, "muda pra orçamento por conjunto".
+- **Esperado:** o Roy troca por aqui (não manda pro site) e avisa honesto que cada conjunto passa a ter
+  o próprio gasto por dia e o total sobe conforme o nº de conjuntos.
+
+### J2. Trocar pra "única na campanha" no chat
+- **Ação:** num teste ABO, "deixa a verba única na campanha".
+- **Esperado:** o Roy junta o gasto dos conjuntos na campanha e avisa que a Meta distribui.
+
+### J3. Toggle no site
+- **Ação:** no painel de um teste multi-conjunto, o controle "Orçamento" (Único na campanha × Por
+  conjunto). Alternar.
+- **Esperado:** ao escolher "Por conjunto", o campo "Gasto por dia deste conjunto" aparece em cada
+  conjunto e o campo geral "Gasto por dia" da campanha some; ao voltar pra "Único na campanha", o
+  inverso. Salvar persiste (o backend move a verba de nível).
+
+### J4. budgetMode numa ESCALA → bloqueia honesto
+- **Ação:** num rascunho de escala, "muda pra orçamento por conjunto".
+- **Esperado:** bloqueia honesto (numa escala a estrutura é herdada da fonte).
+
+---
+
+## Bloco K — Orçamento ABO no lugar certo (Fase 1c)
+
+O bug: criar um teste pedindo ABO punha o valor no campo "Gasto por dia" da CAMPANHA e deixava o campo
+"Gasto por dia deste conjunto" VAZIO. Agora, em ABO, o diário é semeado POR conjunto.
+
+### K1. Criar teste ABO pelo chat → verba por conjunto
+- **Ação:** "cria um teste 1-2-1 ABO, R$50/dia, conjunto 1 mulheres 45+, conjunto 2 mulheres no geral".
+- **Esperado:** o card/rascunho mostra o orçamento POR conjunto (cada conjunto com R$50/dia), NÃO no
+  campo da campanha. O eco não contradiz (fixo por conjunto = R$50 em cada).
+
+### K2. Painel reflete o orçamento por conjunto
+- **Ação:** abrir esse rascunho em `/approvals` → editar.
+- **Esperado:** o campo "Gasto por dia deste conjunto" de cada conjunto vem PREENCHIDO (não vazio); o
+  campo geral "Gasto por dia" da campanha não aparece (é ABO).
+
+### K3. Apply não gasta N× errado
+- **Ação:** aprovar o teste ABO.
+- **Esperado:** cada conjunto sobe com o próprio orçamento (o que o card mostrou) — sem cair no diário
+  cheio da campanha por engano.
+
+---
+
 ## Suítes automatizadas (referência)
 
 - `pnpm --filter @trafego/core test` — 899 verdes (inclui `removeAdsetsAt`, `seedAdsetFromSingle`,

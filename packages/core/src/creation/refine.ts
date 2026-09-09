@@ -171,6 +171,35 @@ export function seedAdsetFromSingle(spec: Pick<CampaignDraftSpec, "adsetName" | 
   };
 }
 
+/**
+ * Verba por nível ao criar/trocar CBO↔ABO num teste multi-conjunto (F1b/F1c) — regra de NEGÓCIO pura.
+ * Semântica ABO da Meta (e do piso, `resolveBudgetFloorMinor`): o diário é POR CONJUNTO, não um total
+ * dividido. Por isso:
+ * - **→ ABO** (verba por conjunto): cada conjunto ganha o PRÓPRIO diário — preserva o que já tinha,
+ *   senão herda o diário da campanha (evita o gasto N× do fallback CHEIO do apply; o dono ajusta cada
+ *   um). Num flip vindo de CBO o gasto TOTAL passa a ser ~N× — a casca AVISA honesto no eco.
+ * - **→ CBO** (verba única na campanha): SOMA os diários dos conjuntos na campanha (preserva o gasto)
+ *   e LIMPA o per-conjunto; sem diários por-conjunto → mantém o diário atual da campanha.
+ * Retorna os conjuntos transformados + o diário resultante da campanha. PURO.
+ */
+export function flipBudgetLevel(
+  adsets: readonly AdsetSpec[],
+  toMode: BudgetMode,
+  campaignDailyMinor: number,
+): { adsets: readonly AdsetSpec[]; campaignDailyMinor: number } {
+  if (toMode === "abo") {
+    return {
+      adsets: adsets.map((a) => ({ ...a, dailyBudgetMinor: a.dailyBudgetMinor ?? campaignDailyMinor })),
+      campaignDailyMinor,
+    };
+  }
+  const sum = adsets.reduce((acc, a) => acc + (a.dailyBudgetMinor ?? 0), 0);
+  return {
+    adsets: adsets.map(({ dailyBudgetMinor: _drop, ...rest }) => rest),
+    campaignDailyMinor: sum > 0 ? sum : campaignDailyMinor,
+  };
+}
+
 export function applyDraftEdit(
   kind: DraftKind,
   spec: CampaignDraftSpec,
@@ -193,20 +222,29 @@ export function applyDraftEdit(
     return err({ code: "empty_variants" });
   }
 
-  const requested = edit.budgetMinor ?? spec.dailyBudgetMinor;
-  const { dailyBudgetMinor, clampedByCap } = clampBudget(requested, ctx.budgetCapMinor);
-
   // Descarta um `requestedDailyBudgetMinor` de um clamp ANTERIOR: se esta edição não clampa, o
   // campo obsoleto faria o card mostrar um "reduzido de" falso. Só re-adiciona quando clampou agora.
   // C2: `adsets` sai do base pra ser recomposto abaixo (substituição total; lista vazia = limpa).
   const { requestedDailyBudgetMinor: _staleRequested, adsets: baseAdsets, ...base } = spec;
   // conjuntos resultantes: não editou → mantém; editou com lista → substitui; editou vazio → limpa.
-  const nextAdsets = edit.adsets !== undefined ? (edit.adsets.length > 0 ? edit.adsets : undefined) : baseAdsets;
+  let nextAdsets = edit.adsets !== undefined ? (edit.adsets.length > 0 ? edit.adsets : undefined) : baseAdsets;
+
+  // F1b — flip de nível de orçamento (CBO↔ABO) num teste multi-conjunto move a verba de nível SEM o
+  // dono perder/multiplicar gasto (ele só disse ONDE a verba mora): →ABO semeia o diário por conjunto
+  // (evita o gasto N× do fallback do apply); →CBO consolida a soma na campanha e limpa o per-conjunto.
+  // Base do diário da campanha = edição explícita do dono (vence) senão o diário atual.
+  let campaignBasisMinor = edit.budgetMinor ?? spec.dailyBudgetMinor;
+  if (edit.budgetMode !== undefined && edit.budgetMode !== spec.budgetMode && nextAdsets !== undefined && nextAdsets.length >= 2) {
+    const flip = flipBudgetLevel(nextAdsets, edit.budgetMode, campaignBasisMinor);
+    nextAdsets = flip.adsets;
+    if (edit.budgetMinor === undefined) campaignBasisMinor = flip.campaignDailyMinor; // →CBO consolida a soma
+  }
+  const { dailyBudgetMinor, clampedByCap } = clampBudget(campaignBasisMinor, ctx.budgetCapMinor);
 
   const next: CampaignDraftSpec = {
     ...base,
     dailyBudgetMinor,
-    ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
+    ...(clampedByCap ? { requestedDailyBudgetMinor: campaignBasisMinor } : {}),
     ...(edit.activation !== undefined ? { activation: edit.activation } : {}),
     ...(edit.suffixLabel !== undefined ? { suffixLabel: edit.suffixLabel } : {}),
     ...(edit.campaignName !== undefined ? { campaignName: edit.campaignName } : {}),

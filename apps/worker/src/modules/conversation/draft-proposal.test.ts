@@ -761,8 +761,9 @@ describe("scaleForbiddenRefineField (G16 — escala não edita o herdado)", () =
     // P2: add/remover conjunto (público) também é herdado numa escala.
     expect(scaleForbiddenRefineField({ addSegment: [{ interests: ["corrida"] }] })).toBe("targeting");
     expect(scaleForbiddenRefineField({ removeSegment: [1] })).toBe("targeting");
-    // F1a: Advantage é do rascunho do zero — na escala a estrutura vem da fonte.
+    // F1a/F1b: Advantage e onde a verba mora (CBO/ABO) são do rascunho do zero — na escala herdados.
     expect(scaleForbiddenRefineField({ advantage: true })).toBe("advantage");
+    expect(scaleForbiddenRefineField({ budgetMode: "abo" })).toBe("budgetMode");
   });
   it("regenerateCopy:false NÃO é edição (não trava)", () => {
     expect(scaleForbiddenRefineField({ regenerateCopy: false })).toBeNull();

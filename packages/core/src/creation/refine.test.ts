@@ -1,6 +1,6 @@
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { describe, expect, it } from "vitest";
-import { applyDraftEdit, conversionRequiresPixel, normalizeLinkUrl, removeAdsetsAt, seedAdsetFromSingle } from "./refine.js";
+import { applyDraftEdit, conversionRequiresPixel, flipBudgetLevel, normalizeLinkUrl, removeAdsetsAt, seedAdsetFromSingle } from "./refine.js";
 import type { AdsetSpec } from "@trafego/shared";
 
 describe("normalizeLinkUrl (URL de destino — fonte única chat+site)", () => {
@@ -219,6 +219,87 @@ describe("applyDraftEdit — C2 multi-conjunto (adsets, substituição total)", 
     if (!r.ok) throw new Error("esperava ok");
     expect(r.value.spec.adsets).toHaveLength(2);
     expect(r.value.spec.budgetMode).toBe("cbo");
+  });
+});
+
+describe("flipBudgetLevel (F1b — mover a verba ao trocar CBO↔ABO)", () => {
+  const two: readonly AdsetSpec[] = [
+    { name: "A", targeting: { kind: "advantage_plus" } },
+    { name: "B", targeting: { kind: "advantage_plus" } },
+  ];
+
+  it("CBO→ABO: cada conjunto ganha o diário da campanha (verba POR conjunto, gasto sobe ~N×)", () => {
+    const r = flipBudgetLevel(two, "abo", 10000);
+    expect(r.campaignDailyMinor).toBe(10000);
+    expect(r.adsets.map((a) => a.dailyBudgetMinor)).toEqual([10000, 10000]);
+  });
+
+  it("CBO→ABO: preserva um diário por-conjunto já existente (não sobrescreve)", () => {
+    const mixed: readonly AdsetSpec[] = [{ name: "A", targeting: { kind: "advantage_plus" }, dailyBudgetMinor: 8000 }, two[1]!];
+    const r = flipBudgetLevel(mixed, "abo", 10000);
+    expect(r.adsets[0]?.dailyBudgetMinor).toBe(8000); // mantém
+    expect(r.adsets[1]?.dailyBudgetMinor).toBe(10000); // herda o diário da campanha pro que não tinha
+  });
+
+  it("ABO→CBO: soma os diários dos conjuntos na campanha e limpa o per-conjunto", () => {
+    const abo: readonly AdsetSpec[] = [
+      { name: "A", targeting: { kind: "advantage_plus" }, dailyBudgetMinor: 3000 },
+      { name: "B", targeting: { kind: "advantage_plus" }, dailyBudgetMinor: 4000 },
+    ];
+    const r = flipBudgetLevel(abo, "cbo", 5000);
+    expect(r.campaignDailyMinor).toBe(7000); // soma preserva o gasto
+    expect(r.adsets.every((a) => a.dailyBudgetMinor === undefined)).toBe(true);
+  });
+
+  it("ABO→CBO sem diários por-conjunto → mantém o diário da campanha", () => {
+    const r = flipBudgetLevel(two, "cbo", 6000);
+    expect(r.campaignDailyMinor).toBe(6000);
+    expect(r.adsets.every((a) => a.dailyBudgetMinor === undefined)).toBe(true);
+  });
+});
+
+describe("applyDraftEdit — F1b flip de budgetMode num rascunho multi-conjunto", () => {
+  const noCap = { hasPixel: true } as const;
+  const twoCbo: CampaignDraftSpec = {
+    ...fromScratch,
+    dailyBudgetMinor: 10000,
+    budgetMode: "cbo",
+    adsets: [
+      { name: "A", targeting: { kind: "advantage_plus" } },
+      { name: "B", targeting: { kind: "advantage_plus" } },
+    ],
+  };
+
+  it("CBO→ABO: seta o diário por conjunto (verba POR conjunto — evita o campo vazio no apply)", () => {
+    const r = applyDraftEdit("from_scratch", twoCbo, { budgetMode: "abo" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.budgetMode).toBe("abo");
+    expect(r.value.spec.adsets?.map((a) => a.dailyBudgetMinor)).toEqual([10000, 10000]);
+  });
+
+  it("ABO→CBO: limpa o per-conjunto e consolida na campanha", () => {
+    const twoAbo: CampaignDraftSpec = {
+      ...twoCbo,
+      budgetMode: "abo",
+      adsets: [
+        { name: "A", targeting: { kind: "advantage_plus" }, dailyBudgetMinor: 3000 },
+        { name: "B", targeting: { kind: "advantage_plus" }, dailyBudgetMinor: 4000 },
+      ],
+    };
+    const r = applyDraftEdit("from_scratch", twoAbo, { budgetMode: "cbo" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.budgetMode).toBe("cbo");
+    expect(r.value.spec.dailyBudgetMinor).toBe(7000);
+    expect(r.value.spec.adsets?.every((a) => a.dailyBudgetMinor === undefined)).toBe(true);
+  });
+
+  it("mesmo budgetMode (sem flip) NÃO mexe nos diários dos conjuntos", () => {
+    const r = applyDraftEdit("from_scratch", twoCbo, { budgetMode: "cbo" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.adsets?.every((a) => a.dailyBudgetMinor === undefined)).toBe(true);
   });
 });
 

@@ -241,6 +241,10 @@ export const updateDraftInput = z.object({
    *  (audience + criativo). `true` liga (a Meta expande público + ajusta imagem/texto), `false` desliga.
    *  Ausente = mantém. O card avisa honesto quando ligado. */
   advantage: z.boolean().optional(),
+  /** Onde a verba mora (F1b — editável no rascunho pendente, só from_scratch): `"cbo"` = única na
+   *  campanha, `"abo"` = por conjunto. Num teste multi-conjunto, trocar MOVE a verba de nível
+   *  (spend-preserving). Ausente = mantém. */
+  budgetMode: z.enum(["cbo", "abo"]).optional(),
   audience: z.enum(["reuse", "broad"]).optional(),
   /** URL de DESTINO do anúncio (só from_scratch, objetivo de site/tráfego/conversão) — troca o link.
    *  Objetivo de conversas no WhatsApp → o backend bloqueia honesto (leva pro WhatsApp, não pra site). */

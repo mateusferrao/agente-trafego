@@ -908,6 +908,8 @@ export function makeConversationNodes(
               ...(Array.isArray(a["removeSegment"]) ? { removeSegment: a["removeSegment"].filter((x): x is number => typeof x === "number" && Number.isInteger(x) && x >= 0) } : {}),
               // F1a: LIGAR/DESLIGAR Advantage por chat (bundle único — o refino seta os 2 flags).
               ...(typeof a["advantage"] === "boolean" ? { advantage: a["advantage"] } : {}),
+              // F1b: trocar CBO/ABO (onde a verba mora) — o core move a verba de nível se for um flip.
+              ...(isBudgetMode(a["budgetMode"]) ? { budgetMode: a["budgetMode"] } : {}),
             };
       const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
       if (res.kind === "blocked") {

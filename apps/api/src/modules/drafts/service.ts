@@ -292,6 +292,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       edit.advantageAudience = input.advantage;
       edit.advantageCreative = input.advantage;
     }
+    // F1b: onde a verba mora (CBO/ABO) — o núcleo move a verba de nível se for um flip multi-conjunto.
+    if (input.budgetMode != null) edit.budgetMode = input.budgetMode;
 
     let budgetCapMinor: number | null = null;
     if (input.budgetReais != null) {

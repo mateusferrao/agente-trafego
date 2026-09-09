@@ -9443,6 +9443,13 @@
           "advantage": {
             "type": "boolean"
           },
+          "budgetMode": {
+            "type": "string",
+            "enum": [
+              "cbo",
+              "abo"
+            ]
+          },
           "audience": {
             "type": "string",
             "enum": [

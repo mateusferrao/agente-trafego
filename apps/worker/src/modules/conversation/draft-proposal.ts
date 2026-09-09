@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
@@ -1084,7 +1084,8 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
     );
   }
   // F1a: Advantage é editável no rascunho pendente → o eco reflete o estado atual, com o aviso honesto
-  // quando ligado (a Meta pode alterar imagem/texto). Bundle: audience/criativo andam juntos.
+  // quando ligado (a Meta pode alterar imagem/texto). INVARIANTE: os dois flags são um BUNDLE (setados
+  // sempre juntos em toda escrita — create/refino/site), então `??` lê o par com segurança.
   const adv = spec.advantageAudience ?? spec.advantageCreative;
   if (kind === "from_scratch" && adv !== undefined) lines.push(advantageEchoLine(adv));
   lines.push("Confirma agora ou quer ajustar mais?");
@@ -1215,6 +1216,10 @@ export interface RefineDraftPatch {
    *  público + ajusta imagem/texto), `false` desliga (tudo fixo). Bundle único → seta os dois flags.
    *  Ausente = não mexe. O eco AVISA quando liga. */
   readonly advantage?: boolean;
+  /** Onde a verba mora (F1b — editável no rascunho pendente, só from_scratch): `"cbo"` = única na
+   *  campanha (a Meta distribui entre os conjuntos), `"abo"` = por conjunto. Num teste multi-conjunto,
+   *  trocar MOVE a verba de nível (spend-preserving, `flipBudgetLevel`). Ausente = não mexe. */
+  readonly budgetMode?: BudgetMode;
 }
 
 export type RefineResult =
@@ -1264,13 +1269,15 @@ export function patchTouchesSinglePublico(patch: RefineDraftPatch): boolean {
   );
 }
 
-export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | "advantage" | null {
+export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | "advantage" | "budgetMode" | null {
   const has = hasValue;
   if (has(patch.objective)) return "objective";
   if (has(patch.link)) return "link";
   if (has(patch.setPage)) return "pageId";
-  // F1a: Advantage é do rascunho do zero (estrutura própria) — na escala vem herdado da fonte.
+  // F1a/F1b: Advantage e onde a verba mora (CBO/ABO) são da estrutura do rascunho do zero — na escala
+  // vêm herdados da fonte (não editáveis ali; bloqueio honesto em vez de no-op silencioso).
   if (patch.advantage !== undefined) return "advantage";
+  if (has(patch.budgetMode)) return "budgetMode";
   // add/removeSegment = mexer nos conjuntos (público) → herdado numa escala, não editável.
   if (patchTouchesSinglePublico(patch) || has(patch.addSegment) || has(patch.removeSegment)) return "targeting";
   if (patch.regenerateCopy === true || patch.variantsCount !== undefined || has(patch.copyEdits) || has(patch.setAdCreative) || has(patch.distinctCreatives) || has(patch.mediaPreference)) return "copyVariants";
@@ -1650,6 +1657,21 @@ export async function refineDraft(
     }
     edit.pageId = hits[0]!.pageId;
     refineNotes.push(`Página trocada pra *${pageChoiceLabel(hits[0]!)}*.`);
+  }
+
+  // F1b: onde a verba mora (CBO/ABO) — POR ÚLTIMO, pra a escolha explícita do dono vencer o default
+  // de conversão single→multi (que semeia CBO acima). O core move a verba de nível se for um flip.
+  if (kind === "from_scratch" && patch.budgetMode) {
+    edit.budgetMode = patch.budgetMode;
+    // flip real num teste multi-conjunto → nota honesta do que muda no gasto (a verba muda de nível).
+    const wasMulti = (edit.adsets ?? spec.adsets ?? []).length >= 2;
+    if (wasMulti && patch.budgetMode !== (spec.budgetMode ?? "cbo")) {
+      refineNotes.push(
+        patch.budgetMode === "abo"
+          ? "Agora a verba é por conjunto: cada um passa a ter o próprio gasto por dia (o gasto total sobe conforme o nº de conjuntos). Ajuste cada um no site se quiser."
+          : "Agora a verba é única na campanha e a Meta distribui entre os conjuntos (juntei o gasto que estava em cada um).",
+      );
+    }
   }
 
   const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel });
@@ -2771,6 +2793,11 @@ export async function proposeCreateCampaign(
     compositionNotes.push(`Não reconheci "${args.link}" como um link válido — usei o destino padrão do seu anúncio-base. Me manda a URL completa (ex: https://sualoja.com/promo) pra trocar.`);
   }
   const resolvedLinkUrl = messagingGoal ? undefined : (userLink ?? defaults.linkUrl);
+  // F1c: ABO = verba POR conjunto → semeia o diário de CADA conjunto (divide o diário resolvido entre os
+  // N, spend-preserving). Sem isso o apply cairia no diário CHEIO da campanha por conjunto (gasto N×) e o
+  // painel mostraria o campo por-conjunto vazio. CBO = verba na campanha → conjuntos sem diário próprio.
+  // Fonte única `flipBudgetLevel` (mesma regra do flip pós-criação).
+  const specAdsets = segmentAdsets ? (budgetMode === "abo" ? flipBudgetLevel(segmentAdsets, "abo", dailyBudgetMinor).adsets : segmentAdsets) : null;
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
@@ -2778,7 +2805,7 @@ export async function proposeCreateCampaign(
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
     budgetMode,
     // C2 producer: N conjuntos do teste de público (criativo compartilhado vem de creative/copyVariants).
-    ...(segmentAdsets ? { adsets: segmentAdsets } : {}),
+    ...(specAdsets ? { adsets: specAdsets } : {}),
     // C3: "liga tudo" = expansão de público + melhorias de criativo (mesmo toggle). Só grava quando
     // há sinal (undefined = mantém o comportamento pré-C3 no apply).
     ...(advantageOn !== undefined ? { advantageAudience: advantageOn, advantageCreative: advantageOn } : {}),

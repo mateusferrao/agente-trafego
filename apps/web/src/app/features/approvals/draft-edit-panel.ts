@@ -121,12 +121,15 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
         }
       }
 
-      <!-- Gasto + ativação (comuns) — empilha no mobile, lado a lado no desktop -->
+      <!-- Gasto + ativação (comuns) — empilha no mobile, lado a lado no desktop. F1c: o gasto da
+           CAMPANHA some quando é teste multi-conjunto em ABO (a verba mora em cada conjunto). -->
       <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
-        <label class="flex flex-col gap-1 sm:flex-1">
-          <span class="text-xs font-medium text-ink">Gasto por dia ({{ draft().currency }})</span>
-          <input appInput class="w-full" type="number" min="1" step="1" [(ngModel)]="budget" />
-        </label>
+        @if (!(hasAdsets() && isAbo())) {
+          <label class="flex flex-col gap-1 sm:flex-1">
+            <span class="text-xs font-medium text-ink">Gasto por dia ({{ draft().currency }})</span>
+            <input appInput class="w-full" type="number" min="1" step="1" [(ngModel)]="budget" />
+          </label>
+        }
         <div class="flex flex-col gap-1 sm:flex-1">
           <span class="text-xs font-medium text-ink">Ao aprovar</span>
           <div
@@ -182,6 +185,26 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
            público); trocar por conjunto é aqui. Add/remover espelha o padrão de anúncios. -->
       @if (!isScale() && hasAdsets()) {
         <div class="flex flex-col gap-3">
+          <!-- F1b: onde a verba mora (CBO/ABO) em linguagem de negócio, sem a sigla técnica. Trocar
+               move a verba de nível (spend-preserving) e mostra/some o campo de gasto por conjunto. -->
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-ink">Orçamento</span>
+            <div
+              appToggleGroup
+              ngpToggleGroupType="single"
+              layout="segmented"
+              [columns]="2"
+              aria-label="Orçamento"
+              [ngpToggleGroupValue]="[budgetMode()]"
+              (ngpToggleGroupValueChange)="setBudgetMode($event)"
+            >
+              <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="cbo">Único na campanha</button>
+              <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="abo">Por conjunto</button>
+            </div>
+            <p class="text-xs text-muted">
+              {{ isAbo() ? 'Cada conjunto tem o próprio gasto por dia.' : 'A Meta distribui um gasto único entre os conjuntos.' }}
+            </p>
+          </div>
           <span class="text-xs font-medium text-ink">Conjuntos (teste de público — mesmo criativo, públicos diferentes)</span>
           @for (cj of conjuntos(); track $index) {
             <div class="flex flex-col gap-2 rounded-md border border-line bg-panel p-3">
@@ -385,6 +408,9 @@ export class DraftEditPanel implements OnInit {
   /** Advantage+ do rascunho (F1a — editável no rascunho pendente, só from_scratch): bundle único
    *  (expansão de público + melhorias de criativo). Ligado = a Meta pode alterar imagem/texto. */
   protected readonly advantage = signal(false);
+  /** Onde a verba mora (F1b — só teste multi-conjunto): `cbo` = única na campanha, `abo` = por
+   *  conjunto. Dirige `isAbo()` (mostra o campo de gasto por conjunto ao vivo ao trocar). */
+  protected readonly budgetMode = signal<'cbo' | 'abo'>('cbo');
   /** modo do público (controle único de 3 opções): `reuse`/`broad` = herdado; `custom` = revela o
    *  editor completo abaixo (converte reuse/broad → explicit no Salvar). */
   protected readonly audienceMode = signal<'reuse' | 'broad' | 'custom'>('reuse');
@@ -412,8 +438,9 @@ export class DraftEditPanel implements OnInit {
   protected readonly isScale = computed(() => this.draft().kind === 'duplicate');
   /** rascunho multi-conjunto (teste de público) → mostra a seção de conjuntos, esconde o público único. */
   protected readonly hasAdsets = computed(() => (this.draft().adsets?.length ?? 0) > 0);
-  /** ABO = orçamento por conjunto (mostra o campo de gasto em cada conjunto); CBO = verba na campanha. */
-  protected readonly isAbo = computed(() => this.draft().budgetMode === 'abo');
+  /** ABO = orçamento por conjunto (mostra o campo de gasto em cada conjunto); CBO = verba na campanha.
+   *  Lê o signal (F1b) → o campo por-conjunto aparece/some AO VIVO quando o dono troca o modo. */
+  protected readonly isAbo = computed(() => this.budgetMode() === 'abo');
   /** rótulo do criativo PADRÃO do rascunho (formato + origem) — sem jargão, sem id técnico. */
   protected readonly creativeLabel = computed(() => this.formatCreative(this.draft().creative));
   /** formata um criativo (formato + origem) em linguagem de gente; `null` → sem criativo. */
@@ -609,6 +636,7 @@ export class DraftEditPanel implements OnInit {
     this.linkUrl.set(d.linkUrl ?? '');
     // Advantage: bundle único no output (audience/criativo andam juntos) — semeia do estado atual.
     this.advantage.set(d.advantageAudience ?? d.advantageCreative ?? false);
+    this.budgetMode.set(d.budgetMode === 'abo' ? 'abo' : 'cbo');
     // modo do público: já explícito → custom; senão o herdado (reuse/broad).
     this.audienceMode.set(d.explicitAudience ? 'custom' : d.audience === 'broad' ? 'broad' : 'reuse');
     this.seedCopies(d);
@@ -629,6 +657,16 @@ export class DraftEditPanel implements OnInit {
   protected setAdvantage(value: string | string[]): void {
     const v = Array.isArray(value) ? value[0] : value;
     if (v === 'on' || v === 'off') this.advantage.set(v === 'on');
+  }
+
+  /** Toggle onde a verba mora (F1b) — CBO (única na campanha) × ABO (por conjunto). Marca os
+   *  conjuntos como MEXIDOS (a verba muda de nível → o patch precisa reenviar os conjuntos). */
+  protected setBudgetMode(value: string | string[]): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v !== 'cbo' && v !== 'abo') return;
+    if (v === this.budgetMode()) return;
+    this.budgetMode.set(v);
+    this.conjuntosDirty.set(true);
   }
 
   /** Toggle "Público" (herda / a Meta escolhe / personalizado). `custom` semeia o editor na hora
@@ -735,7 +773,8 @@ export class DraftEditPanel implements OnInit {
   private buildPatch(): UpdateDraftInput {
     const d = this.draft();
     const patch: Record<string, unknown> = {};
-    if (this.budget() > 0 && this.budget() !== d.dailyBudgetMajor) patch['budgetReais'] = this.budget();
+    // O gasto da CAMPANHA só quando NÃO é teste ABO (lá a verba mora em cada conjunto — F1c).
+    if (!(this.hasAdsets() && this.isAbo()) && this.budget() > 0 && this.budget() !== d.dailyBudgetMajor) patch['budgetReais'] = this.budget();
     if (this.activation() !== d.activation) patch['activation'] = this.activation();
 
     if (this.isScale()) {
@@ -764,6 +803,9 @@ export class DraftEditPanel implements OnInit {
     // Advantage (bundle único): só entra no patch quando MUDA do estado original (evita clobber).
     const originalAdvantage = d.advantageAudience ?? d.advantageCreative ?? false;
     if (this.advantage() !== originalAdvantage) patch['advantage'] = this.advantage();
+    // budgetMode (F1b): só quando muda (o backend move a verba de nível). Marca conjuntosDirty no
+    // toggle → os `adsets` reenviam junto, então o core aplica o flip sobre a lista atual.
+    if (this.hasAdsets() && this.budgetMode() !== (d.budgetMode === 'abo' ? 'abo' : 'cbo')) patch['budgetMode'] = this.budgetMode();
 
     // público: `custom` manda o estado COMPLETO como SUBSTITUIÇÃO total (converte reuse/broad →
     // explicit no backend). reuse/broad só entram no patch quando MUDAM do modo original (evita
