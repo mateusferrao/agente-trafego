@@ -42,6 +42,16 @@ describe("buildChatRules — S0a: procedimento-por-tool migrou pra tools.ts", ()
     expect(rules).toContain("NÃO diga \"vá criar no site\"");
   });
 
+  it("I3: bloco estrategista sempre presente (recomenda estrutura + planeja + honesto), em linguagem de negócio", () => {
+    const rules = buildChatRules(false, false);
+    expect(rules).toContain("você é um ESTRATEGISTA");
+    expect(rules).toContain("a palavra final é SEMPRE do dono");
+    expect(rules).toContain("TESTAR PÚBLICOS/segmentos");
+    expect(rules).toContain("PLANEJE o futuro");
+    // nunca a sigla técnica crua no que vai pro dono
+    expect(rules).not.toContain("CBO 1-1-5");
+  });
+
   it("chatAdsWrites ON: regra de roteamento público×link (não confundir mudança de público com link)", () => {
     const rules = buildChatRules(false, true);
     expect(rules).toContain("Roteamento PÚBLICO × LINK");
