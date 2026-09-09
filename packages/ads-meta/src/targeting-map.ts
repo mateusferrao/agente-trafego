@@ -50,7 +50,10 @@ export function explicitTargetingToRaw(spec: ExplicitTargeting, advantageAudienc
   return {
     geo_locations: geoLocations,
     ...(spec.ageMin !== undefined ? { age_min: spec.ageMin } : {}),
-    ...(spec.ageMax !== undefined ? { age_max: spec.ageMax } : {}),
+    // B1: sob Advantage+ audience a Meta trata a idade como MÍNIMO-sugestão e NÃO aceita um teto —
+    // enviar `age_max` junto de `advantage_audience:1` faz a Meta recusar o adset ("adicione uma idade
+    // mínima maior como sugestão"). "45+" é 45 e acima, a expansão sobe. Advantage OFF → faixa fixa.
+    ...(spec.ageMax !== undefined && !advantageAudience ? { age_max: spec.ageMax } : {}),
     ...(spec.genders && spec.genders.length > 0 ? { genders: spec.genders } : {}),
     ...(spec.customAudienceIncludeIds && spec.customAudienceIncludeIds.length > 0 ? { custom_audiences: spec.customAudienceIncludeIds.map((id) => ({ id })) } : {}),
     ...(spec.customAudienceExcludeIds && spec.customAudienceExcludeIds.length > 0 ? { excluded_custom_audiences: spec.customAudienceExcludeIds.map((id) => ({ id })) } : {}),

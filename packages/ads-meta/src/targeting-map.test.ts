@@ -24,6 +24,19 @@ describe("explicitTargetingToRaw", () => {
     expect(explicitTargetingToRaw(spec(), false)["targeting_automation"]).toEqual({ advantage_audience: 0 });
   });
 
+  it("B1: Advantage ON omite age_max (a Meta só aceita idade como MÍNIMO-sugestão sob expansão); age_min fica", () => {
+    const raw = explicitTargetingToRaw(spec({ ageMin: 45, ageMax: 65 }), true);
+    expect(raw["age_min"]).toBe(45);
+    expect(raw["age_max"]).toBeUndefined(); // "45+" — sem teto; a expansão sobe
+    expect(raw["targeting_automation"]).toEqual({ advantage_audience: 1 });
+  });
+
+  it("B1: Advantage OFF mantém a faixa fixa (min + max)", () => {
+    const raw = explicitTargetingToRaw(spec({ ageMin: 45, ageMax: 65 }), false);
+    expect(raw["age_min"]).toBe(45);
+    expect(raw["age_max"]).toBe(65);
+  });
+
   it("raio é city-only: region ignora radius, city mantém", () => {
     const raw = explicitTargetingToRaw(
       spec({

@@ -2893,6 +2893,13 @@ export async function proposeCreateCampaign(
   if (advantageOn !== undefined) {
     lines.push(advantageEchoLine(advantageOn));
   }
+  // B1 (honestidade diz×faz): com a otimização automática ligada a Meta só aceita a idade como MÍNIMO
+  // (o adapter tira o teto). Se o dono pôs uma faixa com teto, avisa que virou "X+" — e oferece a
+  // alternativa (desligar a otimização pra manter a faixa fixa). A palavra final é dele.
+  const hasAgeCap = (t: CampaignDraftSpec["targeting"] | undefined): boolean => t?.kind === "explicit" && t.ageMax !== undefined;
+  if (advantageOn === true && (hasAgeCap(spec.targeting) || (specAdsets ?? []).some((a) => hasAgeCap(a.targeting)))) {
+    lines.push("Como a otimização automática está ligada, a idade vira um mínimo (a Meta pode mostrar pra pessoas mais velhas também). Se preferir a faixa de idade fixa, é só me pedir pra desligar a otimização.");
+  }
   // destino do clique (só quando há link — objetivo de site/tráfego/conversão): honesto sobre pra
   // onde o anúncio leva. `args.link` explícito é "você indicou"; herdado é "o mesmo do anúncio-base".
   if (spec.linkUrl) lines.push(`Destino: leva pra *${spec.linkUrl}*${userLink ? " (o link que você indicou)" : " (o mesmo do seu anúncio-base)"}.`);
