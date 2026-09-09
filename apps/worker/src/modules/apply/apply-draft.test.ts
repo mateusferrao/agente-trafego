@@ -1,9 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { countCreationsLast24h, runFromScratchSaga } from "./apply-draft.js";
+import { countCreationsLast24h, planOrphanCleanup, runFromScratchSaga } from "./apply-draft.js";
 import type { Database } from "@trafego/db/client";
 import type { CampaignDraft } from "@trafego/shared";
-import type { AdAccountRef } from "@trafego/shared/ports";
+import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
+
+// ── B2: plano de limpeza da órfã do-zero (decisão pura do catch) ──────────
+describe("planOrphanCleanup — rollback da órfã (B2)", () => {
+  const deterministic = new AdsPlatformError("not_accessible", "tech", "Recusado");
+  const transient = new AdsPlatformError("rate_limited", "throttle");
+
+  it("from_scratch + campanha criada + erro DETERMINÍSTICO → delete (apaga a órfã)", () => {
+    expect(planOrphanCleanup(deterministic, "from_scratch", "camp1")).toEqual({ action: "delete", campaignId: "camp1" });
+  });
+  it("from_scratch + campanha criada + erro TRANSIENTE → keep (mantém, retomável)", () => {
+    expect(planOrphanCleanup(transient, "from_scratch", "camp1")).toEqual({ action: "keep", campaignId: "camp1" });
+  });
+  it("non-AdsPlatformError (transiente por padrão) → keep (não apaga)", () => {
+    expect(planOrphanCleanup(new Error("boom"), "from_scratch", "camp1")).toEqual({ action: "keep", campaignId: "camp1" });
+  });
+  it("nenhuma campanha criada (falhou antes) → none", () => {
+    expect(planOrphanCleanup(deterministic, "from_scratch", undefined)).toEqual({ action: "none" });
+  });
+  it("duplicação (atômica — reverte sozinha) → none mesmo com id", () => {
+    expect(planOrphanCleanup(deterministic, "duplicate", "camp1")).toEqual({ action: "none" });
+  });
+});
 
 /** db fake sequencial: cada select().from().where() (sem .limit — count() é lido direto)
  *  consome UM resultado da fila, em ordem. Prova o bug (P0.4): o cap agora conta pelo

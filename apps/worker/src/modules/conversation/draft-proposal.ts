@@ -1360,6 +1360,9 @@ export async function refineDraft(
       // valor não-URL (ex: "futebol americano") já era misroute silencioso; agora uma URL válida junto de
       // outra ação também é ignorada (o dono nunca falou de link — pediu advantage/ativação/…).
       if (link && linkIsSoleIntent) return { kind: "blocked", reason: "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino." };
+      // URL válida junto de OUTRA ação: aplica a outra ação e ignora o link, mas avisa (§7 diz×faz — não
+      // some em silêncio; o eco não afirma que pôs link, então a nota é o que fecha a honestidade).
+      if (link && !linkIsSoleIntent) refineNotes.push("Não pus link de destino — conversas leva a pessoa pro WhatsApp, não pra um site.");
     } else {
       // Site/tráfego: URL válida aplica (com ou sem outras ações). Link malformado só pede a URL certa
       // quando foi o único pedido; junto de outra ação, ignora o lixo e segue.

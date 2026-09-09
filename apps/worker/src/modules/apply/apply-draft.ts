@@ -32,6 +32,27 @@ const NOT_DUPLICABLE_REASON =
   "esse vencedor usa um recurso que a Meta descontinuou para cópia, então não consigo cloná-lo fielmente. " +
   "Posso subir o orçamento dele agora, ou você recria o criativo no Gerenciador de Anúncios que eu duplico";
 
+/** Plano PURO de limpeza da órfã do-zero no catch (B2). from_scratch + campanha já criada + erro
+ *  DETERMINÍSTICO → `delete` (a casca apaga best-effort + zera a saga); TRANSIENTE → `keep` (mantém,
+ *  retomável, nomeia o órfão pro dono); duplicação (atômica) OU nada criado → `none`. Testável sem IO. */
+export type OrphanCleanupPlan =
+  | { readonly action: "delete"; readonly campaignId: string }
+  | { readonly action: "keep"; readonly campaignId: string }
+  | { readonly action: "none" };
+
+export function planOrphanCleanup(
+  error: unknown,
+  kind: CampaignDraft["kind"],
+  createdCampaignId: string | undefined,
+): OrphanCleanupPlan {
+  // Duplicação reverte sozinha (DELETE cascata no adapter antes de lançar) → nunca tem órfã aqui.
+  const orphanCampaignId = kind !== "duplicate" ? createdCampaignId : undefined;
+  if (!orphanCampaignId) return { action: "none" };
+  return permanentMetaReason(error) !== null
+    ? { action: "delete", campaignId: orphanCampaignId }
+    : { action: "keep", campaignId: orphanCampaignId };
+}
+
 /**
  * Conta as campanhas novas dentro do cap/dia (P0.4 — fix): apply-time REAL via `agent_tool_calls`
  * (o `create_campaign`/`duplicate_scale` mais recente do agente), não `createdAt` do rascunho —
@@ -275,11 +296,18 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     // ids parciais) → nomeia o órfão. DETERMINÍSTICO (B2) = o retry do mesmo spec sempre falha e a
     // recriação duplicaria → ROLLBACK best-effort da campanha órfã (a saga do-zero fica atômica também
     // nesse caso). Só nomeia o órfão se a limpeza falhar (a campanha segue lá).
-    const orphanCampaignId = pausedDraft.kind !== "duplicate" ? (createdIds["campaignId"] as string | undefined) : undefined;
-    let orphanRemains = Boolean(orphanCampaignId);
-    if (orphanCampaignId && permanentMetaReason(error) !== null) {
-      const deleted = await ports.ads.deleteCampaign(ref, orphanCampaignId);
-      if (deleted) orphanRemains = false;
+    const plan = planOrphanCleanup(error, pausedDraft.kind, createdIds["campaignId"] as string | undefined);
+    let orphanRemains = plan.action !== "none";
+    if (plan.action === "delete") {
+      const deleted = await ports.ads.deleteCampaign(ref, plan.campaignId);
+      logger.info({ draftId: row.id, orphanCampaignId: plan.campaignId, deleted }, "apply-draft:rollback_orfã_determinística");
+      if (deleted) {
+        orphanRemains = false;
+        // A campanha sumiu da Meta → zera o estado da saga persistido, senão um resume futuro
+        // (claim permite failed→creating) retomaria de um `campaignId` morto e criaria conjunto
+        // contra pai deletado. Com createdIds vazio a saga recomeça limpa (do zero).
+        await db.update(campaignDrafts).set({ createdIds: {} }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
+      }
     }
     const partialCampaign = orphanRemains ? (pausedDraft.spec.campaignName ?? "a campanha nova") : undefined;
     return { kind: "failed", error, ...(partialCampaign ? { partialCampaign } : {}) };

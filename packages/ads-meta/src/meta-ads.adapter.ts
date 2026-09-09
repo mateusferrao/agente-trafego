@@ -694,7 +694,10 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   }
 
   async deleteCampaign(account: AdAccountRef, campaignId: string): Promise<boolean> {
-    return this.writeThroughGovernor(account, () => this.creation.deleteCampaign(account, campaignId));
+    // Limpeza da órfã: como o `revertRoot`, DELETE direto (sem governor) — a compensação NUNCA pode
+    // ser barrada/estourada pelo cooldown (o bucket costuma estar quente logo após a rajada de criação)
+    // nem lançar (o call site confia no contrato "NUNCA lança" p/ não mascarar o erro original).
+    return this.creation.deleteCampaign(account, campaignId);
   }
 
   async createAdSet(account: AdAccountRef, input: Parameters<AdsPlatformPort["createAdSet"]>[1]) {

@@ -13,14 +13,23 @@ describe("metaUserMessage", () => {
 });
 
 describe("permanentMetaReason", () => {
-  it("not_accessible (rejeição determinística) → razão honesta, não null", () => {
+  it("not_accessible (rejeição determinística) → razão honesta + próximo passo, não null", () => {
     const r = permanentMetaReason(new AdsPlatformError("not_accessible", "Invalid parameter", "Falta o pixel"));
-    expect(r).toBe("a Meta recusou: Falta o pixel");
+    expect(r).toContain("a Meta recusou: Falta o pixel");
+    expect(r).toContain("me peça de outro jeito"); // §13: nunca termina sem o que fazer
   });
-  it("not_accessible sem texto legível → razão genérica honesta (não 'tenta de novo')", () => {
+  it("not_accessible sem texto legível → razão genérica honesta + próximo passo (não 'tenta de novo')", () => {
     const r = permanentMetaReason(new AdsPlatformError("not_accessible", "Invalid parameter"));
     expect(r).toContain("a Meta recusou");
+    expect(r).toContain("me peça de outro jeito");
     expect(r).not.toContain("Invalid parameter"); // não vaza jargão técnico em inglês
+  });
+  it("B3: recusa de idade+Advantage em EN (locale da conta) → mesma voz do Roy (não cai no cru)", () => {
+    const r = permanentMetaReason(
+      new AdsPlatformError("not_accessible", "tech", "Instead, you can add a higher minimum age as a suggestion when creating or editing an ad set."),
+    );
+    expect(r).toContain("otimização automática");
+    expect(r).not.toContain("Instead"); // não repassa o texto literal em inglês
   });
   it("B3: recusa de idade+Advantage → voz do Roy + próximo passo (não repassa o texto cru)", () => {
     const r = permanentMetaReason(
