@@ -344,6 +344,10 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       for (const as of input.adsets) {
         // criativo PRÓPRIO do conjunto (U1): resolve biblioteca/ao-vivo → CreativeAssetRef; ausente =
         // usa o compartilhado do rascunho no apply. Mesma resolução do criativo por-anúncio.
+        // `keepCreativeIndex` PRESERVA o criativo próprio que o conjunto já tinha (round-trip sem
+        // perda): a substituição é TOTAL e o output não devolve id re-enviável, então o editor manda o
+        // índice de ORIGEM (em `spec.adsets`) e o backend copia o `creative` já resolvido de lá. Um pick
+        // novo (`as.creative`) vence.
         let conjCreative: CreativeAssetRef | undefined;
         if (as.creative) {
           const resolved =
@@ -352,6 +356,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
               : await resolveServingCreative(orgId, accountId, as.creative.adId);
           if (!resolved) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
           conjCreative = resolved;
+        } else if (as.keepCreativeIndex != null) {
+          conjCreative = spec.adsets?.[as.keepCreativeIndex]?.creative;
         }
         builtAdsets.push({
           ...(as.name != null ? { name: as.name } : {}),
@@ -360,7 +366,18 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           ...(conjCreative ? { creative: conjCreative } : {}),
         });
       }
-      edit.adsets = builtAdsets;
+      // Colapso p/ ≤1 conjunto: um teste multi só entrega com ≥2 (o apply ignora `adsets` de 1, o que
+      // DERRUBARIA o público desse conjunto em silêncio). Espelha o colapso do chat (refineDraft):
+      // volta a single-conjunto levando o público/nome do único restante. `edit.adsets=[]` limpa a
+      // lista no core (`applyDraftEdit`).
+      if (builtAdsets.length >= 2) {
+        edit.adsets = builtAdsets;
+      } else {
+        edit.adsets = [];
+        const only = builtAdsets[0];
+        if (only?.targeting) edit.targeting = only.targeting;
+        if (only?.name != null) edit.adsetName = only.name;
+      }
     }
 
     // público EXPLÍCITO (Fase 1, subfatia 3b) — remove/adiciona geo(s) já resolvido pelo

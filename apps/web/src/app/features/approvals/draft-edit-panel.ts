@@ -34,11 +34,19 @@ interface ConjuntoForm {
   creativeChoice?: SetDraftCreativeInput;
   /** criativo próprio já salvo (só p/ o rótulo). */
   existingCreative?: { format: 'image' | 'video'; origin: 'reuse' | 'upload' } | null;
+  /** índice deste conjunto na lista ORIGINAL do rascunho (`spec.adsets`) no momento do load; usado p/
+   *  preservar o criativo próprio já salvo no round-trip (`keepCreativeIndex`). `undefined` = conjunto
+   *  novo (adicionado nesta edição, sem criativo próprio a preservar). */
+  originalIndex?: number;
 }
 
 /** Teto de anúncios por rascunho — espelha MAX_ADS_PER_DRAFT de @trafego/shared (backend é a
  *  fonte da verdade; aqui só desabilita o "adicionar" na UI). */
 const MAX_ADS = 10;
+
+/** Teto de conjuntos num teste de público — guarda de UI contra listas ilimitadas (um teste de
+ *  público raramente passa de meia dúzia de segmentos). */
+const MAX_CONJUNTOS = 8;
 
 /** Público explícito VAZIO — semente do modo `custom` quando não há nada legível a herdar. */
 const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
@@ -233,7 +241,7 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
               }
             </div>
           }
-          <button appButton variant="secondary" size="sm" type="button" class="self-start" [disabled]="saving()" (click)="addConjunto()">
+          <button appButton variant="secondary" size="sm" type="button" class="self-start" [disabled]="saving() || conjuntos().length >= MAX_CONJUNTOS" (click)="addConjunto()">
             + Adicionar conjunto
           </button>
         </div>
@@ -362,10 +370,15 @@ export class DraftEditPanel implements OnInit {
   protected readonly pickingAdIndex = signal<number | null>(null);
   /** teto de anúncios (exposto ao template). */
   protected readonly MAX_ADS = MAX_ADS;
+  /** teto de conjuntos (exposto ao template). */
+  protected readonly MAX_CONJUNTOS = MAX_CONJUNTOS;
   /** Conjuntos do teste de público (C2/U1) — vazio = rascunho single-conjunto (usa os campos acima). */
   protected readonly conjuntos = signal<ConjuntoForm[]>([]);
   /** índice do conjunto cujo picker de criativo está aberto (null = nenhum). */
   protected readonly pickingConjuntoIndex = signal<number | null>(null);
+  /** algum conjunto foi MEXIDO nesta edição? Sem isso, `buildPatch` NÃO manda `adsets` (a substituição
+   *  é total — reenviar sem mudança no-opa E clobbaria uma edição concorrente do chat aos conjuntos). */
+  protected readonly conjuntosDirty = signal(false);
 
   protected readonly isScale = computed(() => this.draft().kind === 'duplicate');
   /** rascunho multi-conjunto (teste de público) → mostra a seção de conjuntos, esconde o público único. */
@@ -485,14 +498,16 @@ export class DraftEditPanel implements OnInit {
   /** Semeia conjuntos() a partir do rascunho multi-conjunto (C2/U1). */
   private seedConjuntos(d: DraftApprovalOutput): void {
     this.conjuntos.set(
-      (d.adsets ?? []).map((as) => ({
+      (d.adsets ?? []).map((as, i) => ({
         name: as.name ?? '',
         budget: as.dailyBudgetMajor,
         audienceMode: as.explicitAudience ? 'custom' : 'broad',
         audienceState: as.explicitAudience ? this.toAudienceState(as.explicitAudience) : null,
         existingCreative: as.creative,
+        originalIndex: i,
       })),
     );
+    this.conjuntosDirty.set(false);
   }
 
   /** semente do editor de público de UM conjunto (preserva a edição em voo). */
@@ -509,6 +524,7 @@ export class DraftEditPanel implements OnInit {
 
   protected setConjuntoBudget(index: number, value: number): void {
     this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, budget: value } : c)));
+    this.conjuntosDirty.set(true);
   }
 
   protected setConjuntoAudienceMode(index: number, value: string | string[]): void {
@@ -519,10 +535,12 @@ export class DraftEditPanel implements OnInit {
         i === index ? { ...c, audienceMode: v, audienceState: v === 'custom' ? (c.audienceState ?? EMPTY_AUDIENCE_STATE) : c.audienceState } : c,
       ),
     );
+    this.conjuntosDirty.set(true);
   }
 
   protected onConjuntoAudience(index: number, state: ExplicitAudienceState): void {
     this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, audienceState: state } : c)));
+    this.conjuntosDirty.set(true);
   }
 
   protected toggleConjuntoPicker(index: number): void {
@@ -532,17 +550,23 @@ export class DraftEditPanel implements OnInit {
   protected onConjuntoCreative(index: number, choice: SetDraftCreativeInput): void {
     this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, creativeChoice: choice } : c)));
     this.pickingConjuntoIndex.set(null);
+    this.conjuntosDirty.set(true);
   }
 
-  /** Adiciona um conjunto vazio (público amplo por padrão) — o dono personaliza. */
+  /** Adiciona um conjunto vazio (público amplo por padrão) — o dono personaliza. Teto = MAX_CONJUNTOS. */
   protected addConjunto(): void {
+    if (this.conjuntos().length >= MAX_CONJUNTOS) return;
     this.conjuntos.update((list) => [...list, { name: '', budget: null, audienceMode: 'broad', audienceState: null }]);
+    this.conjuntosDirty.set(true);
   }
 
   /** Remove um conjunto (mín 2 — abaixo disso não é mais teste de público). */
   protected removeConjunto(index: number): void {
     if (this.conjuntos().length <= 2) return;
     this.conjuntos.update((list) => list.filter((_, i) => i !== index));
+    // o picker aberto vira posicional inválido após a remoção → fecha (senão anexaria no conjunto errado).
+    this.pickingConjuntoIndex.set(null);
+    this.conjuntosDirty.set(true);
   }
 
   ngOnInit(): void {
@@ -722,13 +746,22 @@ export class DraftEditPanel implements OnInit {
     if (edits.length > 0) patch['copyEdits'] = edits;
 
     // CONJUNTOS (C2/U1): substituição TOTAL da lista quando o rascunho é multi-conjunto. Cada
-    // conjunto = público (explícito quando personalizado) + orçamento (ABO) + criativo próprio.
-    if (this.hasAdsets()) {
+    // conjunto = público (explícito quando personalizado) + orçamento (ABO) + criativo próprio. Só
+    // manda `adsets` quando ALGUM conjunto MUDOU (`conjuntosDirty`) — a substituição é total, então
+    // reenviar sem mudança no-opa E clobbaria uma edição concorrente do chat aos conjuntos.
+    // Criativo próprio: pick novo (`creativeChoice`) vence; senão `keepCreativeIndex` PRESERVA o que o
+    // conjunto já tinha (o output não devolve id re-enviável do criativo) — índice de ORIGEM, robusto
+    // a remover conjuntos; conjunto novo (sem origem/criativo próprio) → usa o compartilhado.
+    if (this.hasAdsets() && this.conjuntosDirty()) {
       patch['adsets'] = this.conjuntos().map((cj) => ({
         ...(this.trimmed(cj.name) ? { name: this.trimmed(cj.name) } : {}),
         ...(cj.audienceMode === 'custom' && cj.audienceState ? { explicitAudience: this.toExplicitInput(cj.audienceState) } : {}),
         ...(this.isAbo() && cj.budget != null && cj.budget > 0 ? { budgetReais: cj.budget } : {}),
-        ...(cj.creativeChoice ? { creative: cj.creativeChoice } : {}),
+        ...(cj.creativeChoice
+          ? { creative: cj.creativeChoice }
+          : cj.existingCreative && cj.originalIndex != null
+            ? { keepCreativeIndex: cj.originalIndex }
+            : {}),
       }));
     }
     return patch as UpdateDraftInput;

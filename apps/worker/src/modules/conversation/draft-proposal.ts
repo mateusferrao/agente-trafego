@@ -1341,7 +1341,7 @@ export async function refineDraft(
     return {
       kind: "blocked",
       reason:
-        'esse rascunho é um teste de público (vários conjuntos). Por aqui eu adiciono ou removo conjuntos inteiros — "adiciona um conjunto de corredores", "tira o conjunto 2" — mas pra mexer no público de um conjunto específico, edite cada um no site.',
+        'pra mexer no público de um conjunto específico do teste, edite cada um no site — por aqui eu adiciono ou removo conjuntos inteiros ("adiciona um conjunto de corredores", "tira o conjunto 2").',
     };
   }
   if (kind === "from_scratch" && (wantsAddSegment || wantsRemoveSegment)) {
@@ -2511,8 +2511,9 @@ export async function proposeCreateCampaign(
   const structure = resolveStructure(args.intent ?? "create", args.adCount != null ? { ads: args.adCount } : {});
   // Teste de público multi-conjunto → verba única na campanha (CBO) por padrão (o dono sobrepõe).
   const budgetMode: BudgetMode = args.budgetMode ?? (segmentAdsets ? "cbo" : structure.budgetMode);
-  // Piso da Meta (C1: 1 conjunto → piso simples; C2 escala com N). RECOMENDAÇÃO — avisa, não trava.
-  const budgetFloorMinor = resolveBudgetFloorMinor(budgetMode, 1, MIN_BUDGET_MINOR);
+  // Piso da Meta (C1: 1 conjunto → piso simples; C2 escala com N — no CBO a verba única precisa
+  // cobrir ~piso × nº de conjuntos). RECOMENDAÇÃO — avisa, não trava.
+  const budgetFloorMinor = resolveBudgetFloorMinor(budgetMode, segmentAdsets ? segmentAdsets.length : 1, MIN_BUDGET_MINOR);
   const belowFloor = dailyBudgetMinor < budgetFloorMinor;
   // Advantage (C3, decisão #2): o dono decide (override explícito vence); senão INFERE do contexto
   // (negócio local → OFF). "Liga tudo" = expansão de público + melhorias de criativo (bundle).

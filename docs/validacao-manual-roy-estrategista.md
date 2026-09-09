@@ -79,10 +79,15 @@ criativo; `create_campaign` ligado (ações permitidas); escrita conversacional 
    do orçamento (nunca a sigla), a lista dos N conjuntos (nome + público resumido + orçamento,
    "mesmo criativo"), e o aviso de Advantage quando `advantageCreative` ON.
 2. No painel de edição: cada conjunto tem seu `GeoAudienceEditor` (público) + orçamento (ABO) +
-   `creative-picker` (criativo próprio, mesma copy) + adicionar/remover conjunto (mín 2). Salvar →
+   `creative-picker` (criativo próprio, mesma copy) + adicionar/remover conjunto (mín 2, teto 8). Salvar →
    `adsets[]` no `UpdateDraftInput`; a saga cria criativo EXCLUSIVO no conjunto com `creative`, senão
    reusa o compartilhado.
-3. `tokens:check` verde (sem cor hardcoded); `ng build` verde (validação de template real).
+3. **Round-trip do criativo por-conjunto (sem perda):** ponha um criativo próprio no conjunto 2, salve;
+   reabra, mude SÓ o orçamento do conjunto 1, salve de novo → o criativo próprio do conjunto 2 CONTINUA
+   (não volta pro compartilhado). O painel manda `keepCreativeIndex` pros conjuntos que já tinham
+   criativo e não foram trocados; e só manda `adsets` quando algum conjunto mudou (salvar sem mexer em
+   conjunto não reescreve a lista — não clobba uma edição concorrente do chat).
+4. `tokens:check` verde (sem cor hardcoded); `ng build` verde (validação de template real).
 
 ## Invariantes a confirmar em TODOS os cenários
 - Toda estrutura/Advantage/próximo passo é RECOMENDAÇÃO; o dono sobrepõe e a palavra final é dele.

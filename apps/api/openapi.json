@@ -10070,6 +10070,10 @@
                       ]
                     }
                   ]
+                },
+                "keepCreativeIndex": {
+                  "type": "integer",
+                  "minimum": 0
                 }
               }
             }

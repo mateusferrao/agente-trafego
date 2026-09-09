@@ -279,6 +279,12 @@ export const updateDraftInput = z.object({
         /** criativo PRÓPRIO do conjunto (U1 — mesma copy, criativo diferente); resolvido no backend
          *  (biblioteca/anúncio ao vivo) → CreativeAssetRef. Ausente = usa o compartilhado do rascunho. */
         creative: setDraftCreativeInput.optional(),
+        /** PRESERVAR o criativo próprio que este conjunto JÁ tinha (round-trip sem perda): índice do
+         *  conjunto na lista ATUAL do rascunho (`spec.adsets`). Como a substituição é TOTAL e o output
+         *  não devolve um id re-enviável do criativo, o editor manda este índice pra o backend copiar o
+         *  `creative` já resolvido do conjunto original (robusto a reordenar/remover — é o índice de
+         *  ORIGEM, não a posição nova). Ignorado quando `creative` (pick novo) está presente. */
+        keepCreativeIndex: z.number().int().min(0).optional(),
       }),
     )
     .optional(),
