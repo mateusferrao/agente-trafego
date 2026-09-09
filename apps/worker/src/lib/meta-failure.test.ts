@@ -22,6 +22,14 @@ describe("permanentMetaReason", () => {
     expect(r).toContain("a Meta recusou");
     expect(r).not.toContain("Invalid parameter"); // não vaza jargão técnico em inglês
   });
+  it("B3: recusa de idade+Advantage → voz do Roy + próximo passo (não repassa o texto cru)", () => {
+    const r = permanentMetaReason(
+      new AdsPlatformError("not_accessible", "tech", "Em vez disso, você pode adicionar uma idade mínima maior como sugestão ao criar ou editar um conjunto de anúncios."),
+    );
+    expect(r).toContain("otimização automática"); // fala da otimização (Advantage), não da Meta crua
+    expect(r?.toLowerCase()).toContain("idade");
+    expect(r).not.toContain("Em vez disso"); // não repassa o texto literal da Meta
+  });
   it("invalid_credential → reconecte o token (não retry)", () => {
     expect(permanentMetaReason(new AdsPlatformError("invalid_credential", "190"))).toContain("reconecte o token");
   });

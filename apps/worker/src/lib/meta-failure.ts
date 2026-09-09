@@ -29,10 +29,25 @@ export function permanentMetaReason(error: unknown): string | null {
     case "not_accessible":
     case "not_duplicable":
       return error.userMessage
-        ? `a Meta recusou: ${error.userMessage.trim()}`
+        ? friendlyMetaRejection(error.userMessage)
         : "a Meta recusou essa operação (algum dado ficou inválido ou falta permissão na conta) — revise no site ou me peça de outro jeito";
     case "rate_limited":
     case "upstream":
       return null; // transiente — retry pode resolver
   }
+}
+
+/**
+ * Padrões de recusa determinística que sabemos traduzir pra voz do Roy + próximo passo (§13 UX). Fora
+ * dos padrões conhecidos, usa o texto que a Meta tornou legível (o `error_user_msg` é user-facing),
+ * enquadrado honesto. B3.
+ */
+function friendlyMetaRejection(userMessage: string): string {
+  const m = userMessage.toLowerCase();
+  // Idade × otimização automática (Advantage+ audience): a Meta só aceita a idade como MÍNIMO-sugestão,
+  // sem teto. B1 já previne enviando "X+"; se ainda cair aqui, o Roy explica e oferece a correção.
+  if (m.includes("idade") && (m.includes("sugest") || m.includes("mínim") || m.includes("minim"))) {
+    return "a faixa de idade que você escolheu não combina com a otimização automática da Meta — ela só aceita a idade como um mínimo (sem teto). Me peça pra recriar sem o teto de idade, ou pra desligar a otimização e manter a faixa fixa.";
+  }
+  return `a Meta recusou: ${userMessage.trim()}`;
 }
