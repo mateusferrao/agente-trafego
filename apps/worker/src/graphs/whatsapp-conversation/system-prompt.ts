@@ -231,6 +231,10 @@ export async function loadConversationConfig(
   // do system_prompt; a mesma montagem serve chat/redator/pulso.
   const voice = composeSpeakingVoice(ctx);
 
+  // Modelo da CONVERSA (chat ReAct — forte). Lê a chave jsonb `model_config.messageModel` como
+  // override do agente, com fallback ao env (`CONVERSATION_MODEL`). ATENÇÃO à confusão de nome:
+  // essa MESMA chave jsonb também sobrepõe o REDATOR (flash-lite) da análise/pulso — ver
+  // `AnalysisDefaults.messageModel`. Separar as duas chaves = fast-follow (ROADMAP).
   const messageModel = ctx.modelConfig?.["messageModel"];
   const model = typeof messageModel === "string" && messageModel.length > 0 ? messageModel : fallbackModel;
   return { systemPrompt: `${voice}\n\n${buildChatRules(configViaChat, chatAdsWrites, chatCreativePicker)}`, model };

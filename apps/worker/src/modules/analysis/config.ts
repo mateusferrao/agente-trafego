@@ -32,7 +32,15 @@ export interface AnalysisDefaults {
   readonly unitModel: string;
   /** modelo(s) de RESERVA do unit — fallback com retry/backoff se o primário esgotar. */
   readonly unitFallbackModels: readonly string[];
-  /** modelo BARATO do redator do WhatsApp. */
+  /**
+   * Modelo BARATO do REDATOR do WhatsApp (redige o resumo da análise/pulso/vídeo a partir do
+   * RESULTADO já computado — flash-lite). NÃO confundir com o modelo da CONVERSA (chat ReAct),
+   * que é `deps.conversation.model` (forte) — ver `loadConversationConfig`.
+   * Entanglement conhecido (fast-follow p/ untangle): a MESMA chave jsonb `model_config.messageModel`
+   * hoje sobrepõe os DOIS — o redator aqui (linha do `resolveAnalysisConfig`) E a conversa
+   * (`loadConversationConfig`). Separar em duas chaves distintas exige migração/backfill (não é
+   * "sem trocar valores") → ROADMAP.
+   */
   readonly messageModel: string;
   /** modelo multimodal (visão de criativo). */
   readonly visionModel: string;
