@@ -152,8 +152,9 @@ function parseCopyEdits(v: unknown): { index: number; headline?: string; primary
   return out;
 }
 
-/** Normaliza os segmentos do teste de público (C2 producer) vindos do LLM — cada um vira 1 conjunto.
- *  Filtra strings vazias; descarta segmentos sem público algum (nem audiences nem interests). */
+/** Normaliza os segmentos do teste de público (C2/P7 producer) vindos do LLM — cada um vira 1 conjunto
+ *  com o público COMPLETO. Filtra strings vazias; descarta segmentos sem NENHUMA dimensão de público
+ *  (idade/gênero/geo/interesse/comportamento/público salvo/raio) — ruído do LLM. */
 export function parseSegments(v: unknown): SegmentPublicoInput[] {
   if (!Array.isArray(v)) return [];
   const strs = (x: unknown): string[] =>
