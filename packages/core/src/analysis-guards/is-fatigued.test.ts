@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HealthSignal } from "@trafego/shared";
-import { firstFatigueSignal, isAging, isFatigued } from "./index.js";
+import { firstFatigueSignal, hasHardFatigue, isAging, isFatigued } from "./index.js";
 
 // Fonte única de "fadiga de criativo" — reconcilia o guard de escala (que já usava
 // creative_fatigue + weak_hook_retention) com o detector de oportunidade de criação
@@ -43,6 +43,19 @@ describe("isAging (desgaste que AINDA entrega — distingue a direção da rec)"
   it("undefined/vazio → false", () => {
     expect(isAging(undefined)).toBe(false);
     expect(isAging([])).toBe(false);
+  });
+});
+
+describe("hasHardFatigue (desgaste DURO que não é só aging — 'a dura vence')", () => {
+  it("creative_fatigue → true", () => expect(hasHardFatigue(["creative_fatigue"])).toBe(true));
+  it("weak_hook_retention → true", () => expect(hasHardFatigue(["weak_hook_retention"])).toBe(true));
+  it("só creative_aging → false (aging benigno, ainda entrega)", () => expect(hasHardFatigue(["creative_aging"])).toBe(false));
+  it("O CASO REAL: creative_aging + weak_hook_retention JUNTOS → true (a dura não é mascarada pelo aging)", () => {
+    expect(hasHardFatigue(["creative_aging", "weak_hook_retention"])).toBe(true);
+  });
+  it("sem fadiga → false", () => {
+    expect(hasHardFatigue(["low_volume"])).toBe(false);
+    expect(hasHardFatigue(undefined)).toBe(false);
   });
 });
 

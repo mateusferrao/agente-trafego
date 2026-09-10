@@ -352,6 +352,16 @@ export function isAging(signals: readonly HealthSignal[] | undefined): boolean {
   return signals?.includes("creative_aging") ?? false;
 }
 
+/**
+ * `true` se há desgaste DURO que NÃO é só aging — i.e., algum sinal de fadiga além de `creative_aging`
+ * (`creative_fatigue` ou `weak_hook_retention`: "já caiu"). Distingue "some da reutilização" (dura) de
+ * "ainda entrega, prepare o próximo" (aging benigno). Robusto quando a entidade carrega `creative_aging`
+ * E um sinal duro juntos (o duro vence). PURA.
+ */
+export function hasHardFatigue(signals: readonly HealthSignal[] | undefined): boolean {
+  return signals?.some((s) => FATIGUE_SIGNALS.has(s) && s !== "creative_aging") ?? false;
+}
+
 /** Mapa `externalId → healthSignals` a partir dos segmentos do brief. */
 export function healthSignalsByEntity(brief: AccountBrief): Map<string, readonly HealthSignal[]> {
   const map = new Map<string, readonly HealthSignal[]>();

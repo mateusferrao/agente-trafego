@@ -6,8 +6,8 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, assessCreativePick, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, creativeSourceForIntent, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type CreativeCritique, type CreativeIntent, type CreativePickSignals, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
-import { isLookalikeName, MIN_BUDGET_MINOR } from "@trafego/ads-meta";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, assessCreativePick, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, creativeSourceForIntent, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, hasHardFatigue, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type CreativeCritique, type CreativeIntent, type CreativePickSignals, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -467,9 +467,10 @@ async function prepareAudiences(
     }
   }
   // S3: estágio de público da campanha — QUENTE se algum público de INCLUSÃO é custom audience
-  // não-lookalike (mesma regra de `audienceFromTargeting`, vocabulário Meta isolado em `isLookalikeName`).
-  // Só-lookalike/interesses = frio (prospecção). Alimenta o fit + o matcher enriquecido.
-  const includeWarm = includeIds.some((id) => !isLookalikeName(byId.get(id)?.name));
+  // não-lookalike. Usa o flag AUTORITATIVO `isLookalike` (do banco — superconjunto da heurística de
+  // nome: cobre lookalike por SUBTYPE cujo nome não tem dica, ex "Compradores 1%"). Só-lookalike/
+  // interesses = frio (prospecção). Alimenta o fit + o matcher enriquecido.
+  const includeWarm = includeIds.some((id) => byId.get(id)?.isLookalike === false);
   return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings, dropped, includeWarm };
 }
 
@@ -1847,8 +1848,9 @@ async function assessServingSource(
   const byId = new Map(rows.map((r) => [r.entityId, r.curatedJson]));
   const fatigued = rows.some((r) => isFatigued(r.curatedJson?.healthSignals));
   // aging só conta como "desgaste que ainda entrega" quando NÃO há fadiga DURA junto (a dura vence:
-  // some da reutilização). Se qualquer entidade tem fadiga dura, o pick não é "aging benigno".
-  const anyHard = rows.some((r) => isFatigued(r.curatedJson?.healthSignals) && !isAging(r.curatedJson?.healthSignals));
+  // some da reutilização). `hasHardFatigue` = sinal duro que não é só aging — robusto quando a MESMA
+  // entidade carrega creative_aging + weak_hook_retention juntos (o duro não é mascarado pelo aging).
+  const anyHard = rows.some((r) => hasHardFatigue(r.curatedJson?.healthSignals));
   const aging = !anyHard && rows.some((r) => isAging(r.curatedJson?.healthSignals));
   // 1º estágio conhecido na ordem adset→campanha (o resto do array é o fallback).
   let stage: AudienceStage = "unknown";

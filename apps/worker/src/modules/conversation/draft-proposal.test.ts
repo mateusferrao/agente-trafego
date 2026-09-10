@@ -203,6 +203,17 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
     expect(outcome.critique.ressalva?.code).toBe("weak_creative_pick");
   });
 
+  it("S5 — aging + sinal DURO juntos (weak_hook) → a dura vence: REBAIXA pra biblioteca (não caveat brando)", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: ["creative_aging", "weak_hook_retention"] } }] },
+      { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] },
+      { direct: [] },
+    ]);
+    const outcome = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    expect(outcome.creative).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
+  });
+
   it("S5 — pick provado limpo → crítica solid (sem ressalva, respeita o fluxo)", async () => {
     const deps = fakeDepsSeq([
       { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
