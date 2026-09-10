@@ -7,7 +7,7 @@ const approvalStatusOutput = z.enum(["pending", "approved", "rejected", "expired
 /** Público EXPLÍCITO proposto de uma ação `adjust_audience` (Fatia C) — semente do editor do site
  *  (`GeoAudienceEditor`, mesmo dos rascunhos). Opcionais normalizados em `null`. */
 const explicitAudienceView = z.object({
-  geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
+  geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city", "neighborhood"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
   radiusAreas: z.array(z.object({ address: z.string(), radius: z.number(), distanceUnit: z.enum(["mile", "kilometer"]) })),
   ageMin: z.number().nullable(),
   ageMax: z.number().nullable(),

@@ -3,7 +3,7 @@ import { adAccounts, agentRuns, agentToolBindings, agentToolCalls, agents, campa
 import type { ApplyOutcome, ApprovalId, CampaignDraftSpec, OrgId, TargetingSpec } from "@trafego/shared/types";
 import type { Approval, ApprovalPort, PendingApproval } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
-import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE, enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
+import { buildApprovalApplyJob, enabledActionTypes, toMinorUnits, minorToMajor, DEFAULT_CURRENCY, type ToolBindingMode } from "@trafego/shared";
 import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_TARGETING } from "@trafego/shared";
 import { computeApplyPreview, describeActionOutcome, describeActivationOutcome, describeCreatedDraft, describeDraftOutcome, editBudgetActionValue, projectBudgetTargetMinor, readModernizations, resolveEnabledTools, type OutcomeDetail } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
@@ -17,9 +17,6 @@ import type {
   ResolveApprovalOutput,
   RevertibleActionOutput,
 } from "./schema.js";
-
-/** Unidade mínima por unidade monetária (reais → centavos) — igual ao drafts/service. */
-const MINOR_PER_UNIT = 100;
 
 export interface ApprovalsDeps {
   readonly db: Database;
@@ -142,8 +139,8 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           a.actionType === "adjust_budget" && Number.isFinite(rawCurrent) && rawCurrent > 0 ? rawCurrent : null;
         const targetBudgetMinor =
           a.actionType === "adjust_budget" ? projectBudgetTargetMinor(currentBudgetMinor, a.action.params) : null;
-        const currentBudgetMajor = currentBudgetMinor != null ? currentBudgetMinor / MINOR_PER_UNIT : null;
-        const targetBudgetMajor = targetBudgetMinor != null ? targetBudgetMinor / MINOR_PER_UNIT : null;
+        const currentBudgetMajor = currentBudgetMinor != null ? minorToMajor(currentBudgetMinor, acc?.currency ?? null) : null;
+        const targetBudgetMajor = targetBudgetMinor != null ? minorToMajor(targetBudgetMinor, acc?.currency ?? null) : null;
         // público proposto (só adjust_audience) — semente do editor no card.
         const targeting = a.actionType === "adjust_audience" ? (a.action.params[ACTION_PARAM_TARGETING] as TargetingSpec | undefined) : undefined;
         const audience = targeting && targeting.kind === "explicit" ? serializeExplicitAudience(targeting) : null;
@@ -205,11 +202,7 @@ export function createApprovalsService(deps: ApprovalsDeps) {
       // resultado desta reaprovação (mostrando "falhou/não criei" enquanto o novo apply roda e cria
       // de fato). Síncrono aqui garante que o 1º poll veja `null` até o worker gravar o fresco.
       await deps.approvals.clearApplyOutcome(approvalId);
-      await deps.scheduler.enqueue({
-        queue: APPROVAL_APPLY_QUEUE,
-        name: APPROVAL_APPLY_JOB,
-        payload: { orgId, approvalId },
-      });
+      await deps.scheduler.enqueue(buildApprovalApplyJob({ orgId, approvalId }));
       return { id: approval.id, status: "pending" };
     },
 
@@ -243,9 +236,14 @@ export function createApprovalsService(deps: ApprovalsDeps) {
         throw badRequest("Só orçamento e público têm valor editável; pausar/retomar/status é aprovar ou rejeitar.");
       }
       if (input.mode === undefined) throw badRequest("Informe o novo orçamento (mode + pct/budgetReais).");
+      // budget absoluto → unidade menor pela MOEDA da conta (JPY≠centavos). Reusa `signalsByAgent`
+      // (mesma fonte de currency do listPending) — sem a moeda, o ×100 fixo escreveria 100× errado
+      // pra contas de 0/3 casas.
+      const editSignals = await signalsByAgent([approval.agentId]);
+      const editCurrency = editSignals.get(approval.agentId)?.currency ?? DEFAULT_CURRENCY;
       const edit =
         input.mode === "set"
-          ? { kind: "absolute" as const, amountMinor: Math.round((input.budgetReais ?? 0) * MINOR_PER_UNIT) }
+          ? { kind: "absolute" as const, amountMinor: toMinorUnits(input.budgetReais ?? 0, editCurrency) }
           : { kind: "pct" as const, mode: input.mode, pct: input.pct ?? 0 };
       const r = editBudgetActionValue(approval.action, edit);
       if (!r.ok) throw badRequest(r.error);

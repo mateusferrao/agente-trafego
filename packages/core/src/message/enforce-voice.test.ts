@@ -38,7 +38,9 @@ describe("enforceVoice — stripAssistantOpeners", () => {
 
 describe("enforceVoice — capitalizeFirst (sentence case)", () => {
   it("capitaliza a 1ª letra de mensagem minúscula", () => {
-    expect(enforceVoice("beleza, rodando — já te aviso.")).toBe("Beleza, rodando — já te aviso.");
+    // "beleza," (abertura calorosa) é PRESERVADA (o kernel quer calor no cumprimento); o
+    // travessão dramático em prosa vira vírgula (V1).
+    expect(enforceVoice("beleza, rodando — já te aviso.")).toBe("Beleza, rodando, já te aviso.");
     expect(enforceVoice("recebi seu áudio.")).toBe("Recebi seu áudio.");
   });
 
@@ -49,10 +51,34 @@ describe("enforceVoice — capitalizeFirst (sentence case)", () => {
   });
 });
 
+describe("enforceVoice — travessão dramático (V1, rede leve)", () => {
+  it("travessão-conector com espaços em prosa → vírgula (some a cara de IA)", () => {
+    expect(enforceVoice("A conta vai bem — o CPA caiu esta semana.")).toBe("A conta vai bem, o CPA caiu esta semana.");
+  });
+
+  it("PRESERVA a faixa com en-dash (–, U+2013) entre valores — não é travessão", () => {
+    expect(enforceVoice("O budget vai de R$ 100 – R$ 200 por dia.")).toBe("O budget vai de R$ 100 – R$ 200 por dia.");
+  });
+
+  it("PRESERVA o hífen e o travessão colado (sem espaços) — conservador", () => {
+    expect(enforceVoice("Custo-benefício alto.")).toBe("Custo-benefício alto.");
+    expect(enforceVoice("bem—assim")).toBe("Bem—assim");
+  });
+
+  it("PRESERVA o travessão em LINHA DE LISTA (opções numeradas/bullets)", () => {
+    const input = "achei mais de um lugar:\n1. Belo Horizonte — cidade\n2. Belo Vale — cidade\nQual desses?";
+    expect(enforceVoice(input)).toBe("Achei mais de um lugar:\n1. Belo Horizonte — cidade\n2. Belo Vale — cidade\nQual desses?");
+  });
+
+  it("PRESERVA o travessão dentro de NOME em *negrito* (campanha/conjunto)", () => {
+    expect(enforceVoice("Vou criar a campanha *CaquiAI — Conversa* pra você.")).toBe("Vou criar a campanha *CaquiAI — Conversa* pra você.");
+  });
+});
+
 describe("enforceVoice — idempotência", () => {
   it("aplicar 2× = 1×", () => {
     const input =
-      "Claro! A conta apresenta gasto alto. - Pausar a campanha X. - Reduzir o budget da Y.";
+      "Claro! A conta apresenta gasto alto — sem meta batida. - Pausar a campanha X. - Reduzir o budget da Y.";
     const once = enforceVoice(input);
     expect(enforceVoice(once)).toBe(once);
   });

@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { EntityObjective } from "@trafego/shared";
-import { cpaLabelFor, resolveConversion } from "./index.js";
+import { cpaLabelFor, isMessagingGoal, resolveConversion } from "./index.js";
+
+describe("isMessagingGoal (destino WhatsApp vs site)", () => {
+  it("só messaging_started é destino de WhatsApp; os demais são site/lead/app", () => {
+    expect(isMessagingGoal("messaging_started")).toBe(true);
+    expect(isMessagingGoal("purchase")).toBe(false);
+    expect(isMessagingGoal("lead")).toBe(false);
+    expect(isMessagingGoal("app_install")).toBe(false);
+    expect(isMessagingGoal(null)).toBe(false);
+    expect(isMessagingGoal(undefined)).toBe(false);
+  });
+});
 
 describe("resolveConversion", () => {
   it("sem objetivo e sem override → null (sem conversão; julgar por CPC/CPM)", () => {

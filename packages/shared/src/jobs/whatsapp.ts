@@ -107,4 +107,7 @@ export type WhatsappMediaIntakePayload = {
      *  vídeo grande demais ANTES de baixar/decodificar. Ausente → fallback pós-decode. */
     readonly fileLength?: number;
   };
+  /** B3: imagem COM legenda → o turno do Grafo B é a voz (responde à pergunta + oferece usar);
+   *  o intake então salva em SILÊNCIO (sem cortesia/oferta próprias) pra não duplicar resposta. */
+  readonly suppressNotice?: boolean;
 };

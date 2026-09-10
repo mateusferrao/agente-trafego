@@ -103,4 +103,39 @@ describe("campaignDraftSpecSchema — shape-validation (não regra de negócio)"
     const legacyStillValid: CampaignDraftSpec = { ...fromScratch, targeting: { kind: "reuse_adset", sourceAdsetId: "as_1" } };
     expect(campaignDraftSpecSchema.safeParse(legacyStillValid).success).toBe(true);
   });
+
+  it("C1: aceita budgetMode cbo/abo e rejeita valor fora do enum", () => {
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, budgetMode: "cbo" }).success).toBe(true);
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, budgetMode: "abo" }).success).toBe(true);
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, budgetMode: "xyz" }).success).toBe(false);
+  });
+
+  it("C1 retrocompat: budgetMode AUSENTE segue válido (rascunho pré-C1 = ABO no apply)", () => {
+    const { budgetMode: _omit, ...noMode } = { ...fromScratch, budgetMode: "cbo" as const };
+    expect(campaignDraftSpecSchema.safeParse(noMode).success).toBe(true);
+  });
+
+  it("C3: aceita advantageAudience/advantageCreative (booleans); ausência = pré-C3", () => {
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, advantageAudience: true, advantageCreative: true }).success).toBe(true);
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, advantageAudience: false }).success).toBe(true);
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, advantageCreative: "yes" }).success).toBe(false);
+  });
+
+  it("C2: aceita adsets[] (multi-conjunto) e rejeita conjunto sem forma válida", () => {
+    const multi: CampaignDraftSpec = {
+      ...fromScratch,
+      budgetMode: "cbo",
+      adsets: [
+        { name: "Público A", targeting: { kind: "advantage_plus" } },
+        { name: "Público B", targeting: { kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }] }, dailyBudgetMinor: 3000 },
+      ],
+    };
+    expect(campaignDraftSpecSchema.safeParse(multi).success).toBe(true);
+    // conjunto com budget inválido (<= 0) é rejeitado
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, adsets: [{ dailyBudgetMinor: 0 }] }).success).toBe(false);
+  });
+
+  it("C2 retrocompat: adsets AUSENTE = single-conjunto (rascunho pré-C2 segue válido)", () => {
+    expect(campaignDraftSpecSchema.safeParse(fromScratch).success).toBe(true);
+  });
 });

@@ -20,6 +20,30 @@ export type EntityLevel = "account" | "campaign" | "adset" | "ad";
 export type EntityStatus = "active" | "paused" | "deleted" | "archived";
 
 /**
+ * Nó da árvore de ativação. `status` = status PRÓPRIO/configurado do nó (o que decide se RELIGAR —
+ * um filho já ativo no próprio nível não precisa de ação, mesmo que o pai pausado o deixe sem
+ * entregar). `effectiveStatus` = status EFETIVO da Meta (reflete os pais + revisão) — decide se
+ * ENTREGA (anúncio efetivamente ativo ⇒ cadeia toda ativa).
+ */
+export interface ActivationNode {
+  readonly id: string;
+  readonly name: string | null;
+  readonly status: EntityStatus;
+  readonly effectiveStatus: EntityStatus;
+}
+/**
+ * Descendentes VIVOS de uma campanha/conjunto — base da ativação em cadeia (religar os pausados no
+ * PRÓPRIO nível) + da entrega efetiva (existe anúncio efetivamente ativo?). Escopado na leitura
+ * (campanha → conjuntos+anúncios; conjunto → anúncios). `truncated` = a página não trouxe todos
+ * (campanha grande) → o caller avisa em vez de sub-ativar em silêncio.
+ */
+export interface ActivationTree {
+  readonly adsets: readonly ActivationNode[];
+  readonly ads: readonly (ActivationNode & { readonly adsetId: string })[];
+  readonly truncated: boolean;
+}
+
+/**
  * Estratégia de lance NEUTRA (S2) — mapeia o enum `bid_strategy` da Meta (vocabulário
  * Meta fica só no adapter, `mapBidStrategy`). `lowest_cost` é o padrão esperado (sem
  * cap); os outros 3 são formas de CAP/meta explícita, só recomendáveis com dado
@@ -87,6 +111,10 @@ export interface AudienceProfile {
   readonly geoEntries?: readonly { readonly key: string; readonly name: string; readonly kind: "city" | "region" }[];
   readonly ageMin?: number;
   readonly ageMax?: number;
+  /** gênero da fonte (mesma taxonomia de `TargetingSpec.explicit.genders`: 1=homens, 2=mulheres).
+   *  Ausente/ambos = todos. Necessário pra a cópia/herança NÃO perder um público só-de-homens ou
+   *  só-de-mulheres (C2 — fidelidade de gênero). */
+  readonly genders?: readonly (1 | 2)[];
   /** principais interesses/comportamentos (top-N nomes), quando houver — resumo p/ eco/UI. */
   readonly interests?: readonly string[];
   /** interesses/comportamentos COM id, agrupados (Slice 6) — necessário pra CÓPIA FIEL repassar o
@@ -185,6 +213,17 @@ export interface StoredInsightMetrics {
  *  `CreativeVisionResult.format` (estilo visual inferido pela visão, ex: "UGC"/"antes-depois"). */
 export type AdFormat = "image" | "video" | "carousel" | "catalog" | "other";
 
+/** Métrica CRUA por anúncio (neutro, agnóstico de plataforma) — gasto + resultados de negócio
+ *  (conversões de fundo/meio de funil). Usado pra ranquear/recomendar criativos buscados AO VIVO
+ *  (ex: pausados). NÃO carrega tier/qualidade (isso é do run de análise). */
+export interface AdMetric {
+  readonly adId: string;
+  /** gasto na moeda da conta (unidade MAIOR — ex: reais), da janela consultada. */
+  readonly spend: number;
+  /** contagem de resultados de negócio (conversões) na janela — proxy neutro. */
+  readonly results: number;
+}
+
 export interface Creative {
   readonly id: string;
   readonly adId: string;
@@ -233,6 +272,22 @@ export interface WhatsappDestination {
   readonly entityName?: string;
 }
 
+/** Página do Facebook (destino de uma campanha de conversas) — taxonomia neutra. `whatsappNumber`
+ *  é o WhatsApp conectado à Página (só-dígitos), best-effort: a Meta frequentemente não expõe. */
+export interface PageInfo {
+  readonly pageId: string;
+  readonly name?: string;
+  readonly whatsappNumber?: string;
+}
+
+/** Pixel de rastreamento de conversões da conta (id + nome) — taxonomia neutra. Pra o dono ESCOLHER
+ *  qual pixel usar quando a conta tem N, e pra mostrar qual foi inferido. O adapter Meta resolve via
+ *  `{account}/adspixels`; outros providers mapeiam pro mesmo tipo. */
+export interface PixelInfo {
+  readonly pixelId: string;
+  readonly name?: string;
+}
+
 // ─── Público salvo / custom audience (Fatia 7, genérico) ──────────────────
 /** Custom/saved audience da conta — taxonomia neutra (vocabulário Meta só no adapter). */
 export interface CustomAudience {
@@ -252,7 +307,7 @@ export interface CustomAudience {
 export interface GeoSearchResult {
   readonly key: string;
   readonly name: string;
-  readonly kind: "country" | "region" | "city";
+  readonly kind: "country" | "region" | "city" | "neighborhood";
   /** país-mãe (cidades/regiões) — desambiguação quando o nome é homônimo entre países. */
   readonly countryCode?: string;
 }
@@ -518,9 +573,13 @@ export type ActionSource = "playbook" | "llm";
 export type RiskLevel = "low" | "medium" | "high";
 
 /**
- * Códigos das ressalvas de ESCALA (fonte única do tipo + zod). Cada um é um sinal de risco
- * detectado por um passe puro nível-Action (packages/core/analysis-guards) sobre uma ação de
- * escalar/reativar. Adicionar um novo passe = 1 entrada aqui.
+ * Códigos das ressalvas de RISCO (fonte única do tipo + zod). Cada um é um sinal detectado por um passe
+ * puro nível-Action (packages/core) — sobre uma ação de escalar/reativar (os 5 primeiros) OU sobre a
+ * escolha de criativo na criação (`weak_creative_pick`, aterrado no método do squad). Os 5 primeiros
+ * ANEXAM à `Action` e travam o auto-apply (`isAutoApplicable`) mantendo-a APROVÁVEL. `weak_creative_pick`
+ * é hoje só a MENSAGEM honesta do eco de criação (a criação-do-zero SEMPRE exige aprovação — nasce
+ * pausada + 2ª aprovação — então o auto-apply já é travado pelo modelo de rascunho, não por esta
+ * ressalva); anexá-la a uma ação de auto-create futura ligaria o gate literal. Adicionar um passe = 1 entrada aqui.
  */
 export const RESSALVA_CODES = [
   "no_significance",
@@ -528,6 +587,7 @@ export const RESSALVA_CODES = [
   "audience_ceiling",
   "creative_fatigue",
   "unconfirmed_hypothesis",
+  "weak_creative_pick",
 ] as const;
 export type RessalvaCode = (typeof RESSALVA_CODES)[number];
 
@@ -689,6 +749,13 @@ export interface ConversionProxy {
 export type PerformanceTier = "winner" | "performer" | "underperformer" | "zombie";
 
 /** Sinais de saúde nomeados (estende a detecção de anomalias com semântica de tráfego).
+ *  `creative_fatigue`: desgaste (2+ sinais de deterioração) numa entidade que JÁ NÃO ENTREGA
+ *  (não bate a meta / não é mais eficiente) — hora de renovar/trocar o criativo.
+ *  `creative_aging`: os MESMOS sinais de desgaste, mas a entidade AINDA ENTREGA resultado (bate a
+ *  meta / segue eficiente) — não é "troque já", é "prepare o sucessor e troque quando o resultado
+ *  cair, não antes"; nunca matar/trocar um vencedor provado por um não-provado (§7 proteger winners).
+ *  Ambos travam ESCALA/DUPLICAÇÃO igual (subir verba/duplicar num criativo desgastando queima verba),
+ *  só a DIREÇÃO da recomendação difere.
  *  `weak_creative` (S4b): prova fraca + baixa densidade persuasiva (visão) — NUNCA vira
  *  critério de guard (é score de LLM, soft); só informa NOTE/matcher. `platform_quality_below_average`
  *  (S6): a própria Meta classifica o anúncio abaixo da média (qualidade/engajamento/conversão) —
@@ -697,6 +764,7 @@ export type PerformanceTier = "winner" | "performer" | "underperformer" | "zombi
  *  NOTE/direção de criativo, nunca guard (é sinal de qualidade de criativo, não de economia da ação). */
 export type HealthSignal =
   | "creative_fatigue"
+  | "creative_aging"
   | "audience_saturation"
   | "low_volume"
   | "weak_creative"
@@ -1129,6 +1197,9 @@ export interface ResolvedAudienceSnapshot {
   };
   readonly ageMin?: number;
   readonly ageMax?: number;
+  /** gênero da fonte (1=homens, 2=mulheres; ausente/ambos = todos) — pra a cópia/herança `reuse_adset`
+   *  NÃO perder um público só-de-homens/só-de-mulheres no apply (C2 — fidelidade de gênero). */
+  readonly genders?: readonly (1 | 2)[];
   /** interesses/comportamentos da fonte COM id (Slice 6) — pra a cópia `reuse_adset` preservar o
    *  targeting detalhado no apply (senão o snapshot só tinha geo/idade/expansão e perdia interesses). */
   readonly interestGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
@@ -1172,7 +1243,7 @@ export type TargetingSpec =
       readonly geo: readonly {
         readonly key: string;
         readonly name: string;
-        readonly kind: "country" | "region" | "city";
+        readonly kind: "country" | "region" | "city" | "neighborhood";
         readonly radius?: number;
         readonly distanceUnit?: DistanceUnit;
       }[];
@@ -1199,6 +1270,25 @@ export type TargetingSpec =
  * (objetivo/targeting/copy/criativo/página/pixel) são opcionais — no `duplicate` a
  * estrutura é herdada do source via `/copies`, só o budget/ativação variam.
  */
+/**
+ * Um conjunto de anúncios de um teste multi-conjunto (C2, `1-N-M`). Carrega o PÚBLICO
+ * (`targeting`) e, no ABO, o orçamento diário próprio. O CRIATIVO é COMPARTILHADO entre os
+ * conjuntos (o teste de público isola só a variável público) — vem de `spec.creative`/
+ * `copyVariants`; `copyVariants` aqui é override raro por-conjunto. `name` ausente → derivado.
+ */
+export interface AdsetSpec {
+  readonly name?: string;
+  readonly targeting?: TargetingSpec;
+  /** ABO: orçamento diário deste conjunto (unidade mínima). CBO: ausente (verba na campanha). */
+  readonly dailyBudgetMinor?: number;
+  /** Override de CRIATIVO deste conjunto (site/U1) — mesma copy compartilhada, criativo diferente.
+   *  Ausente = criativo compartilhado do rascunho (o default do teste de público). Quando presente,
+   *  o apply cria um criativo EXCLUSIVO pro conjunto (a saga não reusa o compartilhado). */
+  readonly creative?: CreativeAssetRef;
+  /** Override COMPLETO de copy+criativo do conjunto (avançado; hoje sem produtor). Vence `creative`. */
+  readonly copyVariants?: readonly CopyVariant[];
+}
+
 export interface CampaignDraftSpec {
   readonly version: 1;
   readonly currency: string;
@@ -1233,6 +1323,16 @@ export interface CampaignDraftSpec {
   readonly specialAdCategories?: readonly string[];
   /** otimização de orçamento herdada da fonte (CBO = na campanha; ABO = no adset). */
   readonly budgetMode?: BudgetMode;
+  /** Conjuntos de um teste multi-conjunto (C2, `1-N-M`): N públicos, cada conjunto o seu. Ausente
+   *  ou 1 = single-conjunto (usa `targeting`/`copyVariants`; retrocompat). Criativo COMPARTILHADO
+   *  entre os conjuntos (o teste isola só o público). */
+  readonly adsets?: readonly AdsetSpec[];
+  /** Advantage+ audience (C3): true = deixa a Meta EXPANDIR além do público escolhido. Ausente =
+   *  público fixo (comportamento pré-C3). Só afeta targeting `explicit`. */
+  readonly advantageAudience?: boolean;
+  /** Advantage+ creative enhancements (C3): true = a Meta pode ajustar imagem/texto/CTA do anúncio.
+   *  Ausente/false = criativo exatamente como aprovado. O eco AVISA quando ON. */
+  readonly advantageCreative?: boolean;
   /**
    * Criativos da fonte REUSADOS por referência (`creative_id` da Meta) — 1 anúncio por
    * ref, preservando `object_story_spec`/destino WhatsApp sem rebuild. Vazio → usa
@@ -1249,8 +1349,10 @@ export interface CampaignDraftSpec {
   readonly suffixLabel?: string;
 }
 
-/** Otimização de orçamento (neutro): campanha (CBO) × conjunto (ABO). */
-export type BudgetMode = "cbo" | "abo";
+/** Otimização de orçamento (neutro): campanha (CBO) × conjunto (ABO). Tupla = fonte única do
+ *  tipo + do enum zod (§13, mesmo padrão de CONVERSION_GOALS). */
+export const BUDGET_MODES = ["cbo", "abo"] as const;
+export type BudgetMode = (typeof BUDGET_MODES)[number];
 
 /**
  * Estrutura NEUTRA lida de uma campanha existente p/ cópia fiel (Fatia 7). Só o adapter
@@ -1269,6 +1371,11 @@ export interface CampaignStructure {
   /** pixel do promoted_object da fonte (Fatia 7) — sem ele, copiar campanha de conversão
    *  falha no createAdSet (OFFSITE_CONVERSIONS sem promoted_object). Ausente em mensagens. */
   readonly pixelId?: string;
+  /** Página de destino do conjunto da fonte (`promoted_object.page_id`) — a Meta EXIGE a Página no
+   *  `promoted_object` de campanha de CONVERSAS (CTWA) e de LEAD sem pixel; sem ela o createAdSet da
+   *  cópia é recusado ("A Página é necessária no objeto promovido para o tipo de destino do WhatsApp").
+   *  Threadada até `spec.pageId` na cópia. Ausente quando a fonte não tem destino que exija Página. */
+  readonly pageId?: string;
   /** conjunto representativo (a cópia é 1-1-N): id + targeting neutro + destino WhatsApp. */
   readonly sourceAdsetId: string;
   readonly targeting: AudienceProfile;

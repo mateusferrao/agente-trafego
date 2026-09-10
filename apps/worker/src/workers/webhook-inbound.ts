@@ -24,7 +24,12 @@ import {
   WHATSAPP_TRANSCRIPTION_BACKOFF_MS,
   WHATSAPP_TRANSCRIPTION_JOB,
   WHATSAPP_TRANSCRIPTION_QUEUE,
+  CREATIVE_VIDEO_ANALYZE_JOB,
+  CREATIVE_VIDEO_ANALYZE_JOB_ATTEMPTS,
+  CREATIVE_VIDEO_ANALYZE_JOB_BACKOFF_MS,
+  CREATIVE_VIDEO_ANALYZE_QUEUE,
   type ConversationRef,
+  type CreativeVideoAnalyzePayload,
   type WhatsappFlushPayload,
   type WhatsappInboundPayload,
   type WhatsappMediaIntakePayload,
@@ -38,6 +43,8 @@ import { isAddressedToBot } from "../modules/conversation/addressing.js";
 import { BUFFER_TTL_MARGIN_SEC, pushInbound } from "../modules/conversation/buffer.js";
 import { markTranscribing, scheduleConversationFlush } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
+import { stashPendingMedia } from "../modules/conversation/pending-media.js";
+import { claimInbound } from "../modules/conversation/inbound-dedupe.js";
 import { loadGroupParticipantsMap } from "../modules/conversation/group-participants-cache.js";
 import { QUOTED_AUTHOR_FALLBACK_LABEL, quotedTextPrefix, unsupportedMediaNotice } from "../modules/conversation/notices.js";
 import { participantLabelFromPhone } from "@trafego/core";
@@ -51,6 +58,8 @@ const UNSUPPORTED_NOTICE_BUCKET = "unsupported";
 const AMBIENT_AUDIO_PLACEHOLDER = "[áudio]";
 const AMBIENT_MEDIA_PLACEHOLDER: Readonly<Record<string, string>> = { image: "[imagem]", video: "[vídeo]" };
 const AMBIENT_MEDIA_DEFAULT = "[mídia]";
+/** Ack imediato do vídeo-pergunta (Slice 2) — a análise (worker próprio) responde em seguida. */
+const VIDEO_ANALYZING_NOTICE = "Recebi seu vídeo — já vou dar uma olhada nele e te falo o que achei.";
 
 /** Corpo a guardar de uma mensagem AMBIENTE de grupo: texto cru ou placeholder de mídia. */
 function ambientBody(inbound: InboundMessage): string {
@@ -75,7 +84,6 @@ export interface InboundRouterDeps {
   readonly repo: Pick<
     NotifyRepo,
     | "resolveInboundContact"
-    | "alreadyProcessed"
     | "ensureConversation"
     | "recordMessage"
     | "recordGroupMessage"
@@ -88,6 +96,7 @@ export interface InboundRouterDeps {
   readonly flushQueue: Pick<Queue<WhatsappFlushPayload>, "add" | "remove">;
   readonly transcriptionQueue: Pick<Queue<WhatsappTranscriptionPayload>, "add">;
   readonly mediaIntakeQueue: Pick<Queue<WhatsappMediaIntakePayload>, "add">;
+  readonly creativeVideoAnalyzeQueue: Pick<Queue<CreativeVideoAnalyzePayload>, "add">;
   readonly sendToConversation: SendToConversation;
   readonly logger: Pick<Logger, "debug">;
   readonly debounceMs: number;
@@ -127,13 +136,23 @@ async function routeMessage(
 
   if (inbound.kind === "image" || inbound.kind === "video") {
     // Mídia → asset de criativo (F7): registra a linha + enfileira o intake (grava, sobe pra
-    // Meta, confirma). NÃO dispara turno do Grafo B (side-effect + cortesia). Imagem carrega
-    // base64 inline; VÍDEO não (grande demais p/ o Redis) → o intake busca por messageKey.
+    // Meta, confirma). Imagem carrega base64 inline; VÍDEO não (grande demais p/ o Redis) → o
+    // intake busca por messageKey.
     await d.repo.recordMessage(conversationId, "inbound", inbound.caption, {
       messageId: inbound.messageId,
       kind: inbound.kind,
       ...extraMeta,
     });
+    // B3 (mídia-como-pergunta): IMAGEM com legenda E bytes inline → o usuário está perguntando.
+    // Dispara um turno do Grafo B com a imagem anexada (multimodal) e o intake salva em SILÊNCIO
+    // (o turno é a voz). Sem legenda / sem bytes / vídeo (frames só depois de `ready`) → intake
+    // normal (cortesia/oferta). Legenda também é o texto do turno.
+    const captionText = inbound.caption?.trim() ?? "";
+    const inlineB64 = inbound.kind === "image" ? inbound.image.base64 : "";
+    const asQuestion = inbound.kind === "image" && captionText.length > 0 && inlineB64.length > 0;
+    // VÍDEO-pergunta (Slice 2): dirigido (grupo = @menção já filtrada) OU com legenda no DM → o Roy
+    // analisa dos nossos bytes (worker próprio); o intake salva em SILÊNCIO (a análise é a voz).
+    const videoQuestion = inbound.kind === "video" && (ref.kind === "group" || captionText.length > 0);
     const media =
       inbound.kind === "image"
         ? { mimetype: inbound.image.mimetype, base64: inbound.image.base64, caption: inbound.caption, messageKey: inbound.messageKey }
@@ -145,7 +164,7 @@ async function routeMessage(
           };
     await d.mediaIntakeQueue.add(
       WHATSAPP_MEDIA_INTAKE_JOB,
-      { orgId, ref, conversationId, instanceId, mediaType: inbound.kind, media },
+      { orgId, ref, conversationId, instanceId, mediaType: inbound.kind, media, ...(asQuestion || videoQuestion ? { suppressNotice: true } : {}) },
       {
         attempts: WHATSAPP_MEDIA_INTAKE_ATTEMPTS,
         backoff: { type: "exponential", delay: WHATSAPP_MEDIA_INTAKE_BACKOFF_MS },
@@ -153,7 +172,29 @@ async function routeMessage(
         removeOnFail: true,
       },
     );
-    d.logger.debug({ conversationId, kind: inbound.kind }, "inbound:media_enqueued");
+    if (asQuestion && inbound.kind === "image") {
+      await stashPendingMedia(d.redis, conversationId, {
+        dataUrl: `data:${inbound.image.mimetype};base64,${inlineB64}`,
+        mimetype: inbound.image.mimetype,
+      });
+      await pushInbound(d.redis, conversationId, captionText, d.bufferTtlSec);
+      await scheduleConversationFlush(d.flushQueue, flushPayload, d.debounceMs);
+    }
+    if (videoQuestion && inbound.kind === "video") {
+      // busca dos bytes + análise (vídeo completo → modelo) rodam no worker próprio; ack imediato.
+      await d.creativeVideoAnalyzeQueue.add(
+        CREATIVE_VIDEO_ANALYZE_JOB,
+        { orgId, ref, conversationId, instanceId, messageKey: inbound.messageKey, mimetype: inbound.video.mimetype, caption: inbound.caption ?? null, ...(inbound.video.fileLength !== undefined ? { fileLength: inbound.video.fileLength } : {}) },
+        {
+          attempts: CREATIVE_VIDEO_ANALYZE_JOB_ATTEMPTS,
+          backoff: { type: "exponential", delay: CREATIVE_VIDEO_ANALYZE_JOB_BACKOFF_MS },
+          removeOnComplete: true,
+          removeOnFail: true,
+        },
+      );
+      await d.sendToConversation(ref, VIDEO_ANALYZING_NOTICE, { split: true, quoteLastInbound: true });
+    }
+    d.logger.debug({ conversationId, kind: inbound.kind, asQuestion, videoQuestion }, "inbound:media_enqueued");
     return;
   }
 
@@ -218,7 +259,7 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
     d.logger.debug({ instanceId }, "inbound:ignored (group not registered)");
     return;
   }
-  if (await d.repo.alreadyProcessed(inbound.messageId)) {
+  if (!(await claimInbound(d.redis, instanceId, inbound.messageId))) {
     d.logger.debug({ messageId: inbound.messageId }, "inbound:duplicate");
     return;
   }
@@ -354,8 +395,8 @@ export function makeInboundRouter(d: InboundRouterDeps) {
       d.logger.debug({ instanceId }, "inbound:ignored (unknown sender)");
       return;
     }
-    // idempotência do provider (webhook pode reentregar).
-    if (await d.repo.alreadyProcessed(inbound.messageId)) {
+    // idempotência do provider (webhook pode reentregar) — SET NX atômico entre réplicas (D2).
+    if (!(await claimInbound(d.redis, instanceId, inbound.messageId))) {
       d.logger.debug({ messageId: inbound.messageId }, "inbound:duplicate");
       return;
     }
@@ -373,6 +414,7 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
   const flushQueue = new Queue<WhatsappFlushPayload>(WHATSAPP_FLUSH_QUEUE, { connection });
   const transcriptionQueue = new Queue<WhatsappTranscriptionPayload>(WHATSAPP_TRANSCRIPTION_QUEUE, { connection });
   const mediaIntakeQueue = new Queue<WhatsappMediaIntakePayload>(WHATSAPP_MEDIA_INTAKE_QUEUE, { connection });
+  const creativeVideoAnalyzeQueue = new Queue<CreativeVideoAnalyzePayload>(CREATIVE_VIDEO_ANALYZE_QUEUE, { connection });
   const route = makeInboundRouter({
     repo,
     messaging: ports.messaging,
@@ -380,6 +422,7 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
     flushQueue,
     transcriptionQueue,
     mediaIntakeQueue,
+    creativeVideoAnalyzeQueue,
     sendToConversation: createSendToConversation({ messaging: ports.messaging, repo }),
     logger,
     debounceMs: deps.conversation.debounceSeconds * 1000,
@@ -406,7 +449,8 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
       // 2) mensagem: normaliza; null = ignorar (fromMe/ACK/grupo/sem conteúdo) → roteia.
       const inbound = ports.messaging.parseInbound(raw);
       if (!inbound) {
-        logger.debug({ jobId: job.id }, "inbound:ignored (unparseable)");
+        // Diagnóstico: nomes das chaves da mensagem (sem conteúdo) — revela mídia nova antes do silêncio.
+        logger.debug({ jobId: job.id, shape: ports.messaging.describeInbound(raw) }, "inbound:ignored (unparseable)");
         return;
       }
       await route(instanceId, inbound);

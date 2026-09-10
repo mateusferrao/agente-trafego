@@ -15,6 +15,27 @@ export interface PendingWrite {
   readonly expiresAt: string;
   /** ações clampadas a aplicar quando o usuário confirmar (lote). */
   readonly actions: readonly Action[];
+  /**
+   * SAGA de realocação A→B (A4): as 2 ações (`[origem set A_new, destino set B_new]`) NÃO
+   * são atômicas na Meta → aplica sequencial COM compensação. Se o destino (leg 2) falha
+   * depois da origem (leg 1) já ter descido, devolve o orçamento da origem (`sourceRestoreMinor`,
+   * o budget cru anterior — clamp neutro); se a devolução também falha, reporta estado parcial
+   * explícito (nunca silêncio). Ausente = escrita normal (loop independente, sem compensação).
+   */
+  readonly saga?: {
+    readonly kind: "reallocation";
+    /** `${level}:${id}` da origem — alvo da devolução. */
+    readonly sourceKey: string;
+    /** budget cru da origem ANTES da realocação (unidade mínima) — devolve exatamente isto. */
+    readonly sourceRestoreMinor: number;
+  };
+  /**
+   * ATIVAÇÃO EM CADEIA (a Meta não cascateia status): as `actions` incluem o nó pedido + os
+   * descendentes pausados a religar (pra a campanha entregar). Uma intenção única confirmada →
+   * o apply ISENTA o cap de entidades/dia (`exemptEntityCap`), como a ativação de criação já faz;
+   * killSwitch/budget seguem valendo. Ausente = escrita normal (cap valendo).
+   */
+  readonly chainActivation?: boolean;
 }
 
 /**
@@ -94,6 +115,27 @@ export interface PendingConfigChange {
   readonly runRelevantChanged: boolean;
 }
 
+/**
+ * Desambiguação numerada aguardando a ESCOLHA do usuário (D1). Quando o resolvedor de
+ * público/interesse/geo/página acha vários candidatos, o gate manda "Qual desses? 1..." E
+ * congela AQUI as opções já resolvidas (id externo por posição). No topo do próximo turno,
+ * se a resposta casa (índice/nome via `resolveDisambiguationChoice`), aplica-se o id direto —
+ * o LLM não reconstrói a intenção (fim do "1" virar outra coisa). Ambíguo/fora → segue pro LLM.
+ * Serializável (checkpointer). TTL como os demais pendings.
+ */
+export interface PendingDisambiguation {
+  /** que campo o usuário estava escolhendo (decide o resolver de aplicação). */
+  readonly field: "addInterests" | "geo" | "audience" | "page";
+  /** o texto original que gerou a ambiguidade (contexto p/ o eco de aplicação). */
+  readonly query: string;
+  /** opções numeradas congeladas (1-based `index` + id externo/opaco + rótulo exibido). */
+  readonly options: readonly { readonly index: number; readonly id: string; readonly name: string }[];
+  /** rascunho alvo, quando a escolha edita um rascunho pendente (interesse/geo/público/página). */
+  readonly draftId?: string;
+  /** ISO — um "1" tardio não aplica uma escolha esquecida (TTL). */
+  readonly expiresAt: string;
+}
+
 export const WhatsappConversationState = Annotation.Root({
   // histórico da conversa (reducer append padrão do LangGraph)
   messages: Annotation<BaseMessage[]>({
@@ -122,6 +164,10 @@ export const WhatsappConversationState = Annotation.Root({
   // eco+confirma de mudança de CONFIG do agente (S2.3): metas/autonomia/guardrails/
   // cadência/arquétipo/playbook/identidade. Config não toca a Meta (ramo próprio).
   pendingConfigChange: Annotation<PendingConfigChange | null>,
+
+  // desambiguação numerada congelada (D1): a resposta "1"/nome resolve determinístico no
+  // topo do próximo turno, sem o LLM reconstruir a intenção.
+  pendingDisambiguation: Annotation<PendingDisambiguation | null>,
 });
 
 export type WhatsappConversationStateType = typeof WhatsappConversationState.State;

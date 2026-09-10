@@ -1,4 +1,4 @@
-import type { WhatsappDestination } from "@trafego/shared";
+import type { PageInfo, WhatsappDestination } from "@trafego/shared";
 import { extractPhoneFromName } from "@trafego/shared";
 import type { AdAccountRef } from "@trafego/shared/ports";
 import type { MetaGraphClient } from "./client.js";
@@ -131,6 +131,78 @@ export class MetaWhatsappDestinationService {
       return digits.length > 0 ? digits : null;
     } catch {
       return null;
+    }
+  }
+
+  /** Info de UMA Página (nome + WhatsApp conectado) — pra MOSTRAR o destino de uma campanha de
+   *  conversas NO RASCUNHO (o número é da Página, conhecível antes de criar). O nome vem em 2 tiers:
+   *  (1) leitura direta do nó da Página (traz nome E número quando o token tem a Página como ativo);
+   *  (2) fallback pelas PÁGINAS DO NEGÓCIO (`listAccountPages`, owned/client) — fonte confiável do
+   *  nome quando o nó direto dá 403/vazio (a Página costuma estar no negócio mesmo sem estar atribuída
+   *  ao System User). `whatsappNumber` segue best-effort (a Meta raramente expõe → ausente).
+   *  Falha nos dois tiers → só o pageId (nunca quebra). */
+  async pageInfo(account: AdAccountRef, pageId: string): Promise<PageInfo> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    let direct: PageInfo = { pageId };
+    try {
+      const node = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<{ name?: string; whatsapp_number?: string }>({
+            method: "GET",
+            path: pageId,
+            accessToken: account.accessToken,
+            params: { fields: "name,whatsapp_number" },
+          }),
+        { governor: this.governor },
+      );
+      const digits = (node.whatsapp_number ?? "").replace(/\D+/g, "");
+      direct = { pageId, ...(node.name ? { name: node.name } : {}), ...(digits.length > 0 ? { whatsappNumber: digits } : {}) };
+    } catch {
+      /* nó direto sem acesso (403) → tenta o nome pelas páginas do negócio abaixo */
+    }
+    if (direct.name) return direct;
+    const named = (await this.listAccountPages(account)).find((p) => p.pageId === pageId);
+    return named?.name ? { ...direct, name: named.name } : direct;
+  }
+
+  /** teto de páginas do negócio a listar (owned + client) — conta grande raramente passa disso. */
+  private static readonly PAGE_LIST_LIMIT = 200;
+
+  /**
+   * Páginas que a CONTA pode usar como destino (id + nome) — pra o dono ESCOLHER quando há N e pra
+   * resolver o NOME de uma Página. Fonte: as páginas do NEGÓCIO dono da conta (`business{owned_pages,
+   * client_pages}`) — bem mais confiável que o `promote_pages` (que vinha vazio por escopo de ativo).
+   * Sem negócio/acesso (403) → lista vazia (o caller degrada honesto). O `whatsapp_number` NÃO vem
+   * daqui (não é campo confiável da Página pra CTWA — o número real mora no conjunto pós-criação).
+   */
+  async listAccountPages(account: AdAccountRef): Promise<PageInfo[]> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const limit = MetaWhatsappDestinationService.PAGE_LIST_LIMIT;
+    try {
+      const node = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<{
+            business?: {
+              owned_pages?: { data?: ReadonlyArray<{ id?: string; name?: string }> };
+              client_pages?: { data?: ReadonlyArray<{ id?: string; name?: string }> };
+            };
+          }>({
+            method: "GET",
+            path: accountId,
+            accessToken: account.accessToken,
+            params: { fields: `business{owned_pages.limit(${limit}){id,name},client_pages.limit(${limit}){id,name}}` },
+          }),
+        { governor: this.governor },
+      );
+      const out = new Map<string, PageInfo>();
+      for (const p of [...(node.business?.owned_pages?.data ?? []), ...(node.business?.client_pages?.data ?? [])]) {
+        if (p.id && !out.has(p.id)) out.set(p.id, { pageId: p.id, ...(p.name ? { name: p.name } : {}) });
+      }
+      return [...out.values()];
+    } catch {
+      return [];
     }
   }
 

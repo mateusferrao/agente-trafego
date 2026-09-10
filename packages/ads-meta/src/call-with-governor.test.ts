@@ -116,7 +116,58 @@ describe("callWithGovernor", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it("erro não-rate-limit (code 100) → relança na hora, sem retry", async () => {
+  it("transiente Meta (code 2 'serviço indisponível') → retria → sucesso", async () => {
+    const gov = makeGovernor();
+    const sleepFn = vi.fn(async () => {});
+    let calls = 0;
+    const data = await callWithGovernor(
+      ACCT,
+      async () => {
+        calls++;
+        if (calls === 1) throw new MetaApiError("temporarily unavailable", 2, undefined, 500);
+        return ok({ ok: true });
+      },
+      { governor: gov, sleepFn },
+    );
+    expect(data).toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
+  it("5xx sem código de rate-limit → retria (transiente) → sucesso", async () => {
+    const gov = makeGovernor();
+    const sleepFn = vi.fn(async () => {});
+    let calls = 0;
+    const data = await callWithGovernor(
+      ACCT,
+      async () => {
+        calls++;
+        if (calls === 1) throw new MetaApiError("internal", undefined, undefined, 503);
+        return ok({ ok: true });
+      },
+      { governor: gov, sleepFn },
+    );
+    expect(data).toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
+  it("erro de rede/timeout (TypeError 'fetch failed') → retria → sucesso", async () => {
+    const gov = makeGovernor();
+    const sleepFn = vi.fn(async () => {});
+    let calls = 0;
+    const data = await callWithGovernor(
+      ACCT,
+      async () => {
+        calls++;
+        if (calls === 1) throw new TypeError("fetch failed");
+        return ok({ ok: true });
+      },
+      { governor: gov, sleepFn },
+    );
+    expect(data).toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
+  it("erro não-transiente (code 100, 400) → relança na hora, sem retry", async () => {
     const gov = makeGovernor();
     const sleepFn = vi.fn(async () => {});
     let calls = 0;

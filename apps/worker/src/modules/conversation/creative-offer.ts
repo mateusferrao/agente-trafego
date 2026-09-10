@@ -4,6 +4,9 @@
 // criativo do rascunho pendente ('use') ou propõe criar uma campanha com o criativo ('create').
 // Não escreve no checkpoint do LangGraph por fora (hacky); a oferta é uma fonte à parte.
 
+import { and, desc, eq } from "drizzle-orm";
+import { campaignDrafts } from "@trafego/db";
+import type { Database } from "@trafego/db/client";
 import type { Redis } from "ioredis";
 
 /** Oferta pendente após o usuário mandar um criativo no WhatsApp. `draftId` presente → há um
@@ -34,6 +37,38 @@ export async function getCreativeOffer(redis: Redis, conversationId: string): Pr
 
 export async function clearCreativeOffer(redis: Redis, conversationId: string): Promise<void> {
   await redis.del(keyOf(conversationId));
+}
+
+/** Rascunho from_scratch ainda aberto da conta → a oferta é USAR o criativo nele (senão CRIAR). */
+async function pendingFromScratchDraftId(db: Database, orgId: string, adAccountId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ id: campaignDrafts.id })
+    .from(campaignDrafts)
+    .where(
+      and(
+        eq(campaignDrafts.orgId, orgId),
+        eq(campaignDrafts.adAccountId, adAccountId),
+        eq(campaignDrafts.status, "proposed"),
+        eq(campaignDrafts.kind, "from_scratch"),
+      ),
+    )
+    .orderBy(desc(campaignDrafts.createdAt))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * Prepara a oferta de fecho-de-loop de um criativo pronto (imagem no intake / vídeo quando o poll
+ * flipa `ready`): resolve se há rascunho aberto pra USAR, grava a oferta no Redis e devolve o
+ * `draftId` (ou null = oferta de CRIAR). Fonte única das duas superfícies (intake + poll).
+ */
+export async function stageCreativeOffer(
+  deps: { db: Database; redis: Redis },
+  args: { orgId: string; adAccountId: string; assetId: string; conversationId: string },
+): Promise<{ draftId: string | null }> {
+  const draftId = await pendingFromScratchDraftId(deps.db, args.orgId, args.adAccountId);
+  await setCreativeOffer(deps.redis, args.conversationId, { assetId: args.assetId, ...(draftId ? { draftId } : {}) });
+  return { draftId };
 }
 
 /** Afirmação simples e inequívoca ("sim", "pode", "usa", "cria"…) — determinístico (§8: só o

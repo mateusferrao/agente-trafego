@@ -21,9 +21,42 @@ interface CopyForm {
 /** Um item de copy do rascunho (elemento do array de saída). */
 type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
 
+/** Um conjunto do teste de público (C2/U1) no formulário — público + orçamento (ABO) + criativo
+ *  PRÓPRIO (mesma copy compartilhada, criativo diferente). Espelha o padrão de `CopyForm`. */
+interface ConjuntoForm {
+  name: string;
+  /** orçamento diário (ABO). `null` = CBO (verba na campanha, editada no "Gasto por dia" geral). */
+  budget: number | null;
+  /** `broad` = a Meta escolhe; `custom` = revela o `GeoAudienceEditor`. */
+  audienceMode: 'broad' | 'custom';
+  audienceState: ExplicitAudienceState | null;
+  /** troca de criativo deste conjunto, pendente até Salvar. `undefined` = usa o compartilhado. */
+  creativeChoice?: SetDraftCreativeInput;
+  /** criativo próprio já salvo (só p/ o rótulo). */
+  existingCreative?: { format: 'image' | 'video'; origin: 'reuse' | 'upload' } | null;
+  /** índice deste conjunto na lista ORIGINAL do rascunho (`spec.adsets`) no momento do load; usado p/
+   *  preservar o criativo próprio já salvo no round-trip (`keepCreativeIndex`). `undefined` = conjunto
+   *  novo (adicionado nesta edição, sem criativo próprio a preservar). */
+  originalIndex?: number;
+  /** ANÚNCIOS (F2): `shared` = usa os anúncios compartilhados; `own` = anúncios próprios (override). */
+  adsMode: 'shared' | 'own';
+  /** anúncios próprios em edição (só quando `adsMode==='own'`), espelho editável do override/compartilhado. */
+  adForms: CopyForm[];
+  /** o conjunto JÁ tinha um override salvo (`spec.adsets[origin].copyVariants`) — p/ o `keepCopyVariantsIndex`. */
+  hasOwnAds: boolean;
+  /** a seção de anúncios do conjunto está expandida (recolhida por padrão — §UX, não poluir). */
+  adsExpanded: boolean;
+  /** os anúncios próprios foram MEXIDOS nesta edição (decide copyEdits × keepCopyVariantsIndex no patch). */
+  adsDirty: boolean;
+}
+
 /** Teto de anúncios por rascunho — espelha MAX_ADS_PER_DRAFT de @trafego/shared (backend é a
  *  fonte da verdade; aqui só desabilita o "adicionar" na UI). */
 const MAX_ADS = 10;
+
+/** Teto de conjuntos num teste de público — guarda de UI contra listas ilimitadas (um teste de
+ *  público raramente passa de meia dúzia de segmentos). */
+const MAX_CONJUNTOS = 8;
 
 /** Público explícito VAZIO — semente do modo `custom` quando não há nada legível a herdar. */
 const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
@@ -89,14 +122,24 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
           />
           <span class="text-[11px] text-muted">Objetivos de venda/lead precisam do pixel configurado na conta.</span>
         </label>
+        @if (objective() !== 'messaging_started') {
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-ink">Link de destino</span>
+            <input appInput class="w-full" type="url" inputmode="url" [(ngModel)]="linkUrl" placeholder="https://sualoja.com/promo" />
+            <span class="text-[11px] text-muted">Pra onde o clique no anúncio leva. Em branco = herda o link do seu anúncio-base.</span>
+          </label>
+        }
       }
 
-      <!-- Gasto + ativação (comuns) — empilha no mobile, lado a lado no desktop -->
+      <!-- Gasto + ativação (comuns) — empilha no mobile, lado a lado no desktop. F1c: o gasto da
+           CAMPANHA some quando é teste multi-conjunto em ABO (a verba mora em cada conjunto). -->
       <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
-        <label class="flex flex-col gap-1 sm:flex-1">
-          <span class="text-xs font-medium text-ink">Gasto por dia ({{ draft().currency }})</span>
-          <input appInput class="w-full" type="number" min="1" step="1" [(ngModel)]="budget" />
-        </label>
+        @if (!(hasAdsets() && isAbo())) {
+          <label class="flex flex-col gap-1 sm:flex-1">
+            <span class="text-xs font-medium text-ink">Gasto por dia ({{ draft().currency }})</span>
+            <input appInput class="w-full" type="number" min="1" step="1" [(ngModel)]="budget" />
+          </label>
+        }
         <div class="flex flex-col gap-1 sm:flex-1">
           <span class="text-xs font-medium text-ink">Ao aprovar</span>
           <div
@@ -117,7 +160,7 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
       <!-- Público — 3 modos num único controle (Slice 8 unificado): herda o vencedor / a Meta
            escolhe / personalizado. "Personalizado" revela o editor completo (geo/raio/idade/gênero/
            interesses/comportamentos/públicos salvos) abaixo. Some na escala (mantém o vencedor). -->
-      @if (!isScale()) {
+      @if (!isScale() && !hasAdsets()) {
         <div class="flex flex-col gap-2">
           <span class="text-xs font-medium text-ink">Público</span>
           <div
@@ -143,6 +186,163 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
               [initial]="editorSeed()"
               (stateChange)="explicitAudienceState.set($event)"
             />
+          }
+        </div>
+      }
+
+      <!-- CONJUNTOS (teste de público multi-conjunto, C2/U1): cada conjunto com seu público +
+           orçamento (ABO) + criativo próprio. Mesmo criativo compartilhado por padrão (isola o
+           público); trocar por conjunto é aqui. Add/remover espelha o padrão de anúncios. -->
+      @if (!isScale() && hasAdsets()) {
+        <div class="flex flex-col gap-3">
+          <!-- F1b: onde a verba mora (CBO/ABO) em linguagem de negócio, sem a sigla técnica. Trocar
+               move a verba de nível (spend-preserving) e mostra/some o campo de gasto por conjunto. -->
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-ink">Orçamento</span>
+            <div
+              appToggleGroup
+              ngpToggleGroupType="single"
+              layout="segmented"
+              [columns]="2"
+              aria-label="Orçamento"
+              [ngpToggleGroupValue]="[budgetMode()]"
+              (ngpToggleGroupValueChange)="setBudgetMode($event)"
+            >
+              <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="cbo">Único na campanha</button>
+              <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="abo">Por conjunto</button>
+            </div>
+            <p class="text-xs text-muted">
+              {{ isAbo() ? 'Cada conjunto tem o próprio gasto por dia.' : 'A Meta distribui um gasto único entre os conjuntos.' }}
+            </p>
+          </div>
+          <span class="text-xs font-medium text-ink">Conjuntos (teste de público — mesmo criativo, públicos diferentes)</span>
+          @for (cj of conjuntos(); track $index; let cjIdx = $index) {
+            <div class="flex flex-col gap-2 rounded-md border border-line bg-panel p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-medium uppercase tracking-wide text-muted">Conjunto {{ $index + 1 }}</span>
+                <button
+                  type="button"
+                  class="text-[11px] text-muted hover:text-ink disabled:opacity-40"
+                  [disabled]="conjuntos().length <= 2 || saving()"
+                  (click)="removeConjunto($index)"
+                >
+                  Remover
+                </button>
+              </div>
+              <input appInput class="w-full" [(ngModel)]="cj.name" placeholder="Nome do conjunto (ex: Interesse em estética)" />
+              @if (isAbo()) {
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-ink">Gasto por dia deste conjunto ({{ draft().currency }})</span>
+                  <input appInput class="w-full" type="number" min="1" step="1" [ngModel]="cj.budget" (ngModelChange)="setConjuntoBudget($index, $event)" />
+                </label>
+              }
+              <!-- público do conjunto: a Meta escolhe × personalizado (revela o editor) -->
+              <div
+                appToggleGroup
+                ngpToggleGroupType="single"
+                layout="segmented"
+                [columns]="2"
+                aria-label="Público do conjunto"
+                [ngpToggleGroupValue]="[cj.audienceMode]"
+                (ngpToggleGroupValueChange)="setConjuntoAudienceMode($index, $event)"
+              >
+                <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="broad">A Meta escolhe</button>
+                <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="custom">Personalizado</button>
+              </div>
+              @if (cj.audienceMode === 'custom') {
+                <app-geo-audience-editor
+                  [accountId]="draft().accountId"
+                  [draftId]="draft().draftId"
+                  [initial]="conjuntoSeed($index)"
+                  (stateChange)="onConjuntoAudience($index, $event)"
+                />
+              }
+              <!-- criativo próprio do conjunto (mesma copy, criativo diferente) — só quando os anúncios
+                   são os COMPARTILHADOS (no modo "próprios" o editor por-anúncio abaixo cuida do criativo). -->
+              @if (cj.adsMode === 'shared') {
+                <div class="flex flex-col gap-2 border-t border-line pt-2 sm:flex-row sm:items-center sm:justify-between">
+                  <span class="text-xs text-ink"><span class="text-muted">Criativo: </span>{{ conjuntoCreativeLabel($index) }}</span>
+                  <button appButton variant="ghost" size="sm" type="button" class="shrink-0 self-start sm:self-auto" [disabled]="saving()" (click)="toggleConjuntoPicker($index)">
+                    {{ pickingConjuntoIndex() === $index ? 'Cancelar troca' : 'Trocar criativo deste conjunto' }}
+                  </button>
+                </div>
+                @if (pickingConjuntoIndex() === $index) {
+                  <app-creative-picker
+                    [accountId]="draft().accountId"
+                    [picking]="false"
+                    (pick)="onConjuntoCreative($index, $event)"
+                    (cancel)="pickingConjuntoIndex.set(null)"
+                  />
+                }
+              }
+              <!-- F2: anúncios DESTE conjunto (recolhidos) — compartilhados por padrão, override opcional. -->
+              <div class="flex flex-col gap-2 border-t border-line pt-2">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-xs text-ink"><span class="text-muted">Anúncios: </span>{{ conjuntoAdsSummary($index) }}</span>
+                  <div class="flex gap-2">
+                    @if (cj.adsMode === 'own') {
+                      <button appButton variant="ghost" size="sm" type="button" [disabled]="saving()" (click)="toggleConjuntoAds($index)">{{ cj.adsExpanded ? 'Recolher' : 'Editar' }}</button>
+                      <button appButton variant="ghost" size="sm" type="button" [disabled]="saving()" (click)="resetConjuntoAdsToShared($index)">Voltar aos compartilhados</button>
+                    } @else {
+                      <button appButton variant="ghost" size="sm" type="button" [disabled]="saving() || sharedAdCount() === 0" (click)="personalizeConjuntoAds($index)">Personalizar anúncios</button>
+                    }
+                  </div>
+                </div>
+                @if (cj.adsMode === 'own' && cj.adsExpanded) {
+                  @for (ad of cj.adForms; track $index) {
+                    <div class="flex flex-col gap-1 rounded-md border border-line bg-app p-2">
+                      <span class="text-[11px] font-medium uppercase tracking-wide text-muted">Anúncio {{ $index + 1 }}</span>
+                      <input appInput class="w-full" placeholder="Título" [ngModel]="ad.headline" (ngModelChange)="setConjuntoAdField(cjIdx, $index, { headline: $event })" />
+                      <textarea [class]="fieldClasses" rows="2" placeholder="Texto principal" [ngModel]="ad.primaryText" (ngModelChange)="setConjuntoAdField(cjIdx, $index, { primaryText: $event })"></textarea>
+                      <input appInput class="w-full" placeholder="Descrição (opcional)" [ngModel]="ad.description" (ngModelChange)="setConjuntoAdField(cjIdx, $index, { description: $event })" />
+                      <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <span class="text-[11px] text-ink"><span class="text-muted">Criativo: </span>{{ conjuntoAdCreativeLabel(cjIdx, $index) }}</span>
+                        <button appButton variant="ghost" size="sm" type="button" class="shrink-0 self-start sm:self-auto" [disabled]="saving()" (click)="toggleConjuntoAdPicker(cjIdx, $index)">
+                          {{ pickingConjuntoAd()?.cj === cjIdx && pickingConjuntoAd()?.ad === $index ? 'Cancelar troca' : 'Trocar criativo' }}
+                        </button>
+                      </div>
+                      @if (pickingConjuntoAd()?.cj === cjIdx && pickingConjuntoAd()?.ad === $index) {
+                        <app-creative-picker
+                          [accountId]="draft().accountId"
+                          [picking]="false"
+                          (pick)="onConjuntoAdCreative(cjIdx, $index, $event)"
+                          (cancel)="pickingConjuntoAd.set(null)"
+                        />
+                      }
+                    </div>
+                  }
+                }
+              </div>
+            </div>
+          }
+          <button appButton variant="secondary" size="sm" type="button" class="self-start" [disabled]="saving() || conjuntos().length >= MAX_CONJUNTOS" (click)="addConjunto()">
+            + Adicionar conjunto
+          </button>
+        </div>
+      }
+
+      <!-- Advantage+ (F1a — editável no rascunho pendente, só criação): bundle único (expansão de
+           público + melhorias de criativo). Ligado = a Meta pode ALTERAR imagem/texto → aviso honesto. -->
+      @if (!isScale()) {
+        <div class="flex flex-col gap-2">
+          <span class="text-xs font-medium text-ink">Otimização automática da Meta (Advantage)</span>
+          <div
+            appToggleGroup
+            ngpToggleGroupType="single"
+            layout="segmented"
+            [columns]="2"
+            aria-label="Otimização automática da Meta"
+            [ngpToggleGroupValue]="[advantage() ? 'on' : 'off']"
+            (ngpToggleGroupValueChange)="setAdvantage($event)"
+          >
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="off">Tudo fixo</button>
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="on">Deixar a Meta otimizar</button>
+          </div>
+          @if (advantage()) {
+            <p class="rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">
+              Ligado, a Meta pode expandir o público além do escolhido e ajustar a imagem/o texto do anúncio — o que
+              for entregue pode sair um pouco diferente do que você aprovou.
+            </p>
           }
         </div>
       }
@@ -177,10 +377,17 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
         </div>
       }
 
-      <!-- Anúncios (só criação): copy + criativo POR ANÚNCIO + adicionar/remover. -->
+      <!-- Anúncios (só criação): copy + criativo POR ANÚNCIO + adicionar/remover. Num teste
+           multi-conjunto estes são os anúncios COMPARTILHADOS (o default de cada conjunto). -->
       @if (!isScale() && copies().length > 0) {
         <div class="flex flex-col gap-3">
-          <span class="text-xs font-medium text-ink">Anúncios</span>
+          <span class="text-xs font-medium text-ink">{{ hasAdsets() ? 'Anúncios compartilhados' : 'Anúncios' }}</span>
+          @if (hasAdsets()) {
+            <p class="text-xs text-muted">Estes anúncios valem pra todos os conjuntos por padrão. Cada conjunto pode personalizar os seus acima.</p>
+          }
+          @if (anyConjuntoOwnAds()) {
+            <p class="rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">Um ou mais conjuntos têm anúncios próprios — aí o teste deixa de comparar só o público (o criativo também muda). Tudo bem se for de propósito.</p>
+          }
           @for (c of copies(); track $index) {
             <div class="flex flex-col gap-2 rounded-md border border-line bg-panel p-3">
               <div class="flex items-center justify-between">
@@ -253,6 +460,15 @@ export class DraftEditPanel implements OnInit {
     .map(([value, label]) => ({ value, label }));
   protected readonly budget = signal(0);
   protected readonly activation = signal<'active' | 'paused'>('paused');
+  /** URL de destino do anúncio (só from_scratch com objetivo de site/tráfego/conversão) — o clique
+   *  leva pra cá. Escondido em conversas no WhatsApp (leva pro WhatsApp, não pra um site). */
+  protected readonly linkUrl = signal('');
+  /** Advantage+ do rascunho (F1a — editável no rascunho pendente, só from_scratch): bundle único
+   *  (expansão de público + melhorias de criativo). Ligado = a Meta pode alterar imagem/texto. */
+  protected readonly advantage = signal(false);
+  /** Onde a verba mora (F1b — só teste multi-conjunto): `cbo` = única na campanha, `abo` = por
+   *  conjunto. Dirige `isAbo()` (mostra o campo de gasto por conjunto ao vivo ao trocar). */
+  protected readonly budgetMode = signal<'cbo' | 'abo'>('cbo');
   /** modo do público (controle único de 3 opções): `reuse`/`broad` = herdado; `custom` = revela o
    *  editor completo abaixo (converte reuse/broad → explicit no Salvar). */
   protected readonly audienceMode = signal<'reuse' | 'broad' | 'custom'>('reuse');
@@ -267,8 +483,22 @@ export class DraftEditPanel implements OnInit {
   protected readonly pickingAdIndex = signal<number | null>(null);
   /** teto de anúncios (exposto ao template). */
   protected readonly MAX_ADS = MAX_ADS;
+  /** teto de conjuntos (exposto ao template). */
+  protected readonly MAX_CONJUNTOS = MAX_CONJUNTOS;
+  /** Conjuntos do teste de público (C2/U1) — vazio = rascunho single-conjunto (usa os campos acima). */
+  protected readonly conjuntos = signal<ConjuntoForm[]>([]);
+  /** índice do conjunto cujo picker de criativo está aberto (null = nenhum). */
+  protected readonly pickingConjuntoIndex = signal<number | null>(null);
+  /** algum conjunto foi MEXIDO nesta edição? Sem isso, `buildPatch` NÃO manda `adsets` (a substituição
+   *  é total — reenviar sem mudança no-opa E clobbaria uma edição concorrente do chat aos conjuntos). */
+  protected readonly conjuntosDirty = signal(false);
 
   protected readonly isScale = computed(() => this.draft().kind === 'duplicate');
+  /** rascunho multi-conjunto (teste de público) → mostra a seção de conjuntos, esconde o público único. */
+  protected readonly hasAdsets = computed(() => (this.draft().adsets?.length ?? 0) > 0);
+  /** ABO = orçamento por conjunto (mostra o campo de gasto em cada conjunto); CBO = verba na campanha.
+   *  Lê o signal (F1b) → o campo por-conjunto aparece/some AO VIVO quando o dono troca o modo. */
+  protected readonly isAbo = computed(() => this.budgetMode() === 'abo');
   /** rótulo do criativo PADRÃO do rascunho (formato + origem) — sem jargão, sem id técnico. */
   protected readonly creativeLabel = computed(() => this.formatCreative(this.draft().creative));
   /** formata um criativo (formato + origem) em linguagem de gente; `null` → sem criativo. */
@@ -364,6 +594,167 @@ export class DraftEditPanel implements OnInit {
     );
   }
 
+  /** Mapeia o público explícito do output (conjunto ou rascunho) → estado do editor. */
+  private toAudienceState(ea: NonNullable<DraftApprovalOutput['explicitAudience']>): ExplicitAudienceState {
+    return {
+      geo: ea.geo,
+      radiusAreas: ea.radiusAreas,
+      ageMin: ea.ageMin,
+      ageMax: ea.ageMax,
+      genders: ea.genders,
+      interestGroups: ea.interestGroups,
+      behaviorGroups: ea.behaviorGroups,
+      customAudienceIncludeIds: ea.customAudienceIncludeIds,
+      customAudienceExcludeIds: ea.customAudienceExcludeIds,
+    };
+  }
+
+  /** Semeia conjuntos() a partir do rascunho multi-conjunto (C2/U1). */
+  private seedConjuntos(d: DraftApprovalOutput): void {
+    this.conjuntos.set(
+      (d.adsets ?? []).map((as, i) => ({
+        name: as.name ?? '',
+        budget: as.dailyBudgetMajor,
+        audienceMode: as.explicitAudience ? 'custom' : 'broad',
+        audienceState: as.explicitAudience ? this.toAudienceState(as.explicitAudience) : null,
+        existingCreative: as.creative,
+        originalIndex: i,
+        // F2: anúncios próprios quando o conjunto tem override (copyVariants); senão usa os compartilhados.
+        adsMode: as.copyVariants && as.copyVariants.length > 0 ? 'own' : 'shared',
+        adForms: as.copyVariants ? as.copyVariants.map((c) => this.toCopyForm(c)) : [],
+        hasOwnAds: Boolean(as.copyVariants && as.copyVariants.length > 0),
+        adsExpanded: false,
+        adsDirty: false,
+      })),
+    );
+    this.conjuntosDirty.set(false);
+  }
+
+  /** Mapeia um item de copy do output → CopyForm editável (compartilhado ou override do conjunto). */
+  private toCopyForm(c: DraftCopy): CopyForm {
+    return { adName: c.adName ?? '', headline: c.headline, primaryText: c.primaryText, description: c.description ?? '' };
+  }
+
+  /** semente do editor de público de UM conjunto (preserva a edição em voo). */
+  protected conjuntoSeed(index: number): ExplicitAudienceState {
+    return this.conjuntos()[index]?.audienceState ?? EMPTY_AUDIENCE_STATE;
+  }
+
+  /** rótulo do criativo de UM conjunto: troca pendente > próprio salvo > compartilhado. */
+  protected conjuntoCreativeLabel(index: number): string {
+    const cj = this.conjuntos()[index];
+    if (cj?.creativeChoice) return 'novo criativo escolhido (salve pra aplicar)';
+    return cj?.existingCreative ? `próprio — ${this.formatCreative(cj.existingCreative)}` : 'usa o criativo compartilhado';
+  }
+
+  protected setConjuntoBudget(index: number, value: number): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, budget: value } : c)));
+    this.conjuntosDirty.set(true);
+  }
+
+  protected setConjuntoAudienceMode(index: number, value: string | string[]): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v !== 'broad' && v !== 'custom') return;
+    this.conjuntos.update((list) =>
+      list.map((c, i) =>
+        i === index ? { ...c, audienceMode: v, audienceState: v === 'custom' ? (c.audienceState ?? EMPTY_AUDIENCE_STATE) : c.audienceState } : c,
+      ),
+    );
+    this.conjuntosDirty.set(true);
+  }
+
+  protected onConjuntoAudience(index: number, state: ExplicitAudienceState): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, audienceState: state } : c)));
+    this.conjuntosDirty.set(true);
+  }
+
+  protected toggleConjuntoPicker(index: number): void {
+    this.pickingConjuntoIndex.update((cur) => (cur === index ? null : index));
+  }
+
+  protected onConjuntoCreative(index: number, choice: SetDraftCreativeInput): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, creativeChoice: choice } : c)));
+    this.pickingConjuntoIndex.set(null);
+    this.conjuntosDirty.set(true);
+  }
+
+  /** Adiciona um conjunto vazio (público amplo por padrão) — o dono personaliza. Teto = MAX_CONJUNTOS. */
+  protected addConjunto(): void {
+    if (this.conjuntos().length >= MAX_CONJUNTOS) return;
+    this.conjuntos.update((list) => [...list, { name: '', budget: null, audienceMode: 'broad', audienceState: null, adsMode: 'shared', adForms: [], hasOwnAds: false, adsExpanded: false, adsDirty: false }]);
+    this.conjuntosDirty.set(true);
+  }
+
+  /** Remove um conjunto (mín 2 — abaixo disso não é mais teste de público). */
+  protected removeConjunto(index: number): void {
+    if (this.conjuntos().length <= 2) return;
+    this.conjuntos.update((list) => list.filter((_, i) => i !== index));
+    // o picker aberto vira posicional inválido após a remoção → fecha (senão anexaria no conjunto errado).
+    this.pickingConjuntoIndex.set(null);
+    this.pickingConjuntoAd.set(null);
+    this.conjuntosDirty.set(true);
+  }
+
+  // ─── F2: anúncios POR CONJUNTO (compartilhado + override, recolhidos) ───
+  /** picker de criativo de UM anúncio DE UM conjunto (override) — {conjunto, anúncio} ou null. */
+  protected readonly pickingConjuntoAd = signal<{ cj: number; ad: number } | null>(null);
+  /** nº de anúncios COMPARTILHADOS (a seção `copies()` de campanha) — base dos conjuntos. */
+  protected readonly sharedAdCount = computed(() => this.copies().length);
+  /** algum conjunto tem anúncios PRÓPRIOS? (nota de honestidade: deixa de ser teste "limpo" de público). */
+  protected readonly anyConjuntoOwnAds = computed(() => this.conjuntos().some((c) => c.adsMode === 'own'));
+
+  /** resumo dos anúncios de um conjunto (recolhido): "N anúncios · usa os compartilhados" × "próprios". */
+  protected conjuntoAdsSummary(index: number): string {
+    const c = this.conjuntos()[index];
+    if (!c) return '';
+    const n = c.adsMode === 'own' ? c.adForms.length : this.sharedAdCount();
+    return c.adsMode === 'own' ? `${n} anúncio${n === 1 ? '' : 's'} próprio${n === 1 ? '' : 's'}` : `${n} anúncio${n === 1 ? '' : 's'} · usa os compartilhados`;
+  }
+
+  /** Abre/fecha a seção de anúncios de um conjunto (recolhida por padrão). */
+  protected toggleConjuntoAds(index: number): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, adsExpanded: !c.adsExpanded } : c)));
+  }
+
+  /** "Personalizar anúncios deste conjunto": vira override, semeia os anúncios a partir dos
+   *  COMPARTILHADOS (o dono edita a partir deles) e expande. A base do override é os compartilhados,
+   *  então zera `hasOwnAds` — senão o patch usaria um override ANTIGO como base (anúncios-fantasma). */
+  protected personalizeConjuntoAds(index: number): void {
+    const shared = this.copies().map((c) => ({ adName: c.adName, headline: c.headline, primaryText: c.primaryText, description: c.description }));
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, adsMode: 'own' as const, adForms: shared, hasOwnAds: false, adsExpanded: true, adsDirty: true } : c)));
+    this.conjuntosDirty.set(true);
+  }
+
+  /** "Voltar aos anúncios compartilhados": limpa o override do conjunto. */
+  protected resetConjuntoAdsToShared(index: number): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, adsMode: 'shared' as const, adForms: [], adsDirty: true, adsExpanded: false } : c)));
+    this.pickingConjuntoAd.set(null);
+    this.conjuntosDirty.set(true);
+  }
+
+  /** Edita um campo de texto de um anúncio próprio de um conjunto. */
+  protected setConjuntoAdField(cj: number, ad: number, patch: Partial<Pick<CopyForm, 'adName' | 'headline' | 'primaryText' | 'description'>>): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === cj ? { ...c, adForms: c.adForms.map((f, j) => (j === ad ? { ...f, ...patch } : f)), adsDirty: true } : c)));
+    this.conjuntosDirty.set(true);
+  }
+
+  /** Abre/fecha o picker de criativo de um anúncio próprio de um conjunto. */
+  protected toggleConjuntoAdPicker(cj: number, ad: number): void {
+    this.pickingConjuntoAd.update((cur) => (cur && cur.cj === cj && cur.ad === ad ? null : { cj, ad }));
+  }
+
+  /** Escolhe o criativo (pendente) de um anúncio próprio de um conjunto. */
+  protected onConjuntoAdCreative(cj: number, ad: number, choice: SetDraftCreativeInput): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === cj ? { ...c, adForms: c.adForms.map((f, j) => (j === ad ? { ...f, creativeChoice: choice } : f)), adsDirty: true } : c)));
+    this.pickingConjuntoAd.set(null);
+    this.conjuntosDirty.set(true);
+  }
+
+  /** rótulo do criativo de um anúncio próprio de um conjunto (troca pendente > compartilhado). */
+  protected conjuntoAdCreativeLabel(cj: number, ad: number): string {
+    return this.conjuntos()[cj]?.adForms[ad]?.creativeChoice ? 'novo criativo escolhido (salve pra aplicar)' : 'usa o criativo do anúncio compartilhado';
+  }
+
   ngOnInit(): void {
     const d = this.draft();
     this.campaignName.set(d.campaignName ?? '');
@@ -372,9 +763,14 @@ export class DraftEditPanel implements OnInit {
     this.suffixLabel.set(d.suffixLabel ?? '');
     this.budget.set(d.dailyBudgetMajor);
     this.activation.set(d.activation);
+    this.linkUrl.set(d.linkUrl ?? '');
+    // Advantage: bundle único no output (audience/criativo andam juntos) — semeia do estado atual.
+    this.advantage.set(d.advantageAudience ?? d.advantageCreative ?? false);
+    this.budgetMode.set(d.budgetMode === 'abo' ? 'abo' : 'cbo');
     // modo do público: já explícito → custom; senão o herdado (reuse/broad).
     this.audienceMode.set(d.explicitAudience ? 'custom' : d.audience === 'broad' ? 'broad' : 'reuse');
     this.seedCopies(d);
+    this.seedConjuntos(d);
     this.seededVariantCount = d.copyVariants?.length ?? 0;
     // rascunho já explícito → o estado nasce completo (Salvar re-envia como substituição total).
     this.explicitAudienceState.set(this.explicitInitial());
@@ -385,6 +781,27 @@ export class DraftEditPanel implements OnInit {
   protected setActivation(value: string | string[]): void {
     const v = Array.isArray(value) ? value[0] : value;
     if (v === 'active' || v === 'paused') this.activation.set(v);
+  }
+
+  /** Toggle Advantage (on/off) — bundle único (expansão de público + melhorias de criativo). */
+  protected setAdvantage(value: string | string[]): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v === 'on' || v === 'off') this.advantage.set(v === 'on');
+  }
+
+  /** Toggle onde a verba mora (F1b) — CBO (única na campanha) × ABO (por conjunto). Marca os
+   *  conjuntos como MEXIDOS (a verba muda de nível → o patch precisa reenviar os conjuntos). Ao virar
+   *  ABO, pré-preenche o gasto de cada conjunto sem valor com o diário da campanha (espelha o
+   *  `flipBudgetLevel` do backend) — o campo não fica vazio contradizendo o texto de ajuda. */
+  protected setBudgetMode(value: string | string[]): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v !== 'cbo' && v !== 'abo') return;
+    if (v === this.budgetMode()) return;
+    this.budgetMode.set(v);
+    if (v === 'abo' && this.budget() > 0) {
+      this.conjuntos.update((list) => list.map((c) => (c.budget != null && c.budget > 0 ? c : { ...c, budget: this.budget() })));
+    }
+    this.conjuntosDirty.set(true);
   }
 
   /** Toggle "Público" (herda / a Meta escolhe / personalizado). `custom` semeia o editor na hora
@@ -491,7 +908,8 @@ export class DraftEditPanel implements OnInit {
   private buildPatch(): UpdateDraftInput {
     const d = this.draft();
     const patch: Record<string, unknown> = {};
-    if (this.budget() > 0 && this.budget() !== d.dailyBudgetMajor) patch['budgetReais'] = this.budget();
+    // O gasto da CAMPANHA só quando NÃO é teste ABO (lá a verba mora em cada conjunto — F1c).
+    if (!(this.hasAdsets() && this.isAbo()) && this.budget() > 0 && this.budget() !== d.dailyBudgetMajor) patch['budgetReais'] = this.budget();
     if (this.activation() !== d.activation) patch['activation'] = this.activation();
 
     if (this.isScale()) {
@@ -511,6 +929,18 @@ export class DraftEditPanel implements OnInit {
       if (v) patch['adsetName'] = v;
     }
     if (this.objective() && this.objective() !== (d.objective ?? '')) patch['objective'] = this.objective();
+    // link de destino: só quando não é conversa no WhatsApp e o dono digitou algo NOVO (URL válida).
+    // Em branco = mantém o herdado (a API exige URL válida, então "" não reseta — não regride).
+    if (this.objective() !== 'messaging_started') {
+      const link = this.trimmed(this.linkUrl());
+      if (link && link !== (d.linkUrl ?? '')) patch['linkUrl'] = link;
+    }
+    // Advantage (bundle único): só entra no patch quando MUDA do estado original (evita clobber).
+    const originalAdvantage = d.advantageAudience ?? d.advantageCreative ?? false;
+    if (this.advantage() !== originalAdvantage) patch['advantage'] = this.advantage();
+    // budgetMode (F1b): só quando muda (o backend move a verba de nível). Marca conjuntosDirty no
+    // toggle → os `adsets` reenviam junto, então o core aplica o flip sobre a lista atual.
+    if (this.hasAdsets() && this.budgetMode() !== (d.budgetMode === 'abo' ? 'abo' : 'cbo')) patch['budgetMode'] = this.budgetMode();
 
     // público: `custom` manda o estado COMPLETO como SUBSTITUIÇÃO total (converte reuse/broad →
     // explicit no backend). reuse/broad só entram no patch quando MUDAM do modo original (evita
@@ -531,7 +961,49 @@ export class DraftEditPanel implements OnInit {
       .map((c, index) => this.copyEdit(c, original[index], index))
       .filter((e): e is NonNullable<typeof e> => e !== null);
     if (edits.length > 0) patch['copyEdits'] = edits;
+
+    // CONJUNTOS (C2/U1): substituição TOTAL da lista quando o rascunho é multi-conjunto. Cada
+    // conjunto = público (explícito quando personalizado) + orçamento (ABO) + criativo próprio. Só
+    // manda `adsets` quando ALGUM conjunto MUDOU (`conjuntosDirty`) — a substituição é total, então
+    // reenviar sem mudança no-opa E clobbaria uma edição concorrente do chat aos conjuntos.
+    // Criativo próprio: pick novo (`creativeChoice`) vence; senão `keepCreativeIndex` PRESERVA o que o
+    // conjunto já tinha (o output não devolve id re-enviável do criativo) — índice de ORIGEM, robusto
+    // a remover conjuntos; conjunto novo (sem origem/criativo próprio) → usa o compartilhado.
+    if (this.hasAdsets() && this.conjuntosDirty()) {
+      patch['adsets'] = this.conjuntos().map((cj) => ({
+        ...(this.trimmed(cj.name) ? { name: this.trimmed(cj.name) } : {}),
+        ...(cj.audienceMode === 'custom' && cj.audienceState ? { explicitAudience: this.toExplicitInput(cj.audienceState) } : {}),
+        ...(this.isAbo() && cj.budget != null && cj.budget > 0 ? { budgetReais: cj.budget } : {}),
+        ...(cj.creativeChoice
+          ? { creative: cj.creativeChoice }
+          : cj.existingCreative && cj.originalIndex != null
+            ? { keepCreativeIndex: cj.originalIndex }
+            : {}),
+        // F2: anúncios PRÓPRIOS do conjunto (override) × compartilhados.
+        ...this.conjuntoAdPatch(cj),
+      }));
+    }
     return patch as UpdateDraftInput;
+  }
+
+  /** Fragmento de anúncios do conjunto pro PATCH (F2): `own` + editado → copyEdits (sobre o override
+   *  existente quando havia, senão os compartilhados); `own` intacto → keepCopyVariantsIndex (preserva);
+   *  `shared` → nada (usa os compartilhados). */
+  private conjuntoAdPatch(cj: ConjuntoForm): { copyEdits?: unknown[]; keepCopyVariantsIndex?: number } {
+    if (cj.adsMode !== 'own') return {}; // usa os compartilhados
+    const keep = cj.hasOwnAds && cj.originalIndex != null ? { keepCopyVariantsIndex: cj.originalIndex } : {};
+    if (!cj.adsDirty) return keep; // override não mexido → preserva intacto
+    const copyEdits = cj.adForms.map((f, index) => ({
+      index,
+      ...(this.trimmed(f.headline) ? { headline: this.trimmed(f.headline) } : {}),
+      ...(this.trimmed(f.primaryText) ? { primaryText: this.trimmed(f.primaryText) } : {}),
+      // descrição SEMPRE vai (mesmo vazia) — espelha o caminho dos compartilhados: esvaziar deve limpar,
+      // não ser ignorado (o backend só sobrescreve com `description !== undefined`).
+      description: this.trimmed(f.description),
+      ...(this.trimmed(f.adName) ? { adName: this.trimmed(f.adName) } : {}),
+      ...(f.creativeChoice ? { creative: f.creativeChoice } : {}),
+    }));
+    return { ...keep, copyEdits };
   }
 
   /** Diff de UMA variação → copyEdit (ou null se nada mudou). Textos não-vazios (o backend exige). */

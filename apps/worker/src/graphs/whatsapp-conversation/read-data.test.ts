@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { adAccounts, adCreatives, agentMemory, agentRuns, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentMemory, agentRuns, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { libraryCreativeContentHash } from "../../workers/creative-analyze.js";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
+import { AdsPlatformError } from "@trafego/shared/ports";
 import type { PerformanceTier } from "@trafego/shared";
 import {
   comparePeriodsData,
@@ -13,16 +15,19 @@ import {
   latestAnalysisAsOf,
   describeDraftAudience,
   describeDraftCreative,
+  describeDraftDestino,
   listPendingData,
   getLearningsData,
   listRecommendationsData,
   enrichRecommendationsLiveStatus,
   campaignStatusData,
-  liveActiveCampaignsNotCached,
+  liveCampaignsNotCached,
   describePartialRun,
   renderWhatsappNumber,
   resolveWhatsappNumber,
   pickAdIdsToRefresh,
+  getTopCreativesData,
+  recallCreativeData,
   TOP_CREATIVES_LIMIT,
 } from "./read-data.js";
 
@@ -100,6 +105,15 @@ describe("describeDraftAudience (público do rascunho pelo MODO, sem jargão nem
   it("sem targeting → cai no amplo (default seguro)", () => {
     expect(describeDraftAudience(undefined).toLowerCase()).toContain("meta escolhe");
   });
+
+  it("explicit (mulheres 45+ BH) → DESCREVE o público real, NUNCA 'amplo' (fim do falso positivo)", () => {
+    const txt = describeDraftAudience({ kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }], ageMin: 45, genders: [2] });
+    expect(txt).toContain("Belo Horizonte");
+    expect(txt).toContain("45+ anos");
+    expect(txt).toContain("mulheres");
+    expect(txt.toLowerCase()).not.toContain("amplo");
+    expect(txt.toLowerCase()).not.toContain("meta escolhe");
+  });
 });
 
 describe("describeDraftCreative (rótulo do criativo do rascunho, do BANCO — sem chamar a Meta)", () => {
@@ -121,6 +135,26 @@ describe("describeDraftCreative (rótulo do criativo do rascunho, do BANCO — s
   });
   it("duplicate (sem creative no spec) → fala do criativo do vencedor duplicado", () => {
     expect(describeDraftCreative("duplicate", undefined, new Map()).toLowerCase()).toContain("vencedor");
+  });
+});
+
+describe("describeDraftDestino (qual Página/WhatsApp o rascunho de conversas leva — §7)", () => {
+  it("nome + número → nomeia a Página e o número", () => {
+    const txt = describeDraftDestino({ pageId: "P1", name: "CaquiAI Oficial", whatsappNumber: "5531953491398" });
+    expect(txt).toContain("CaquiAI Oficial");
+    expect(txt).toContain("+5531953491398");
+  });
+  it("só nome → nomeia a Página e é honesto que o número confirma após criar", () => {
+    const txt = describeDraftDestino({ pageId: "P1", name: "CaquiAI Oficial" });
+    expect(txt).toContain("CaquiAI Oficial");
+    expect(txt.toLowerCase()).toContain("confirmo depois de criar");
+  });
+  it("degradado (só pageId) → descreve por PROVENIÊNCIA, nunca 'sem Página', e afirma que dá pra criar", () => {
+    const txt = describeDraftDestino({ pageId: "P1" });
+    expect(txt.toLowerCase()).toContain("anúncio ativo");
+    expect(txt.toLowerCase()).toContain("dá pra criar");
+    expect(txt).not.toContain("P1"); // nunca vaza id cru (§13)
+    expect(txt.toLowerCase()).not.toContain("sem página");
   });
 });
 
@@ -461,6 +495,136 @@ describe("getMetricsData", () => {
   });
 });
 
+describe("getTopCreativesData — lookup por nome/id (C3)", () => {
+  const creativeRows = [
+    { adId: "ad_1", name: "Criativo Verão", tier: "winner", spend: 500, cpa: 12, roas: 3, body: "texto verão", title: "Verão", callToAction: "SHOP_NOW" },
+    { adId: "ad_2", name: "Criativo Inverno", tier: "performer", spend: 200, cpa: 20, roas: 1.5, body: "texto inverno", title: "Inverno", callToAction: "LEARN_MORE" },
+  ];
+  const depsWith = (rows: unknown[] = creativeRows) =>
+    ({ db: fakeDb(new Map<unknown, unknown[]>([[adCreatives, rows]])), visionAnalyzerVersion: 1 }) as unknown as Parameters<typeof getTopCreativesData>[0];
+  const CTX = { orgId: "org", adAccountId: "acc" } as unknown as Parameters<typeof getTopCreativesData>[1];
+
+  it("SEM query → top-N ranqueado + campo escopo honesto", async () => {
+    const res = await getTopCreativesData(depsWith(), CTX);
+    expect(res).toMatchObject({ hasData: true });
+    expect("creatives" in res && res.creatives.length).toBe(2);
+    expect("escopo" in res && typeof res.escopo).toBe("string"); // §7: sempre repassa a limitação
+  });
+
+  it("query por nome → um criativo com a copy", async () => {
+    const res = await getTopCreativesData(depsWith(), CTX, "verão");
+    expect(res).toMatchObject({ hasData: true, match: "one", creative: { adId: "ad_1", copy: "texto verão", cta: "SHOP_NOW" } });
+  });
+
+  it("query por id → casa direto", async () => {
+    const res = await getTopCreativesData(depsWith(), CTX, "ad_2");
+    expect(res).toMatchObject({ match: "one", creative: { adId: "ad_2" } });
+  });
+
+  it("query inexistente → match none (não inventa)", async () => {
+    const res = await getTopCreativesData(depsWith(), CTX, "não existe zzz");
+    expect(res).toMatchObject({ match: "none" });
+  });
+
+  it("SEM anúncios capturados MAS com biblioteca → lista a biblioteca (Fatia 1, fix BM Automato)", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [adCreatives, []],
+        [creativeAssets, [{ id: "lib1", format: "image", visionContentHash: null }]],
+        [creativeVisionAnalyses, []],
+      ]),
+    );
+    const deps = { db, visionAnalyzerVersion: 1 } as unknown as Parameters<typeof getTopCreativesData>[0];
+    const res = await getTopCreativesData(deps, CTX);
+    expect(res).toMatchObject({ hasData: true });
+    if (!("creatives" in res)) throw new Error("esperava lista");
+    expect(res.creatives.length).toBe(1);
+    expect(res.creatives[0]).toMatchObject({ origem: "biblioteca do site", id: "lib1" });
+  });
+
+  it("banco vazio → fallback AO VIVO inclui anúncios de campanha PAUSADA, rotulados (Fatia 2)", async () => {
+    const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
+    const db = fakeDb(new Map<unknown, unknown[]>([[adCreatives, []], [adAccounts, account], [creativeAssets, []], [creativeVisionAnalyses, []]]));
+    const ads = [
+      { id: "ad_flop", level: "ad", name: "Fraco", status: "paused" },
+      { id: "ad_win", level: "ad", name: "Anúncio Pausado", status: "paused" },
+    ];
+    const creatives = [
+      { id: "cr1", adId: "ad_win", body: "texto do anúncio pausado", title: "Título", callToAction: "LEARN_MORE", adFormat: "image" },
+      { id: "cr2", adId: "ad_flop", body: "texto fraco", adFormat: "image" },
+    ];
+    // ad_win tem resultado (melhor CPA) → deve vir ANTES do ad_flop (sem resultado) no ranking.
+    const metrics = [
+      { adId: "ad_win", spend: 100, results: 10 },
+      { adId: "ad_flop", spend: 50, results: 0 },
+    ];
+    const deps = {
+      db,
+      visionAnalyzerVersion: 1,
+      conversation: { liveFetchTimeoutMs: 1000 },
+      ports: { ads: { listEntities: vi.fn(async () => ads), getCreatives: vi.fn(async () => creatives), getAdMetrics: vi.fn(async () => metrics) }, vault: { decrypt: (t: string) => t } },
+    } as unknown as Parameters<typeof getTopCreativesData>[0];
+    const res = await getTopCreativesData(deps, CTX);
+    expect(res).toMatchObject({ hasData: true });
+    if (!("creatives" in res)) throw new Error("esperava lista");
+    // ranqueado por desempenho: o com resultado (ad_win) vem primeiro, com a métrica bruta anexada.
+    expect(res.creatives[0]).toMatchObject({ origem: "pausado (ao vivo)", adId: "ad_win", copy: "texto do anúncio pausado", gastoHistorico: 100, resultados: 10, cpaHistorico: 10 });
+    expect(res.creatives[1]).toMatchObject({ adId: "ad_flop" });
+    expect("escopo" in res && res.escopo).toContain("AO VIVO");
+  });
+
+  it("banco vazio + query por NOME → acha AO VIVO um anúncio pausado (lookup estendido)", async () => {
+    const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
+    const db = fakeDb(new Map<unknown, unknown[]>([[adCreatives, []], [adAccounts, account], [creativeAssets, []], [creativeVisionAnalyses, []]]));
+    const ads = [{ id: "ad_p", level: "ad", name: "Campeão do Verão", status: "paused" }];
+    const creatives = [{ id: "cr", adId: "ad_p", body: "copy do campeão", adFormat: "image" }];
+    const deps = {
+      db,
+      visionAnalyzerVersion: 1,
+      conversation: { liveFetchTimeoutMs: 1000 },
+      ports: { ads: { listEntities: vi.fn(async () => ads), getCreatives: vi.fn(async () => creatives) }, vault: { decrypt: (t: string) => t } },
+    } as unknown as Parameters<typeof getTopCreativesData>[0];
+    const res = await getTopCreativesData(deps, CTX, "campeão");
+    expect(res).toMatchObject({ match: "one", creative: { adId: "ad_p", status: "paused", copy: "copy do campeão" } });
+  });
+});
+
+describe("recallCreativeData (Slice 3 — busca as DUAS chaves de visão: chat + biblioteca)", () => {
+  const VISION = {
+    summary: "vídeo da praia ao pôr do sol",
+    hook: "abre no mar",
+    angle: "lifestyle",
+    format: "ugc",
+    body: "b",
+    cta: "c",
+    proofStrength: "medium",
+    persuasionSignals: 2,
+    strengths: ["s"],
+    weaknesses: ["w"],
+    score: 7,
+  };
+  const makeDeps = (db: unknown) =>
+    ({ db, visionAnalyzerVersion: 1, ports: { llm: { completeStructured: vi.fn() } }, analysis: { messageModel: "m" } }) as unknown as Parameters<typeof recallCreativeData>[0];
+  const CTX = { orgId: "org", adAccountId: "acc" } as unknown as Parameters<typeof recallCreativeData>[1];
+
+  it("análise SÓ sob libraryCreativeContentHash (chat degradou) → recall ainda acha (não falso-negativo)", async () => {
+    // o vídeo tem vision_content_hash (bytes) setado no ingest, mas a análise de CHAT degradou → só
+    // existe a linha sob a chave da BIBLIOTECA (frames Meta). O recall precisa achar mesmo assim.
+    const asset = { id: "asset-vid-1", format: "video", visionContentHash: "HASH_CHAT_SEM_ANALISE" };
+    const visionRow = { contentHash: libraryCreativeContentHash("asset-vid-1"), result: VISION };
+    const db = fakeDb(new Map<unknown, unknown[]>([[creativeAssets, [asset]], [creativeVisionAnalyses, [visionRow]]]));
+    const res = await recallCreativeData(makeDeps(db), CTX, null);
+    expect(res).toMatchObject({ hasData: true, creative: { summary: VISION.summary } });
+  });
+
+  it("nenhuma análise em nenhuma das chaves → match none honesto (não inventa)", async () => {
+    const asset = { id: "asset-vid-2", format: "video", visionContentHash: "HASH_SEM_ANALISE" };
+    const db = fakeDb(new Map<unknown, unknown[]>([[creativeAssets, [asset]], [creativeVisionAnalyses, []]]));
+    const res = await recallCreativeData(makeDeps(db), CTX, null);
+    expect(res).toMatchObject({ hasData: true, match: "none" });
+  });
+});
+
 describe("getCampaignAnalysisData", () => {
   const rows = [
     {
@@ -728,8 +892,35 @@ describe("listPendingData", () => {
     const db = fakeDb(new Map([[campaignDrafts, [draftRow]]]));
     const res = await listPendingData(db, fakeApprovals([activationApproval as unknown as Approval]), ORG);
     expect(res).toEqual([
-      { kind: "activation", id: "ap-act-1", reason: expect.stringContaining("ativar"), expiresAt: "2026-08-21T00:00:00.000Z" },
+      { kind: "activation", id: "ap-act-1", entityName: null, reason: expect.stringContaining("ativar"), expiresAt: "2026-08-21T00:00:00.000Z" },
     ]);
+  });
+
+  it("ativação NOMEADA: rascunho com campaignName → entityName + reason cita o nome (ativar por referência)", async () => {
+    const activationApproval = {
+      id: "ap-act-2",
+      kind: "activation",
+      orgId: ORG,
+      agentId: AGENT,
+      runId: null,
+      contactId: null,
+      status: "pending",
+      draftId: "draft-2",
+      resolvedReason: null,
+      expiresAt: new Date("2026-08-21T00:00:00.000Z"),
+      createdAt: new Date("2026-08-20T00:00:00.000Z"),
+    };
+    const draftRow = {
+      id: "draft-2",
+      kind: "from_scratch",
+      spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "paused", objective: "messaging_started", campaignName: "CaquiAI - conversa" },
+    };
+    const db = fakeDb(new Map([[campaignDrafts, [draftRow]]]));
+    const [item] = (await listPendingData(db, fakeApprovals([activationApproval as unknown as Approval]), ORG)) as Array<{ kind: string; entityName: string | null; reason: string }>;
+    expect(item?.kind).toBe("activation");
+    expect(item?.entityName).toBe("CaquiAI - conversa");
+    expect(item?.reason).toContain("CaquiAI - conversa");
+    expect(item?.reason).toContain("ativar");
   });
 
   it("rascunho de CRIAÇÃO entra no list_pending (aprovável/recusável por id, não só no eco de 30min)", async () => {
@@ -936,10 +1127,10 @@ describe("renderWhatsappNumber (verbatim, honesto)", () => {
 describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede id)", () => {
   const ctx = { orgId: "o1", agentId: "ag1", adAccountId: "acc1" } as never;
   const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
-  function deps(listEntities: () => Promise<unknown>, readEntityState: (ref: unknown, id: string) => Promise<unknown>) {
+  function deps(listEntities: () => Promise<unknown>, readEntityState: (ref: unknown, id: string) => Promise<unknown>, readActivationTree?: (ref: unknown, level: string, id: string) => Promise<unknown>) {
     return {
       db: fakeDb(new Map<unknown, unknown[]>([[adAccounts, account]])),
-      ports: { ads: { listEntities: vi.fn(listEntities), readEntityState: vi.fn(readEntityState) }, vault: { decrypt: (t: string) => t } },
+      ports: { ads: { listEntities: vi.fn(listEntities), readEntityState: vi.fn(readEntityState), ...(readActivationTree ? { readActivationTree: vi.fn(readActivationTree) } : {}) }, vault: { decrypt: (t: string) => t } },
       conversation: { liveFetchTimeoutMs: 1000 },
     } as never;
   }
@@ -965,6 +1156,46 @@ describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede i
     const d = deps(async () => [{ id: "c1", name: "Outra campanha" }], async () => ({ status: "ACTIVE" }));
     const out = await campaignStatusData(d, ctx, { name: "ZZZ inexistente" });
     expect(out).toMatchObject({ hasData: false });
+  });
+
+  it("ENTREGA EFETIVA: campanha ATIVA mas sem anúncio ativo → delivering:false + motivo", async () => {
+    const tree = { adsets: [{ id: "s1", name: "s1", status: "active", effectiveStatus: "active" }], ads: [{ id: "a1", name: "a1", status: "paused", effectiveStatus: "paused", adsetId: "s1" }], truncated: false };
+    const d = deps(async () => [], async () => ({ status: "ACTIVE" }), async () => tree);
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", status: "active", delivering: false, deliveryReason: "anúncios pausados" }] });
+  });
+
+  it("ENTREGA EFETIVA: campanha PAUSADA → delivering:false 'campanha pausada' (sem ler a árvore)", async () => {
+    const readTree = vi.fn(async () => ({ adsets: [], ads: [], truncated: false }));
+    const d = deps(async () => [], async () => ({ status: "PAUSED" }), readTree);
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", status: "paused", delivering: false, deliveryReason: "campanha pausada" }] });
+    expect(readTree).not.toHaveBeenCalled();
+  });
+
+  it("ENTREGA EFETIVA: campanha ATIVA com anúncio efetivamente ativo → delivering:true", async () => {
+    const tree = { adsets: [{ id: "s1", name: "s1", status: "active", effectiveStatus: "active" }], ads: [{ id: "a1", name: "a1", status: "active", effectiveStatus: "active", adsetId: "s1" }], truncated: false };
+    const d = deps(async () => [], async () => ({ status: "ACTIVE" }), async () => tree);
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", delivering: true }] });
+  });
+
+  it("token inválido (190) na leitura → note 'reconecte' (não 'tenta de novo')", async () => {
+    const d = deps(async () => [], async () => {
+      throw new AdsPlatformError("invalid_credential", "token expirado");
+    });
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: false });
+    expect((out as { note: string }).note).toContain("reconecte");
+  });
+
+  it("erro transiente na leitura → note 'tenta de novo' (não token)", async () => {
+    const d = deps(async () => [], async () => {
+      throw new Error("upstream");
+    });
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: false });
+    expect((out as { note: string }).note).toContain("tenta de novo");
   });
 });
 
@@ -996,7 +1227,7 @@ describe("describePartialRun (honestidade sobre completude — achado do run par
   });
 });
 
-describe("liveActiveCampaignsNotCached (gap de sincronização — pivô saúde)", () => {
+describe("liveCampaignsNotCached (gap de sincronização — pivô saúde)", () => {
   const ctx = { orgId: "o1", agentId: "ag1", adAccountId: "acc1" } as never;
   const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
   function deps(listEntities: () => Promise<unknown>) {
@@ -1007,31 +1238,43 @@ describe("liveActiveCampaignsNotCached (gap de sincronização — pivô saúde)
     } as never;
   }
 
-  it("campanha ATIVA na Meta sem estar no cache → aparece na lista de gaps", async () => {
+  it("campanha GERENCIÁVEL (ativa OU pausada) fora do cache → aparece com o status; pausada incluída", async () => {
     const d = deps(async () => [
       { id: "c1", name: "Já cacheada", status: "active" },
       { id: "c2", name: "Campanha nova", status: "active" },
       { id: "c3", name: "Pausada, nunca cacheada", status: "paused" },
     ]);
-    const gaps = await liveActiveCampaignsNotCached(d, ctx, new Set(["c1"]));
-    expect(gaps).toEqual([{ id: "c2", name: "Campanha nova" }]);
+    const gaps = await liveCampaignsNotCached(d, ctx, new Set(["c1"]));
+    expect(gaps).toEqual([
+      { id: "c2", name: "Campanha nova", status: "active" },
+      { id: "c3", name: "Pausada, nunca cacheada", status: "paused" },
+    ]);
   });
 
-  it("nada de novo (tudo já cacheado ou inativo) → lista vazia", async () => {
+  it("archived/deleted (terminais) NÃO entram — só gerenciáveis", async () => {
+    const d = deps(async () => [
+      { id: "c2", name: "Ativa", status: "active" },
+      { id: "c4", name: "Arquivada", status: "archived" },
+      { id: "c5", name: "Deletada", status: "deleted" },
+    ]);
+    expect(await liveCampaignsNotCached(d, ctx, new Set())).toEqual([{ id: "c2", name: "Ativa", status: "active" }]);
+  });
+
+  it("nada de novo (tudo já cacheado) → lista vazia", async () => {
     const d = deps(async () => [{ id: "c1", name: "Já cacheada", status: "active" }]);
-    expect(await liveActiveCampaignsNotCached(d, ctx, new Set(["c1"]))).toEqual([]);
+    expect(await liveCampaignsNotCached(d, ctx, new Set(["c1"]))).toEqual([]);
   });
 
   it("Meta indisponível/lenta → degrada em lista vazia (best-effort, não derruba o turno)", async () => {
     const d = deps(async () => {
       throw new Error("timeout");
     });
-    expect(await liveActiveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
+    expect(await liveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
   });
 
   it("conta não encontrada → lista vazia", async () => {
     const d = { db: fakeDb(new Map()), ports: { ads: { listEntities: vi.fn() }, vault: { decrypt: (t: string) => t } }, conversation: { liveFetchTimeoutMs: 1000 } } as never;
-    expect(await liveActiveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
+    expect(await liveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
   });
 });
 

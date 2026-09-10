@@ -335,6 +335,39 @@ describe("DraftsService.updateDraft — INTERESSES do público EXPLÍCITO (Fase 
   });
 });
 
+describe("DraftsService.updateDraft — LINK de destino", () => {
+  function fakeDbSelUpd(draftRow: unknown, captured: { spec?: unknown }) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => (draftRow ? [draftRow] : []) }) }) }),
+      update: () => ({
+        set: (v: { spec: unknown }) => {
+          captured.spec = v.spec;
+          return { where: () => ({ returning: () => [{ id: "d1" }] }) };
+        },
+      }),
+    } as never;
+  }
+  const svc = (draftRow: unknown, captured: { spec?: unknown }) =>
+    createDraftsService({ db: fakeDbSelUpd(draftRow, captured), adsPlatform: {} as never, vault: {} as never, approvals: {} as never, storage: {} as never, scheduler: {} as never });
+  const siteSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "paused", objective: "purchase", targeting: { kind: "advantage_plus" } };
+
+  it("objetivo de site → grava o linkUrl no spec", async () => {
+    const captured: { spec?: unknown } = {};
+    const out = await svc({ spec: siteSpec, kind: "from_scratch", status: "proposed" }, captured).updateDraft(ORG, "acc", "d1", { linkUrl: "https://loja.com/promo" });
+    expect(out.ok).toBe(true);
+    expect((captured.spec as { linkUrl?: string }).linkUrl).toBe("https://loja.com/promo");
+  });
+
+  it("objetivo de conversas no WhatsApp → bloqueia honesto, NÃO persiste", async () => {
+    const captured: { spec?: unknown } = {};
+    const out = await svc({ spec: { ...siteSpec, objective: "messaging_started" }, kind: "from_scratch", status: "proposed" }, captured).updateDraft(ORG, "acc", "d1", { linkUrl: "https://loja.com/promo" });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.message).toMatch(/WhatsApp/i);
+    expect(captured.spec).toBeUndefined();
+  });
+});
+
 describe("refineErrorMessage (§13 — o quê + o que fazer, sem jargão cru)", () => {
   it("field_not_editable explica a fronteira da escala + o caminho (criar nova)", () => {
     expect(refineErrorMessage({ code: "field_not_editable", field: "objective" })).toMatch(/escala|criar uma campanha nova/i);
@@ -742,5 +775,67 @@ describe("DraftsService.updateDraft — criativo POR ANÚNCIO (Fatia 7, só site
     const out = await service.updateDraft(ORG, "acc", "d1", { copyEdits: [{ index: 0, creative: { kind: "asset", assetId: "gone" } }] });
     expect(out.ok).toBe(false);
     expect(captured.spec).toBeUndefined();
+  });
+});
+
+describe("DraftsService.updateDraft — anúncios POR CONJUNTO (F2, override compartilhado)", () => {
+  /** db p/ o caminho `input.adsets` (precisa de loadScaleContext válido além do load do rascunho):
+   *  select 1 = loadDraftForEdit (.where().limit()); select 2 = conta (.leftJoin.leftJoin.where.limit);
+   *  select 3 = guardrail ([] → default); select 4 = bindings (await → []). update = persist capturado. */
+  function fakeDbConjunto(draftRow: unknown, captured: { spec?: unknown }) {
+    let n = 0;
+    const acctRow = { metaAdAccountId: "act_1", currency: "BRL", accountToken: "enc", connToken: null, agentId: "ag1", autonomyPolicy: {} };
+    return {
+      select: () => {
+        n += 1;
+        const call = n;
+        return {
+          from: () => ({
+            leftJoin: () => ({ leftJoin: () => ({ where: () => ({ limit: () => (call === 2 ? [acctRow] : []) }) }) }),
+            where: () => ({ limit: () => (call === 1 ? [draftRow] : []), then: (r: (v: unknown[]) => void) => r([]) }),
+          }),
+        };
+      },
+      update: () => ({ set: (v: { spec: unknown }) => { captured.spec = v.spec; return { where: () => ({ returning: () => [{ id: "d1" }] }) }; } }),
+    } as never;
+  }
+  const specMulti = {
+    version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", budgetMode: "cbo",
+    creative: { assetId: "def", format: "image", origin: "reuse", metaImageHash: "H" },
+    variantsCount: 2,
+    copyVariants: [{ primaryText: "p1", headline: "h1" }, { primaryText: "p2", headline: "h2" }],
+    adsets: [
+      { name: "A", targeting: { kind: "advantage_plus" } },
+      { name: "B", targeting: { kind: "advantage_plus" }, copyVariants: [{ primaryText: "bp1", headline: "bh1" }, { primaryText: "bp2", headline: "bh2" }] },
+    ],
+  };
+  function svc(captured: { spec?: unknown }) {
+    return createDraftsService({
+      db: fakeDbConjunto({ spec: specMulti, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: {} as never, vault: { decrypt: () => "token" } as never, approvals: {} as never, storage: {} as never, scheduler: {} as never,
+    });
+  }
+
+  it("copyEdits por conjunto → conjunto ganha override (compartilhado com o anúncio editado)", async () => {
+    const captured: { spec?: unknown } = {};
+    const out = await svc(captured).updateDraft(ORG, "acc", "d1", {
+      adsets: [
+        { name: "A", copyEdits: [{ index: 0, headline: "novo A" }] }, // override sobre os compartilhados
+        { name: "B", keepCopyVariantsIndex: 1 }, // preserva o override existente
+      ],
+    });
+    expect(out.ok).toBe(true);
+    const adsets = (captured.spec as { adsets: { copyVariants?: { headline: string }[] }[] }).adsets;
+    expect(adsets[0]?.copyVariants?.map((c) => c.headline)).toEqual(["novo A", "h2"]); // A: shared + edit
+    expect(adsets[1]?.copyVariants?.map((c) => c.headline)).toEqual(["bh1", "bh2"]); // B: override preservado
+  });
+
+  it("sem copyEdits/keep → conjunto usa os anúncios COMPARTILHADOS (sem override)", async () => {
+    const captured: { spec?: unknown } = {};
+    const out = await svc(captured).updateDraft(ORG, "acc", "d1", { adsets: [{ name: "A" }, { name: "B" }] });
+    expect(out.ok).toBe(true);
+    const adsets = (captured.spec as { adsets: { copyVariants?: unknown }[] }).adsets;
+    expect(adsets[0]?.copyVariants).toBeUndefined();
+    expect(adsets[1]?.copyVariants).toBeUndefined(); // override antigo NÃO reaparece sem keep (substituição total)
   });
 });

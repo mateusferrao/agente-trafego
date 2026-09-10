@@ -157,6 +157,7 @@ async function main() {
     const { creativeId } = await deps.ports.ads.createAdCreative(ref, {
       name: "Criativo E2E (temp)",
       pageId: defaults.pageId,
+      goal: defaults.objectiveGoal ?? "purchase",
       ...(defaults.imageHash ? { imageHash: defaults.imageHash } : {}),
       ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
       copy: { primaryText: "Teste E2E — anúncio nunca ativo.", headline: "Teste E2E" },

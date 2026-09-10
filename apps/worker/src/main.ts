@@ -21,11 +21,13 @@ import { startWhatsappTranscriptionWorker } from "./workers/whatsapp-transcripti
 import { startWhatsappMediaIntakeWorker } from "./workers/whatsapp-media-intake.js";
 import { startCreativeVideoPollWorker, reapStalePendingVideos } from "./workers/creative-video-poll.js";
 import { startCreativeAnalyzeWorker } from "./workers/creative-analyze.js";
+import { startCreativeVideoAnalyzeWorker } from "./workers/creative-video-analyze.js";
 import { startPulseWorker } from "./workers/pulse.js";
 import { startMailWorker } from "./workers/mail.js";
 import { drainPendingCostPatches } from "./graphs/whatsapp-conversation/nodes.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
 import { createRunReaper } from "./modules/dispatch/run-reaper.js";
+import { reapStaleCreatingDrafts } from "./modules/apply/draft-reaper.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -73,6 +75,8 @@ async function main(): Promise<void> {
   const creativeVideoPoll = startCreativeVideoPollWorker(deps, connection);
   // visão de criativo da biblioteca (upload): analisa 1x + cacheia (reusa resolver/tabela).
   const creativeAnalyze = startCreativeAnalyzeWorker(deps, connection);
+  // análise conversacional de VÍDEO do WhatsApp (Slice 2): vídeo completo → modelo, sem Meta.
+  const creativeVideoAnalyze = startCreativeVideoAnalyzeWorker(deps, connection);
 
   // entrega de email transacional (6b): verificação de email + reset de senha.
   const mail = startMailWorker(deps, connection);
@@ -102,6 +106,10 @@ async function main(): Promise<void> {
   await reapStalePendingVideos(deps.db, logger).catch((err: unknown) =>
     logger.error({ err }, "creative-video-poll:reaper boot falhou"),
   );
+  // reaper de rascunho de criação preso em `creating` (crash no meio da saga) — varredura de boot (G7).
+  await reapStaleCreatingDrafts(deps.db, logger, deps.reaper.staleMinutes).catch((err: unknown) =>
+    logger.error({ err }, "draft-reaper:boot sweep falhou"),
+  );
   logger.info("worker up: agent-runs + agent-learning + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + group-context-purge + whatsapp-inbound + whatsapp-transcription + whatsapp-media-intake + mail");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
@@ -125,6 +133,7 @@ async function main(): Promise<void> {
       whatsappMediaIntake.close(),
       creativeVideoPoll.close(),
       creativeAnalyze.close(),
+      creativeVideoAnalyze.close(),
       mail.close(),
       pulse.close(),
     ]);

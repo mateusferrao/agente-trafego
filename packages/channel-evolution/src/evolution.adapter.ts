@@ -3,6 +3,7 @@ import {
   type ChannelInstanceRef,
   type GroupSummary,
   type InboundMessage,
+  type InboundPayloadShape,
   type InstanceState,
   type InstanceStatus,
   type MediaMessageKey,
@@ -11,7 +12,7 @@ import {
 } from "@trafego/shared/ports";
 import { EvolutionApiError, EvolutionClient } from "./client.js";
 import { EvolutionSender } from "./send.js";
-import { jidToE164, parseConnectionUpdate, parseInbound } from "./webhook.js";
+import { inboundMessageShape, jidToE164, parseConnectionUpdate, parseInbound } from "./webhook.js";
 
 export interface EvolutionAdapterDeps {
   readonly client: EvolutionClient;
@@ -106,6 +107,10 @@ export class EvolutionAdapter implements MessagingChannelPort {
 
   parseConnectionUpdate(payload: unknown): InstanceStatus | null {
     return parseConnectionUpdate(payload);
+  }
+
+  describeInbound(payload: unknown): InboundPayloadShape | null {
+    return inboundMessageShape(payload);
   }
 
   /** Inicia a conexão: cria a instância se não existir, retorna o QR (ou conectado). */

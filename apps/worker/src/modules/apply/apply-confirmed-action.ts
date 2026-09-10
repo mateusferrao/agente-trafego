@@ -43,6 +43,8 @@ export interface CheckedApplyInput {
   readonly idempotencyKey: string;
   /** força o dry-run (ex: preview do eco no chat, 5c); default = `cfg.dryRun`. */
   readonly dryRun?: boolean;
+  /** isenta SÓ o cap de entidades/dia — ativação em cadeia confirmada (intenção única). */
+  readonly exemptEntityCap?: boolean;
 }
 
 /**
@@ -55,7 +57,7 @@ export async function applyCheckedAction(input: CheckedApplyInput): Promise<Appl
   const { executor, account, action, cfg, ctx, agentId, runId, orgId, idempotencyKey } = input;
   const dryRun = input.dryRun ?? cfg.dryRun;
 
-  const check = applyGuardrails([action], cfg, ctx);
+  const check = applyGuardrails([action], cfg, ctx, { exemptEntityCap: input.exemptEntityCap ?? false });
   if (check.allowed.length === 0) {
     return { kind: "blocked", reason: check.dropped[0]?.reason ?? "barrada pelo guardrail", action };
   }

@@ -51,6 +51,23 @@ describe("applyGuardrails", () => {
     expect(res.dropped[0]?.reason).toContain("entidades/dia");
   });
 
+  it("exemptEntityCap ISENTA o cap de entidades/dia (ativação em cadeia), mantendo as outras redes", () => {
+    const cfg: GuardrailConfig = { ...baseCfg, allowedActions: ["resume_entity"] };
+    const acts = [
+      action("a", { type: "resume_entity" }),
+      action("b", { type: "resume_entity" }),
+      action("c", { type: "resume_entity" }),
+      action("d", { type: "resume_entity" }),
+    ];
+    // sem isenção: cap 2 dropa 2
+    expect(applyGuardrails(acts, cfg).allowed).toHaveLength(2);
+    // com isenção: todas passam
+    expect(applyGuardrails(acts, cfg, {}, { exemptEntityCap: true }).allowed).toHaveLength(4);
+    // killSwitch/allowedActions seguem valendo mesmo isento
+    expect(applyGuardrails(acts, { ...cfg, killSwitch: true }, {}, { exemptEntityCap: true }).allowed).toHaveLength(0);
+    expect(applyGuardrails([action("x", { type: "set_status", params: { status: "ACTIVE" } })], cfg, {}, { exemptEntityCap: true }).allowed).toHaveLength(0);
+  });
+
   describe("contexto cross-run + budget-level", () => {
     it("cap de entidades/dia conta o que já foi tocado hoje (cross-run)", () => {
       // 1 entidade já tocada hoje + cap 2 → só cabe mais 1 nova.

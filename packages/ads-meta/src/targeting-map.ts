@@ -18,13 +18,14 @@ export type ExplicitTargeting = Extract<TargetingSpec, { kind: "explicit" }>;
  * públicos salvos) → `targeting` cru da Meta. Expansão SEMPRE fechada (público escolhido
  * pelo dono, sem ambiguidade de "fonte não decidiu" — diferente de `reuse_adset`).
  */
-export function explicitTargetingToRaw(spec: ExplicitTargeting): Record<string, unknown> {
+export function explicitTargetingToRaw(spec: ExplicitTargeting, advantageAudience = false): Record<string, unknown> {
   // geo_locations montado direto (não via geoToRaw) p/ carregar RAIO por cidade/região +
   // custom_locations (raio em torno de endereço). `address_string` = a Meta geocodifica.
   const geoLocations: Record<string, unknown> = {};
   const countries = spec.geo.filter((g) => g.kind === "country").map((g) => g.key);
   const regions = spec.geo.filter((g) => g.kind === "region");
   const cities = spec.geo.filter((g) => g.kind === "city");
+  const neighborhoods = spec.geo.filter((g) => g.kind === "neighborhood");
   // RAIO é city-only na Meta (regions/countries só aceitam `{key}`/ISO). Strip defensivo: mesmo
   // que um radius chegue numa region (input do site), NUNCA emitir radius fora de `cities`.
   const withRadius = (g: { key: string; radius?: number; distanceUnit?: "mile" | "kilometer" }) =>
@@ -32,6 +33,8 @@ export function explicitTargetingToRaw(spec: ExplicitTargeting): Record<string, 
   if (countries.length) geoLocations["countries"] = countries;
   if (regions.length) geoLocations["regions"] = regions.map((g) => ({ key: g.key }));
   if (cities.length) geoLocations["cities"] = cities.map(withRadius);
+  // BAIRRO (neighborhood): a Meta já tem o polígono do bairro → só `{key}`, sem raio.
+  if (neighborhoods.length) geoLocations["neighborhoods"] = neighborhoods.map((g) => ({ key: g.key }));
   if (spec.radiusAreas && spec.radiusAreas.length > 0) {
     geoLocations["custom_locations"] = spec.radiusAreas.map((a) => ({ address_string: a.address, radius: a.radius, distance_unit: a.distanceUnit }));
   }
@@ -47,12 +50,20 @@ export function explicitTargetingToRaw(spec: ExplicitTargeting): Record<string, 
   return {
     geo_locations: geoLocations,
     ...(spec.ageMin !== undefined ? { age_min: spec.ageMin } : {}),
-    ...(spec.ageMax !== undefined ? { age_max: spec.ageMax } : {}),
+    // Sob Advantage+ audience a Meta só HONRA idade dura na faixa 18-25 (log de prod: `age_min:45` +
+    // `advantage_audience:1` → "Invalid parameter"). O conflito idade×otimização é resolvido A MONTANTE
+    // PERGUNTANDO ao dono (core `advantageAgeConflict` + rede do apply), então um payload conflitante não
+    // chega aqui. Este drop de `age_max` sob Advantage é só um último net (não silencia o dono — o eco já
+    // perguntou); Advantage OFF → faixa fixa (piso + teto). FAST-FOLLOW: reconciliar com o detector
+    // (hoje ele não dispara pra teto ≤25, que este drop ainda tiraria em silêncio).
+    ...(spec.ageMax !== undefined && !advantageAudience ? { age_max: spec.ageMax } : {}),
     ...(spec.genders && spec.genders.length > 0 ? { genders: spec.genders } : {}),
     ...(spec.customAudienceIncludeIds && spec.customAudienceIncludeIds.length > 0 ? { custom_audiences: spec.customAudienceIncludeIds.map((id) => ({ id })) } : {}),
     ...(spec.customAudienceExcludeIds && spec.customAudienceExcludeIds.length > 0 ? { excluded_custom_audiences: spec.customAudienceExcludeIds.map((id) => ({ id })) } : {}),
     ...(flexible_spec.length > 0 ? { flexible_spec } : {}),
-    targeting_automation: { advantage_audience: 0 },
+    // C3: expansão de público (Advantage+ audience) explícita (v23+ EXIGE o valor). Default 0 (fixo,
+    // comportamento pré-C3); 1 quando o dono liga o Advantage (deixa a Meta expandir além do público).
+    targeting_automation: { advantage_audience: advantageAudience ? 1 : 0 },
     targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },
   };
 }

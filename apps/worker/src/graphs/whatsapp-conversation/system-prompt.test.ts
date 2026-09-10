@@ -41,13 +41,55 @@ describe("buildChatRules — S0a: procedimento-por-tool migrou pra tools.ts", ()
     expect(rules).toContain("Como a criação/edição/ação funciona no v1");
     expect(rules).toContain("NÃO diga \"vá criar no site\"");
   });
+
+  it("I3: bloco estrategista sempre presente (recomenda estrutura + planeja + honesto), em linguagem de negócio", () => {
+    const rules = buildChatRules(false, false);
+    expect(rules).toContain("você é um ESTRATEGISTA");
+    expect(rules).toContain("a palavra final é SEMPRE do dono");
+    expect(rules).toContain("TESTAR PÚBLICOS/segmentos");
+    expect(rules).toContain("PLANEJE o futuro");
+    // nunca a sigla técnica crua no que vai pro dono
+    expect(rules).not.toContain("CBO 1-1-5");
+  });
+
+  it("S2: plano ANCORA no diagnóstico real (não genérico) — método único reusando a última análise", () => {
+    const rules = buildChatRules(false, false);
+    expect(rules).toContain("ANCORE no diagnóstico real");
+    expect(rules).toContain("NUNCA num plano genérico");
+  });
+
+  it("chatAdsWrites ON: regra de roteamento pedido→campo (não confundir público/ativação/advantage com link)", () => {
+    const rules = buildChatRules(false, true);
+    expect(rules).toContain("Roteamento pedido → campo");
+    expect(rules).toContain("addInterests");
+    // Bug A: a regra dura agora cobre também ATIVAÇÃO/ADVANTAGE/ORÇAMENTO × LINK.
+    expect(rules).toContain("PÚBLICO, ATIVAÇÃO, ADVANTAGE ou ORÇAMENTO");
+    expect(rules).toContain("NUNCA preencha o campo link por conta própria");
+  });
+});
+
+describe("buildChatRules — escolha de criativo por chat (kill-switch chatCreativePicker)", () => {
+  it("picker OFF (v1 default): o AGENTE escolhe; NÃO oferece escolher; trocar é no site", () => {
+    const rules = buildChatRules(false, true, false);
+    expect(rules).toContain("EU escolho o criativo");
+    expect(rules).toContain("NÃO ofereça ao usuário escolher os criativos");
+    expect(rules).toContain("no site");
+    // não deve pedir os nomes / oferecer a escolha
+    expect(rules).not.toContain("quer escolher os criativos");
+  });
+
+  it("picker ON: volta a oferecer a escolha por nome (fast-follow ligado)", () => {
+    const rules = buildChatRules(false, true, true);
+    expect(rules).toContain("quer escolher os criativos");
+    expect(rules).not.toContain("NÃO ofereça ao usuário escolher os criativos");
+  });
 });
 
 describe("buildChatRules — config: needs-focus (concierge) × kill-switch OFF (site-only)", () => {
   // Concierge (org multi-conta sem foco): config NÃO está desligada — só precisa de foco.
   // Roy deve ROTEAR pra focar a conta, nunca remeter ao site (que era a confusão da BM - Automato).
   it("needsFocusForConfig ON: roteia pra FOCAR a conta, NÃO remete ao site", () => {
-    const rules = buildChatRules(false, false, true);
+    const rules = buildChatRules(false, false, false, true);
     expect(rules).toContain("precisa de uma conta em foco");
     expect(rules).not.toContain("está desligada por aqui");
   });

@@ -3,7 +3,7 @@ import type { Action, DecisionEligibility, HealthSignal, RessalvaCode } from "@t
 import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, BUDGET_MODE_DECREASE, BUDGET_MODE_INCREASE } from "@trafego/shared";
 import type { LessonGuard } from "../learning/index.js";
 import { DEFAULT_AUDIENCE_CEILING_THRESHOLDS, DEFAULT_MARGINAL_CPA_THRESHOLDS } from "../analysis-guards/index.js";
-import { type ScaleRessalvaContext, computeScaleRessalvas, isScaleAction } from "./index.js";
+import { type ScaleRessalvaContext, computeScaleRessalvas, isScaleAction, ressalvasFromSnapshot } from "./index.js";
 
 const scaleBudget = (over?: Partial<Action>): Action => ({
   id: "a1",
@@ -105,6 +105,14 @@ describe("computeScaleRessalvas", () => {
     expect(rs[0]!.message).toContain("weak_hook_retention");
   });
 
+  it("desgaste AGING → mesma ressalva (trava escala) mas mensagem de 'prepare o sucessor', não 'renove já'", () => {
+    const signals = new Map<string, readonly HealthSignal[]>([["C1", ["creative_aging"]]]);
+    const rs = computeScaleRessalvas(scaleBudget(), emptyCtx({ signals }));
+    expect(codes(rs)).toEqual(["creative_fatigue"]); // código igual: a trava de auto-apply é a mesma
+    expect(rs[0]!.message).toContain("ainda entrega");
+    expect(rs[0]!.message).toContain("próximo criativo");
+  });
+
   it("hipótese não-confirmada nível-conta → ressalva unconfirmed_hypothesis", () => {
     const g: LessonGuard = { key: { direction: "lower", scope: "account", subjectId: null } } as unknown as LessonGuard;
     expect(codes(computeScaleRessalvas(scaleBudget(), emptyCtx({ lessonGuards: [g] })))).toEqual(["unconfirmed_hypothesis"]);
@@ -121,5 +129,27 @@ describe("computeScaleRessalvas", () => {
       signals: new Map<string, readonly HealthSignal[]>([["C1", ["creative_fatigue"]]]),
     });
     expect(codes(computeScaleRessalvas(scaleBudget(), ctx))).toEqual(["no_significance", "creative_fatigue"]);
+  });
+});
+
+describe("ressalvasFromSnapshot (on-demand — a partir do snapshot persistido)", () => {
+  it("vencedor fatigado no snapshot → ressalva creative_fatigue (fim da escala contraditória on-demand)", () => {
+    const rs = ressalvasFromSnapshot(scaleBudget(), { healthSignals: ["creative_fatigue"] });
+    expect(codes(rs)).toContain("creative_fatigue");
+  });
+  it("sem significância no snapshot → ressalva no_significance", () => {
+    const rs = ressalvasFromSnapshot(scaleBudget(), { eligibility: elig({ hasSignificance: false, conversions: 3 }) });
+    expect(codes(rs)).toContain("no_significance");
+  });
+  it("snapshot limpo → sem ressalva; snapshot ausente → vazio; ação não-escala → vazio", () => {
+    expect(ressalvasFromSnapshot(scaleBudget(), { eligibility: elig({}), healthSignals: [] })).toEqual([]);
+    expect(ressalvasFromSnapshot(scaleBudget(), null)).toEqual([]);
+    expect(ressalvasFromSnapshot(scaleBudget({ type: "pause_entity", params: {} }), { healthSignals: ["creative_fatigue"] })).toEqual([]);
+  });
+  it("CBO: chaveia pelo action.target.id (campanha-mãe), não pelo id do vencedor — ressalva NÃO some", () => {
+    // vencedor é o adset, mas a ação de subir orçamento mira a CAMPANHA-mãe (target.id = CAMP).
+    const cboAction = scaleBudget({ target: { level: "campaign", id: "CAMP" } });
+    const rs = ressalvasFromSnapshot(cboAction, { healthSignals: ["creative_fatigue"] });
+    expect(codes(rs)).toContain("creative_fatigue");
   });
 });

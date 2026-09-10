@@ -384,6 +384,14 @@ export const creativeAssets = pgTable(
     storageRef: text("storage_ref"),
     metaImageHash: text("meta_image_hash"),
     metaVideoId: text("meta_video_id"),
+    // Origem WhatsApp (Slice 3 — memória do criativo): a conversa e a mensagem que trouxeram o
+    // asset, p/ o dono retomar depois — "o último que te mandei" (recência por conversa) e reply a
+    // uma mídia (resolve o messageId citado → asset). Nulo p/ upload web (sem conversa).
+    conversationId: uuid("conversation_id"),
+    sourceMessageId: text("source_message_id"),
+    // Chave da decomposição de visão em `creative_vision_analyses` (content-addressed) — liga o
+    // asset à sua análise p/ a busca por DESCRIÇÃO trazer o que o modelo viu. Nulo até analisar.
+    visionContentHash: text("vision_content_hash"),
     // anúncio de origem quando `reuse` (liga o asset ao desempenho em ad_creatives).
     sourceAdId: text("source_ad_id"),
     // Arquivamento (soft-delete híbrido): excluir um asset EM USO (rascunho/campanha o

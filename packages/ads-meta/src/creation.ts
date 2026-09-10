@@ -11,7 +11,7 @@ import type {
   DuplicateResult,
   ModernizationNote,
 } from "@trafego/shared/ports";
-import type { AudienceProfile, ConversionGoal, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
+import type { AdMetric, AudienceProfile, ConversionGoal, DeliveryEstimate, PixelInfo, ResolvedAudienceSnapshot } from "@trafego/shared/types";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION, type BatchSubRequest, type BatchSubResponse } from "./client.js";
@@ -20,13 +20,16 @@ import type { MetaGovernor } from "./governor.js";
 import { normalizeAdAccountId } from "./ids.js";
 import { audienceFromTargeting, type RawTargeting } from "./meta-audience-map.js";
 import {
+  isWhatsappDestinationGoal,
   objectiveFromAdSet,
   objectiveFromCampaign,
   resolveAdSetConversion,
   resolveMetaCta,
   resolveMetaObjective,
+  whatsappCreativeCta,
+  WHATSAPP_SEND_LINK,
 } from "./meta-conversion-map.js";
-import { copyOf, creativeFormatOf, isReusableCreative, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
+import { copyOf, creativeFormatOf, isReusableCreative, metricsOf, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
 import { DEFAULT_TARGETING_GEO_COUNTRY, explicitTargetingToRaw } from "./targeting-map.js";
 
 /** Quantos anúncios buscar p/ ranquear o melhor criativo reusável (1 call, com insights). */
@@ -44,6 +47,22 @@ const TREE_CHILD_LIMIT = 200;
  *  duplicação de campanha cai no caminho sequencial (campanha grande é rara). */
 const DUPLICATION_BATCH_CAP = 50;
 const BUDGET_FIELD_DAILY = "daily_budget";
+
+// C3 — Advantage+ creative enhancements: desde a API v22 o toggle único foi DEPRECADO; é opt-in POR
+// FEATURE via `degrees_of_freedom_spec.creative_features_spec.<feature> = { enroll_status: "OPT_IN" }`.
+// Conjunto CURADO e conservador de melhorias seguras (imagem/texto/CTA). A Meta REMOVE sozinha as
+// features inelegíveis pro formato/objetivo, então enviar o set é seguro. Confirmar o set exato contra
+// a versão de API da conta via `validate_only` é passo de roteiro (developers.facebook.com bloqueado
+// pelo egress). Expandir o set = editar só esta constante (fonte única).
+const ADVANTAGE_CREATIVE_FEATURES = ["image_touchups", "text_optimizations", "enhance_cta"] as const;
+const CREATIVE_FEATURE_OPT_IN = { enroll_status: "OPT_IN" } as const;
+
+/** Monta o `degrees_of_freedom_spec` (opt-in por feature) do conjunto curado, p/ o adcreative. */
+function advantageCreativeSpec(): Record<string, unknown> {
+  const creative_features_spec: Record<string, unknown> = {};
+  for (const f of ADVANTAGE_CREATIVE_FEATURES) creative_features_spec[f] = CREATIVE_FEATURE_OPT_IN;
+  return { creative_features_spec };
+}
 
 /**
  * Subcodes Meta em que a ENTIDADE-FONTE não pode ser copiada COMO ESTÁ (`/copies` re-valida e
@@ -334,12 +353,18 @@ function positiveCount(n: number | undefined): number | undefined {
   return typeof n === "number" && n >= 0 ? n : undefined;
 }
 
+/** Logger de diagnóstico mínimo (structural — a instância pino do worker satisfaz). Mantém o
+ *  adapter livre de dependência de logging; ausente = silencioso. */
+export interface AdsDebugLogger {
+  info(obj: Record<string, unknown>, msg: string): void;
+}
+
 /**
  * Serviço de CRIAÇÃO/DUPLICAÇÃO na Meta (Fatia 7). Isola o vocabulário Meta (`/copies`,
  * `status_option`, `deep_copy`) — o core/shared falam `DuplicateEntityInput`/`DuplicateResult`.
  */
 export class MetaCreationService {
-  constructor(private readonly client: MetaGraphClient) {}
+  constructor(private readonly client: MetaGraphClient, private readonly logger?: AdsDebugLogger) {}
 
   /**
    * Duplica reconstruindo a árvore com cópias RASAS (`/copies` deep_copy=false = 1 objeto por
@@ -565,6 +590,18 @@ export class MetaCreationService {
     }
   }
 
+  /** DELETE de uma campanha (best-effort) — usado pra limpar a órfã do-zero quando a criação falha de
+   *  forma DETERMINÍSTICA (a saga do-zero não é atômica). Retorna `true` se apagou; `false` se a limpeza
+   *  falhou (a órfã segue lá → a casca nomeia p/ o dono apagar). NUNCA lança. */
+  async deleteCampaign(account: AdAccountRef, campaignId: string): Promise<boolean> {
+    try {
+      await this.client.request({ method: "DELETE", path: campaignId, accessToken: account.accessToken });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Define o budget diário absoluto de uma entidade (unidade mínima). Idempotente (set). */
   async setEntityBudget(account: AdAccountRef, entityId: string, dailyBudgetMinor: number): Promise<void> {
     await this.client.request({
@@ -641,7 +678,7 @@ export class MetaCreationService {
       ...(input.pixelId ? { pixelId: input.pixelId } : {}),
       ...(input.pageId ? { pageId: input.pageId } : {}),
     });
-    const { targeting, fallback } = await this.resolveTargeting(account, input.targeting);
+    const { targeting, fallback } = await this.resolveTargeting(account, input.targeting, input.advantageAudience ?? false);
     // CBO: o orçamento/lance estão na campanha → o adset NÃO leva daily_budget/bid_strategy
     // (a Meta rejeita ter budget nos dois níveis). ABO: budget + lance no adset.
     const isAbo = (input.dailyBudgetMinor ?? 0) > 0;
@@ -662,21 +699,40 @@ export class MetaCreationService {
     if (conv.promotedObject) params["promoted_object"] = JSON.stringify(conv.promotedObject);
     // destino do conjunto (CTWA/WhatsApp) — a Meta exige junto do promoted_object.page_id.
     if (conv.destinationType) params["destination_type"] = conv.destinationType;
+    // DIAGNÓSTICO (idade×Advantage): registra o `targeting` REAL que vai pra Meta — kind + a flag
+    // advantageAudience efetiva + o objeto cru (mostra se `age_max` saiu junto de `advantage_audience:1`,
+    // e por qual builder). Sem token. É a verdade do byte enviado (o eco/spec é intenção, não o enviado).
+    this.logger?.info(
+      {
+        conjunto: input.name,
+        targetingKind: input.targeting.kind,
+        advantageAudience: input.advantageAudience ?? false,
+        rawTargeting: targeting,
+      },
+      "ads-meta:createAdSet targeting enviado",
+    );
     const adsetId = await this.createOnAccount(account, "adsets", params);
     return { adsetId, targetingFallback: fallback };
   }
 
   async createAdCreative(account: AdAccountRef, input: CreateAdCreativeInput): Promise<{ creativeId: string }> {
+    // CTWA (conversas no WhatsApp): o criativo NÃO é de site. Precisa do CTA `WHATSAPP_MESSAGE` +
+    // link genérico `api.whatsapp.com/send` (o número real vem do `promoted_object` do conjunto,
+    // `destination_type: WHATSAPP`). Um criativo de site (CTA de link + link do site) é recusado com
+    // "criativo inválido para o objetivo" + "campo de link obrigatório" (que foi o incidente).
+    const whatsapp = isWhatsappDestinationGoal(input.goal);
+    // link do criativo: WhatsApp → deep-link genérico; site → o link resolvido (site/tráfego).
+    const creativeLink = whatsapp ? WHATSAPP_SEND_LINK : input.linkUrl;
+    const callToAction = whatsapp
+      ? whatsappCreativeCta()
+      : { type: resolveMetaCta(input.copy.cta), ...(input.linkUrl ? { value: { link: input.linkUrl } } : {}) };
     const linkData: Record<string, unknown> = {
       message: input.copy.primaryText,
       name: input.copy.headline,
       ...(input.copy.description ? { description: input.copy.description } : {}),
-      ...(input.linkUrl ? { link: input.linkUrl } : {}),
+      ...(creativeLink ? { link: creativeLink } : {}),
       ...(input.imageHash ? { image_hash: input.imageHash } : {}),
-      call_to_action: {
-        type: resolveMetaCta(input.copy.cta),
-        ...(input.linkUrl ? { value: { link: input.linkUrl } } : {}),
-      },
+      call_to_action: callToAction,
     };
     const objectStorySpec: Record<string, unknown> = { page_id: input.pageId };
     if (input.videoId) {
@@ -690,10 +746,7 @@ export class MetaCreationService {
         title: input.copy.headline,
         ...(input.copy.description ? { link_description: input.copy.description } : {}),
         ...(input.imageHash ? { image_hash: input.imageHash } : thumbUrl ? { image_url: thumbUrl } : {}),
-        call_to_action: {
-          type: resolveMetaCta(input.copy.cta),
-          ...(input.linkUrl ? { value: { link: input.linkUrl } } : {}),
-        },
+        call_to_action: callToAction,
       };
     } else {
       objectStorySpec["link_data"] = linkData;
@@ -701,6 +754,9 @@ export class MetaCreationService {
     const creativeId = await this.createOnAccount(account, "adcreatives", {
       name: input.name,
       object_story_spec: JSON.stringify(objectStorySpec),
+      // C3: Advantage+ creative enhancements (opt-in por feature) quando o dono liga — a Meta pode
+      // ajustar imagem/texto/CTA. O eco AVISA que o entregue pode diferir do aprovado.
+      ...(input.advantageCreative ? { degrees_of_freedom_spec: JSON.stringify(advantageCreativeSpec()) } : {}),
     });
     return { creativeId };
   }
@@ -905,6 +961,9 @@ export class MetaCreationService {
       geo_locations,
       ...(snapshot.ageMin !== undefined ? { age_min: snapshot.ageMin } : {}),
       ...(snapshot.ageMax !== undefined ? { age_max: snapshot.ageMax } : {}),
+      // C2: reemite o GÊNERO da fonte (cópia/herança reuse_adset preserva um público só-de-homens/
+      // -mulheres — antes o snapshot não tinha gênero e a cópia virava "todos").
+      ...(snapshot.genders && snapshot.genders.length > 0 ? { genders: snapshot.genders } : {}),
       ...(flexible_spec.length > 0 ? { flexible_spec } : {}),
       // Slice 9: reemite os públicos salvos da fonte (cópia reuse_adset de remarketing preserva o
       // público quente — antes o snapshot só tinha geo/idade/expansão/interesses e virava prospecção).
@@ -929,6 +988,7 @@ export class MetaCreationService {
   private async resolveTargeting(
     account: AdAccountRef,
     spec: CreateAdSetInput["targeting"],
+    advantageAudience = false,
   ): Promise<{ targeting: Record<string, unknown>; fallback: boolean }> {
     switch (spec.kind) {
       case "reuse_adset": {
@@ -954,8 +1014,9 @@ export class MetaCreationService {
         return { targeting: this.advantagePlusTargeting(), fallback: false };
       case "explicit":
         // público NOVO por primitivos (Fase 1) — mapeamento PURO extraído p/ `targeting-map`
-        // (fonte única, reusada pela escrita de adjust_audience na Fatia C). Expansão sempre fechada.
-        return { targeting: explicitTargetingToRaw(spec), fallback: false };
+        // (fonte única, reusada pela escrita de adjust_audience na Fatia C). C3: a expansão
+        // (advantage_audience) passa a respeitar o toggle do dono (default fixo).
+        return { targeting: explicitTargetingToRaw(spec, advantageAudience), fallback: false };
       default: {
         // Exaustivo em compile-time; em runtime um rascunho LEGADO no jsonb (ex: kind colapsado) NÃO
         // pode devolver targeting undefined (adset sem targeting = erro cru da Meta) — cai em amplo
@@ -1033,5 +1094,60 @@ export class MetaCreationService {
       ...(unsupportedTopFormat ? { unsupportedTopFormat } : {}),
     };
     return result;
+  }
+
+  /** limite de pixels a listar — uma conta raramente tem mais que um punhado. */
+  private static readonly PIXEL_LIST_LIMIT = 50;
+
+  /**
+   * Pixels de rastreamento de conversões da conta (`{account}/adspixels?fields=id,name`) — pra o dono
+   * ESCOLHER qual usar quando há N e pra nomear o inferido. Best-effort: sem acesso/pixel (403/vazio) →
+   * lista vazia (o caller cai no pixel inferido/padrão, honesto). Vocabulário Meta (`adspixels`) só aqui.
+   */
+  async listPixels(account: AdAccountRef): Promise<PixelInfo[]> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    try {
+      const { data: body } = await this.client.request<{ data?: ReadonlyArray<{ id?: string; name?: string }> }>({
+        method: "GET",
+        path: `${accountId}/adspixels`,
+        accessToken: account.accessToken,
+        params: { fields: "id,name", limit: String(MetaCreationService.PIXEL_LIST_LIMIT) },
+      });
+      const out: PixelInfo[] = [];
+      for (const p of body.data ?? []) {
+        if (p.id) out.push({ pixelId: p.id, ...(p.name ? { name: p.name } : {}) });
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Métrica CRUA por anúncio (gasto + resultados), SÍNCRONA: 1 GET `/act_{id}/ads` com `insights`
+   * INLINE (não o report job async, que teria latência alta demais pro chat). Reusa `metricsOf`
+   * (mesma extração do `inferCreationDefaults`/rank). Best-effort: falha → vazio. `window` é um
+   * `date_preset` da Meta — validado (só `[a-z0-9_]`) antes de entrar no fields, sem interpolar cru.
+   */
+  async getAdMetrics(account: AdAccountRef, window: string): Promise<AdMetric[]> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const preset = /^[a-z0-9_]+$/.test(window) ? window : "maximum";
+    try {
+      const { data } = await this.client.request<{ data?: ReadonlyArray<RawAdCandidate> }>({
+        method: "GET",
+        path: `${accountId}/ads`,
+        accessToken: account.accessToken,
+        params: { fields: `id,insights.date_preset(${preset}){spend,actions}`, limit: String(INFER_CANDIDATES_LIMIT) },
+      });
+      const out: AdMetric[] = [];
+      for (const ad of data.data ?? []) {
+        if (!ad.id) continue;
+        const { spend, results } = metricsOf(ad);
+        out.push({ adId: ad.id, spend, results });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 }

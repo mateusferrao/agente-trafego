@@ -32,10 +32,22 @@ export interface AnalysisDefaults {
   readonly unitModel: string;
   /** modelo(s) de RESERVA do unit — fallback com retry/backoff se o primário esgotar. */
   readonly unitFallbackModels: readonly string[];
-  /** modelo BARATO do redator do WhatsApp. */
+  /**
+   * Modelo BARATO do REDATOR do WhatsApp (redige o resumo da análise/pulso/vídeo a partir do
+   * RESULTADO já computado — flash-lite). NÃO confundir com o modelo da CONVERSA (chat ReAct),
+   * que é `deps.conversation.model` (forte) — ver `loadConversationConfig`.
+   * Entanglement conhecido (fast-follow p/ untangle): a MESMA chave jsonb `model_config.messageModel`
+   * hoje sobrepõe os DOIS — o redator aqui (linha do `resolveAnalysisConfig`) E a conversa
+   * (`loadConversationConfig`). Separar em duas chaves distintas exige migração/backfill (não é
+   * "sem trocar valores") → ROADMAP.
+   */
   readonly messageModel: string;
   /** modelo multimodal (visão de criativo). */
   readonly visionModel: string;
+  /** modelo video-capable p/ análise do vídeo COMPLETO do WhatsApp (Slice 2). */
+  readonly videoModel: string;
+  /** teto (MB) do vídeo enviado INTEIRO ao modelo — acima → degrada (ffmpeg-local = fast-follow). */
+  readonly videoModelMaxMb: number;
   readonly reviewEnabled: boolean;
   readonly topN: number;
   readonly maxOutputTokens: number;
@@ -96,6 +108,8 @@ export function resolveAnalysisConfig(
     unitFallbackModels: defaults.unitFallbackModels,
     messageModel: str(mc.messageModel) ?? defaults.messageModel,
     visionModel: str(mc.visionModel) ?? defaults.visionModel,
+    videoModel: str(mc.videoModel) ?? defaults.videoModel,
+    videoModelMaxMb: defaults.videoModelMaxMb,
     reviewEnabled: typeof mc.reviewEnabled === "boolean" ? mc.reviewEnabled : defaults.reviewEnabled,
     topN: posInt(mc.topN) ?? defaults.topN,
     maxOutputTokens: posInt(mc.maxOutputTokens) ?? defaults.maxOutputTokens,

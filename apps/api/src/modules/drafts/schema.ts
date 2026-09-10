@@ -22,6 +22,36 @@ export const draftCopyVariantOutput = z.object({
     .nullable(),
 });
 
+/** Público EXPLÍCITO no OUTPUT (geo/idade/gênero/grupos/salvos) — fonte única do shape, reusada
+ *  no rascunho single E em cada conjunto do multi (C2). */
+export const draftExplicitAudienceOutput = z.object({
+  geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city", "neighborhood"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
+  radiusAreas: z.array(z.object({ address: z.string(), radius: z.number(), distanceUnit: z.enum(["mile", "kilometer"]) })),
+  ageMin: z.number().nullable(),
+  ageMax: z.number().nullable(),
+  genders: z.array(z.union([z.literal(1), z.literal(2)])).nullable(),
+  interestGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
+  behaviorGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
+  customAudienceIncludeIds: z.array(z.string()),
+  customAudienceExcludeIds: z.array(z.string()),
+});
+
+/** Um CONJUNTO de anúncios do rascunho multi-conjunto (C2) — público + orçamento (ABO) + anúncios.
+ *  O card/painel renderiza N destes. Criativo compartilhado vem do rascunho (não repetido aqui). */
+export const draftAdsetOutput = z.object({
+  name: z.string().nullable(),
+  /** modo do público quando não-explícito (reuse/broad); `null` quando explícito (ver explicitAudience). */
+  audience: z.enum(["reuse", "broad"]).nullable(),
+  explicitAudience: draftExplicitAudienceOutput.nullable(),
+  /** orçamento diário do conjunto (ABO) na unidade MAIOR; `null` em CBO (verba na campanha). */
+  dailyBudgetMajor: z.number().nullable(),
+  /** criativo PRÓPRIO deste conjunto (U1 — mesma copy, criativo diferente). `null` = usa o
+   *  compartilhado do rascunho. O card mostra formato/origem + a miniatura. */
+  creative: z.object({ format: z.enum(["image", "video"]), origin: z.enum(["reuse", "upload"]) }).nullable(),
+  copyVariants: z.array(draftCopyVariantOutput).nullable(),
+});
+export type DraftAdsetOutput = z.infer<typeof draftAdsetOutput>;
+
 /**
  * Aprovação de RASCUNHO de campanha (Fatia 7) — mais rica que 1 ação: estrutura + copy +
  * budget novo + Página/Pixel (card de rascunho, Brand tier). Espelha o card no WhatsApp
@@ -60,6 +90,9 @@ export const draftApprovalOutput = z.object({
   sourceName: z.string().nullable(),
   pageId: z.string().nullable(),
   pixelId: z.string().nullable(),
+  /** URL de destino do anúncio (from_scratch, objetivo de site/tráfego/conversão) — o painel
+   *  pré-preenche e deixa editar. `null` = herdado do anúncio-base / objetivo de WhatsApp. */
+  linkUrl: z.string().nullable(),
   /** nomes editáveis (painel). `null` = derivado no apply (`CaquiAI — <objetivo>`). */
   campaignName: z.string().nullable(),
   adsetName: z.string().nullable(),
@@ -79,27 +112,25 @@ export const draftApprovalOutput = z.object({
    *  escolhe (amplo). `null` em duplicate/activation E quando o público é explícito/salvo (ver
    *  `explicitAudience` abaixo) — o card oferece alternar entre reuse/broad só nesse caso. */
   audience: z.enum(["reuse", "broad"]).nullable(),
+  /** onde mora a verba (C1): `cbo` = orçamento único na campanha; `abo` = por conjunto. `null` =
+   *  não definido (rascunho pré-C1 = comportamento ABO no apply). O card mostra o rótulo de negócio. */
+  budgetMode: z.enum(["cbo", "abo"]).nullable(),
+  /** Advantage+ (C3): expansão de público × melhorias de criativo. `null` = não definido (pré-C3).
+   *  O card do site RENDERIZA o mesmo aviso honesto do chat (o criativo entregue pode diferir do
+   *  aprovado quando `advantageCreative`), pra a aprovação via site não perder a honestidade. */
+  advantageAudience: z.boolean().nullable(),
+  advantageCreative: z.boolean().nullable(),
+  /** conjuntos do teste multi-conjunto (C2). `null` ou vazio = single-conjunto (usa os campos
+   *  singulares acima). Quando presente, o card/painel renderiza N conjuntos. */
+  adsets: z.array(draftAdsetOutput).nullable(),
   /** público EXPLÍCITO por primitivos (Fase 1, subfatia 3b) — geo/idade/gênero. `null` quando o
    *  targeting não é `explicit` (os outros modos usam `audience` acima). */
-  explicitAudience: z
-    .object({
-      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
-      radiusAreas: z.array(z.object({ address: z.string(), radius: z.number(), distanceUnit: z.enum(["mile", "kilometer"]) })),
-      ageMin: z.number().nullable(),
-      ageMax: z.number().nullable(),
-      genders: z.array(z.union([z.literal(1), z.literal(2)])).nullable(),
-      /** interesses/comportamentos em GRUPOS (Slice 3/4). Vazio = nenhum. */
-      interestGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
-      behaviorGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
-      customAudienceIncludeIds: z.array(z.string()),
-      customAudienceExcludeIds: z.array(z.string()),
-    })
-    .nullable(),
+  explicitAudience: draftExplicitAudienceOutput.nullable(),
   /** semente pro CONVERTER MODO (Slice 8): público herdado (geo/idade) de um rascunho reuse/broad,
    *  pré-preenche o editor quando o dono clica "personalizar público". `null` quando já é explicit. */
   convertibleAudience: z
     .object({
-      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]) })),
+      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city", "neighborhood"]) })),
       ageMin: z.number().nullable(),
       ageMax: z.number().nullable(),
     })
@@ -176,7 +207,7 @@ export const explicitAudienceInput = z.object({
     z.object({
       key: z.string().min(1),
       name: z.string().min(1),
-      kind: z.enum(["country", "region", "city"]),
+      kind: z.enum(["country", "region", "city", "neighborhood"]),
       radius: z.number().positive().optional(),
       distanceUnit: z.enum(["mile", "kilometer"]).optional(),
     }),
@@ -206,7 +237,18 @@ export const updateDraftInput = z.object({
    *  o objetivo exige pixel e a conta não tem (§13 mensagem amigável). */
   objective: conversionGoalSchema.optional(),
   suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  /** Advantage+ do rascunho (F1a — editável no rascunho pendente, só from_scratch): bundle único
+   *  (audience + criativo). `true` liga (a Meta expande público + ajusta imagem/texto), `false` desliga.
+   *  Ausente = mantém. O card avisa honesto quando ligado. */
+  advantage: z.boolean().optional(),
+  /** Onde a verba mora (F1b — editável no rascunho pendente, só from_scratch): `"cbo"` = única na
+   *  campanha, `"abo"` = por conjunto. Num teste multi-conjunto, trocar MOVE a verba de nível
+   *  (spend-preserving). Ausente = mantém. */
+  budgetMode: z.enum(["cbo", "abo"]).optional(),
   audience: z.enum(["reuse", "broad"]).optional(),
+  /** URL de DESTINO do anúncio (só from_scratch, objetivo de site/tráfego/conversão) — troca o link.
+   *  Objetivo de conversas no WhatsApp → o backend bloqueia honesto (leva pro WhatsApp, não pra site). */
+  linkUrl: z.string().url().optional(),
   creative: setDraftCreativeInput.optional(),
   copyEdits: z.array(draftCopyEditInput).optional(),
   removeAdIndex: z.number().int().min(0).optional(),
@@ -216,7 +258,7 @@ export const updateDraftInput = z.object({
   /** nomes EXATOS (como renderizados nos chips) a remover — sem ambiguidade (o usuário clicou o chip). */
   removeGeo: z.array(z.string().min(1)).optional(),
   /** já RESOLVIDO pelo autocomplete (geo-search) — o site nunca manda nome livre pro backend resolver. */
-  addGeo: z.array(z.object({ key: z.string().min(1), name: z.string().min(1), kind: z.enum(["country", "region", "city"]) })).optional(),
+  addGeo: z.array(z.object({ key: z.string().min(1), name: z.string().min(1), kind: z.enum(["country", "region", "city", "neighborhood"]) })).optional(),
   ageMin: z.number().int().min(13).max(65).optional(),
   ageMax: z.number().int().min(13).max(65).optional(),
   /** gênero do público EXPLÍCITO: `[1]`=homens, `[2]`=mulheres, `[]`=todos (limpa). Ausente = mantém. */
@@ -230,6 +272,39 @@ export const updateDraftInput = z.object({
    *  (raio/behaviors/grupos/públicos salvos). Também CONVERTE reuse/broad → explicit. Quando presente,
    *  vence os diffs acima. "Voltar ao herdado" usa `audience:"reuse"`/`"broad"`. */
   explicitAudience: explicitAudienceInput.optional(),
+  /** CONJUNTOS do teste multi-conjunto (C2) — SUBSTITUIÇÃO TOTAL (o editor manda a lista completa,
+   *  já resolvida). Cada conjunto tem seu público (explícito OU amplo) + orçamento (ABO). Criativo
+   *  COMPARTILHADO (vem do rascunho). Lista vazia OU 1 = volta a single-conjunto. Quando presente,
+   *  vence os diffs de público singulares acima. */
+  adsets: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+        /** público explícito resolvido do conjunto; ausente = amplo (Advantage+). */
+        explicitAudience: explicitAudienceInput.optional(),
+        /** orçamento diário do conjunto (ABO); ausente = herda o do rascunho / verba na campanha (CBO). */
+        budgetReais: z.number().positive().optional(),
+        /** criativo PRÓPRIO do conjunto (U1 — mesma copy, criativo diferente); resolvido no backend
+         *  (biblioteca/anúncio ao vivo) → CreativeAssetRef. Ausente = usa o compartilhado do rascunho. */
+        creative: setDraftCreativeInput.optional(),
+        /** PRESERVAR o criativo próprio que este conjunto JÁ tinha (round-trip sem perda): índice do
+         *  conjunto na lista ATUAL do rascunho (`spec.adsets`). Como a substituição é TOTAL e o output
+         *  não devolve um id re-enviável do criativo, o editor manda este índice pra o backend copiar o
+         *  `creative` já resolvido do conjunto original (robusto a reordenar/remover — é o índice de
+         *  ORIGEM, não a posição nova). Ignorado quando `creative` (pick novo) está presente. */
+        keepCreativeIndex: z.number().int().min(0).optional(),
+        /** ANÚNCIOS PRÓPRIOS deste conjunto (F2 — override por conjunto): edições por-anúncio (copy +
+         *  criativo) SOBRE os anúncios compartilhados, produzindo o `copyVariants` exclusivo do conjunto.
+         *  Ausente = usa os anúncios COMPARTILHADOS (o default do teste de público). O índice é sobre a
+         *  base (override existente quando `keepCopyVariantsIndex`, senão os compartilhados). */
+        copyEdits: z.array(draftCopyEditInput).optional(),
+        /** PRESERVAR o override de anúncios que este conjunto JÁ tinha (round-trip sem perda): índice de
+         *  ORIGEM em `spec.adsets` (mesma mecânica de `keepCreativeIndex`). Sem `copyEdits` = mantém o
+         *  override intacto; com `copyEdits` = base pras edições. Ausente + sem copyEdits = compartilhados. */
+        keepCopyVariantsIndex: z.number().int().min(0).optional(),
+      }),
+    )
+    .optional(),
 });
 export type UpdateDraftInput = z.infer<typeof updateDraftInput>;
 export const updateDraftOutput = z.object({ ok: z.boolean() });
@@ -247,7 +322,7 @@ export type GeoSearchQuery = z.infer<typeof geoSearchQuery>;
 export const geoSearchResultOutput = z.object({
   key: z.string(),
   name: z.string(),
-  kind: z.enum(["country", "region", "city"]),
+  kind: z.enum(["country", "region", "city", "neighborhood"]),
   countryCode: z.string().nullable(),
 });
 export type GeoSearchResultOutput = z.infer<typeof geoSearchResultOutput>;

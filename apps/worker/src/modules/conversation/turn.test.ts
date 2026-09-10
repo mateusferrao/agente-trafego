@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { agents, type Database } from "@trafego/db";
-import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW, resolveFocusedAgent } from "./turn.js";
+import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW } from "./turn.js";
+import { isDeliberateAccountReference, resolveContextAccountId, resolveExplicitFocus, resolveFocusedAgent } from "./account-focus.js";
 import type { SendToConversation } from "../notify/send-to-contact.js";
 import {
   AGENT_TOOL_NAMES,
@@ -60,7 +61,7 @@ describe("buildInContextAllow (kill-switch da escrita conversacional de ads, v1)
   const writeTools = [...WRITE_TOOL_NAMES, "create_campaign", "copy_campaign", "scale_winner"];
   const configTools = [...CONFIG_CHAT_TOOL_NAMES];
 
-  it("chatAdsWrites OFF (default v1) → NENHUMA tool de escrita/criação/refino entra", () => {
+  it("chatAdsWrites OFF (freio de emergência) → NENHUMA tool de escrita/criação/refino entra", () => {
     const allow = buildInContextAllow({ writeTools, configTools, chatAdsWrites: false });
     // escrita Meta + criação + refino fora
     for (const t of [...writeTools, ...REFINE_TOOL_NAMES]) expect(allow.has(t)).toBe(false);
@@ -134,6 +135,159 @@ describe("resolveFocusedAgent (staleness do foco, S4 — último uso)", () => {
   it("sem foco (focusedAccountId null) → null", async () => {
     const { db } = focusDb({ focusedAccountId: null, focusedAt: null });
     expect(await resolveFocusedAgent(db, "org-1", "cv-1", TTL)).toBeNull();
+  });
+});
+
+describe("resolveContextAccountId (conta INEQUÍVOCA p/ salvar criativo — sole ?? foco fresco, nunca foco velho)", () => {
+  const TTL = 12;
+  const MS_H = 3_600_000;
+  // fake que resolve cada query na ORDEM da chamada (resolveActiveAgents → resolveFocusedAgent).
+  function queueDb(results: unknown[][]): Database {
+    let i = 0;
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      from: () => chain,
+      innerJoin: () => chain,
+      leftJoin: () => chain,
+      where: () => chain,
+      limit: () => chain,
+      orderBy: () => chain,
+      then: (resolve: (v: unknown[]) => unknown) => resolve(results[i++] ?? []),
+      update: () => ({ set: () => ({ where: async () => {} }) }),
+    };
+    return chain as unknown as Database;
+  }
+
+  it("org com 1 conta ativa (sole) → salva nela, sem olhar foco", async () => {
+    const db = queueDb([[{ agentId: "ag", adAccountId: "acc-sole", accountName: "Única" }]]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "", TTL)).toBe("acc-sole");
+  });
+
+  it("multi-conta + foco FRESCO → a conta do foco fresco", async () => {
+    const db = queueDb([
+      [{ adAccountId: "a" }, { adAccountId: "b" }], // resolveActiveAgents: 2 → multi
+      [{ focusedAccountId: "acc-F", focusedAt: new Date() }], // conversa: foco fresco
+      [{ agentId: "ag", adAccountId: "acc-F", accountName: "Focada" }], // agente da conta focada
+    ]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "", TTL)).toBe("acc-F");
+  });
+
+  it("multi-conta + foco VELHO (> TTL) → null (ambíguo: o chamador pergunta, não chuta a conta velha)", async () => {
+    const db = queueDb([
+      [{ adAccountId: "a" }, { adAccountId: "b" }],
+      [{ focusedAccountId: "acc-velha", focusedAt: new Date(Date.now() - 20 * MS_H) }],
+    ]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "", TTL)).toBeNull();
+  });
+
+  it("multi-conta + sem foco → null (pergunta)", async () => {
+    const db = queueDb([
+      [{ adAccountId: "a" }, { adAccountId: "b" }],
+      [{ focusedAccountId: null, focusedAt: null }],
+    ]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "", TTL)).toBeNull();
+  });
+
+  it("multi-conta + sem foco fresco MAS a legenda NOMEIA a conta → resolve a nomeada (3º nível, igual ao turno)", async () => {
+    // fecha o Finding 1: o intake resolve a MESMA conta que o turno (via legenda) → o que salva casa
+    // com o que o Roy confirma; nada de 'guardei' numa conta em que nada foi salvo.
+    const db = queueDb([
+      [{ adAccountId: "a" }, { adAccountId: "b" }], // multi
+      [{ focusedAccountId: null, focusedAt: null }], // sem foco fresco
+      [{ id: "acc-MQ", name: "MyQuick Ads", adAccountId: "act_mq", agentId: "ag-MQ" }], // candidatas
+    ]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "guarda pra MyQuick Ads", TTL)).toBe("acc-MQ");
+  });
+});
+
+describe("resolveExplicitFocus (S6b — foco por menção explícita na mensagem, pré-grafo)", () => {
+  type Cand = { id: string; name: string | null; adAccountId: string; agentId: string | null };
+  function explicitDb(candidates: Cand[]) {
+    const updateSet = vi.fn();
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      from: () => chain,
+      leftJoin: () => chain,
+      where: () => chain,
+      orderBy: () => chain,
+      then: (resolve: (v: unknown[]) => unknown) => resolve(candidates),
+      update: () => ({
+        set: (v: unknown) => {
+          updateSet(v);
+          return { where: async () => {} };
+        },
+      }),
+    };
+    return { db: chain as unknown as Database, updateSet };
+  }
+  const TWO: Cand[] = [
+    { id: "acc-A", name: "Automato", adAccountId: "act_1", agentId: "ag-A" },
+    { id: "acc-B", name: "Loja do João", adAccountId: "act_2", agentId: "ag-B" },
+  ];
+
+  it("nome inequívoco na frase → resolve o agente E persiste o foco", async () => {
+    const { db, updateSet } = explicitDb(TWO);
+    const r = await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a campanha X da conta Automato");
+    expect(r).toEqual({ agentId: "ag-A", adAccountId: "acc-A", accountName: "Automato" });
+    expect(updateSet).toHaveBeenCalledWith({ focusedAccountId: "acc-A", focusedAt: expect.any(Date) });
+  });
+
+  it("dois nomes de conta citados → ambíguo → null (mantém concierge), sem persistir", async () => {
+    const cands: Cand[] = [
+      { id: "acc-A", name: "Automato", adAccountId: "act_1", agentId: "ag-A" },
+      { id: "acc-C", name: "CaquiAI", adAccountId: "act_3", agentId: "ag-C" },
+    ];
+    const { db, updateSet } = explicitDb(cands);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a CaquiAI na conta Automato")).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("nenhuma conta nomeada → null (concierge pergunta a conta)", async () => {
+    const { db, updateSet } = explicitDb(TWO);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a campanha de lead")).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("conta nomeada SEM agente ativo → null (não dá pra operar nela), sem persistir", async () => {
+    const { db, updateSet } = explicitDb([{ id: "acc-A", name: "Automato", adAccountId: "act_1", agentId: null }]);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa algo na conta Automato")).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("org sem contas focáveis → null (sem chamar o match)", async () => {
+    const { db } = explicitDb([]);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a conta Automato")).toBeNull();
+  });
+
+  it("nome curto de palavra COMUM coincidindo com a frase → NÃO foca (defere pro set_focus), sem persistir", async () => {
+    // conta chamada "Vendas" (6 < min) e a frase menciona "vendas" sem se referir à conta.
+    const { db, updateSet } = explicitDb([{ id: "acc-V", name: "Vendas", adAccountId: "act_9", agentId: "ag-V" }]);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "sobe o budget das campanhas de vendas de inverno")).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("nome MULTI-palavra (mesmo com tokens curtos) → foca (sinal forte, contenção de 2+ tokens)", async () => {
+    const { db, updateSet } = explicitDb([{ id: "acc-L", name: "Loja do João", adAccountId: "act_2", agentId: "ag-L" }]);
+    const r = await resolveExplicitFocus(db, "org-1", "cv-1", "pausa a campanha da loja do joão");
+    expect(r).toEqual({ agentId: "ag-L", adAccountId: "acc-L", accountName: "Loja do João" });
+    expect(updateSet).toHaveBeenCalledOnce();
+  });
+});
+
+describe("isDeliberateAccountReference (guarda anti-foco-espúrio, S6b)", () => {
+  const cand = (name: string | null, adAccountId = "act_1") => ({ name, adAccountId });
+  it("id externo no texto → true (referência inequívoca)", () => {
+    expect(isDeliberateAccountReference(cand("Ads", "act_9"), "roda na act_9")).toBe(true);
+  });
+  it("nome multi-palavra → true", () => {
+    expect(isDeliberateAccountReference(cand("BM - Automato"), "algo na bm automato")).toBe(true);
+  });
+  it("nome de palavra única distintivo (≥ min) → true", () => {
+    expect(isDeliberateAccountReference(cand("Automato"), "ativa na conta automato")).toBe(true);
+  });
+  it("nome de palavra única curto/comum → false (defere)", () => {
+    expect(isDeliberateAccountReference(cand("Lead"), "gera lead")).toBe(false);
+    expect(isDeliberateAccountReference(cand("Vendas"), "de vendas")).toBe(false);
   });
 });
 

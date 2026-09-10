@@ -51,4 +51,21 @@ describe("composeSpeakingVoice", () => {
     const analyst = composeAgentVoice(baseInput);
     expect(analyst).not.toContain(BRAND_VOICE_KERNEL);
   });
+
+  it("V2: a voz de FALA NÃO carrega a metodologia do analista (§10: stance é só do analista → desengessa o chat)", () => {
+    const speaking = composeSpeakingVoice({ ...baseInput, persona: "gestor sênior", tone: "consultivo", businessContext: "e-commerce de moda", guidance: "priorize leads" });
+    // a metodologia (prioridade analítica / regras de evidência) fica FORA da fala
+    expect(speaking).not.toContain("Prioridade analítica");
+    expect(speaking).not.toContain("Regras de evidência");
+    // mas identidade + persona/tom + contexto/orientação do dono seguem (valem em toda superfície)
+    expect(speaking).toContain("Você é Roy");
+    expect(speaking).toContain("Persona: gestor sênior");
+    expect(speaking).toContain("Tom da comunicação: consultivo");
+    expect(speaking).toContain("e-commerce de moda");
+    expect(speaking).toContain("priorize leads");
+  });
+
+  it("V2: o analista (composeAgentVoice cru) MANTÉM a metodologia (precisa dela pra priorizar)", () => {
+    expect(composeAgentVoice(baseInput)).toContain("Prioridade analítica");
+  });
 });

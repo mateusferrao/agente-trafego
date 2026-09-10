@@ -125,6 +125,29 @@ export class MetaCreativesService {
   }
 
   /**
+   * URL da imagem de um criativo pelo `image_hash` — `GET /act_<id>/adimages?hashes=["hash"]&
+   * fields=url`. Anúncios de imagem montados com `object_story_spec.link_data.image_hash` NÃO expõem
+   * `creative.image_url` (a Graph devolve o hash, não a URL) — então a miniatura do card/picker caía
+   * em "sem prévia". O hash é a fonte ESTÁVEL. Best-effort: sem match → null (o caller degrada).
+   */
+  async imageUrlByHash(account: AdAccountRef, imageHash: string): Promise<string | null> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const body = await callWithGovernor<{ data?: ReadonlyArray<{ hash?: string; url?: string }> }>(
+      accountId,
+      () =>
+        this.client.request<{ data?: ReadonlyArray<{ hash?: string; url?: string }> }>({
+          method: "GET",
+          path: `${accountId}/adimages`,
+          accessToken: account.accessToken,
+          params: { hashes: JSON.stringify([imageHash]), fields: "hash,url" },
+        }),
+      { governor: this.governor },
+    );
+    const match = body.data?.find((img) => img.hash === imageHash) ?? body.data?.[0];
+    return match?.url ?? null;
+  }
+
+  /**
    * Anexa `posterFrames` (Fatia 6c): imagem = [image_url]; vídeo = N frames HD via
    * 2º Batch (`/{video_id}?fields=thumbnails`). Frames HD (1080p) substituem o selo
    * pequeno do `thumbnail_url`. Degrada pro still único se a busca falhar.

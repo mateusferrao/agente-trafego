@@ -30,14 +30,13 @@ import type {
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
-import { and, desc, eq } from "drizzle-orm";
-import { campaignDrafts } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import type { WorkerDeps } from "../composition.js";
 import { createAnalysisRepo } from "../modules/analysis/repo.js";
-import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
+import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
-import { setCreativeOffer } from "../modules/conversation/creative-offer.js";
+import { stageCreativeOffer } from "../modules/conversation/creative-offer.js";
+import { resolveContextAccountId } from "../modules/conversation/account-focus.js";
 
 /** Mensagens de cortesia do intake — sempre o que aconteceu + próximo passo (§13 UX). */
 const NOTICE = {
@@ -74,7 +73,14 @@ const EXT_BY_TYPE: Readonly<Record<string, string>> = {
 /** Deps enxutas do intake → testável sem BullMQ. */
 export interface MediaIntakeDeps {
   readonly db: Database;
-  readonly repo: Pick<NotifyRepo, "contextAdAccountId">;
+  /**
+   * Resolve a conta INEQUÍVOCA do fio p/ salvar o criativo — MESMA régua de 3 níveis do turno
+   * (`resolveContextAccountId`: sole ?? foco FRESCO no TTL ?? conta NOMEADA na legenda), NUNCA o
+   * foco cru/velho. As duas superfícies (turno responde × intake salva) resolvem a MESMA conta →
+   * o Roy nunca confirma um "guardei" numa conta em que nada foi salvo. Null = ambíguo → o intake
+   * PERGUNTA a conta em vez de chutar. `caption` = a legenda da mídia (p/ o 3º nível).
+   */
+  readonly resolveSaveAccount: (orgId: string, conversationId: string, caption: string) => Promise<string | null>;
   readonly analysisRepo: Pick<ReturnType<typeof createAnalysisRepo>, "loadAccount">;
   readonly ports: {
     readonly ads: Pick<AdsPlatformPort, "uploadImage" | "uploadVideo">;
@@ -95,24 +101,6 @@ export interface MediaIntakeDeps {
   readonly logger: Pick<Logger, "debug" | "warn">;
 }
 
-/** Rascunho from_scratch ainda aberto da conta → o intake oferece USAR o criativo nele. */
-async function pendingFromScratchDraftId(db: Database, orgId: string, adAccountId: string): Promise<string | null> {
-  const [row] = await db
-    .select({ id: campaignDrafts.id })
-    .from(campaignDrafts)
-    .where(
-      and(
-        eq(campaignDrafts.orgId, orgId),
-        eq(campaignDrafts.adAccountId, adAccountId),
-        eq(campaignDrafts.status, "proposed"),
-        eq(campaignDrafts.kind, "from_scratch"),
-      ),
-    )
-    .orderBy(desc(campaignDrafts.createdAt))
-    .limit(1);
-  return row?.id ?? null;
-}
-
 /**
  * Processa uma imagem recebida: grava, sobe pra Meta, registra o asset e confirma.
  * Puro de BullMQ (deps injetadas). Erros de IO (fetch/upload) sobem → BullMQ re-tenta;
@@ -121,18 +109,23 @@ async function pendingFromScratchDraftId(db: Database, orgId: string, adAccountI
 export function makeMediaIntake(d: MediaIntakeDeps) {
   return async function intake(payload: WhatsappMediaIntakePayload, notifyOnFailure = true): Promise<void> {
     const { orgId, conversationId, ref, instanceId, mediaType, media } = payload;
+    // B3: imagem com legenda → o turno do Grafo B responde; o intake salva em SILÊNCIO (sem
+    // cortesia/oferta próprias) pra não duplicar a resposta. As respostas passam por `notify`.
+    const notify: SendToConversation = payload.suppressNotice ? async () => true : d.sendToConversation;
 
-    // 1) conta em foco (única ativa OU foco da conversa). Ambíguo → pede antes de subir.
-    const adAccountUuid = await d.repo.contextAdAccountId(orgId, conversationId);
+    // 1) conta INEQUÍVOCA do fio (única ativa OU foco FRESCO dentro do TTL) — MESMA régua do turno,
+    // nunca o foco cru/velho. Ambíguo (foco expirado / nada em contexto) → PERGUNTA antes de subir
+    // (não chuta a conta: em grupo multi-conta o foco velho de outra conta salvava no lugar errado).
+    const adAccountUuid = await d.resolveSaveAccount(orgId, conversationId, media.caption ?? "");
     if (!adAccountUuid) {
-      await d.sendToConversation(ref, NOTICE.noAccount, { split: true, quoteLastInbound: true });
+      await notify(ref, NOTICE.noAccount, { split: true, quoteLastInbound: true });
       d.logger.debug({ conversationId }, "intake:no_focused_account");
       return;
     }
 
     const account = await d.analysisRepo.loadAccount(orgId, adAccountUuid);
     if (!account) {
-      await d.sendToConversation(ref, NOTICE.accountUnavailable, { split: true });
+      await notify(ref, NOTICE.accountUnavailable, { split: true });
       d.logger.warn({ conversationId, adAccountUuid }, "intake:account_unavailable");
       return;
     }
@@ -141,7 +134,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     // fazer HTTP HEAD: a Evolution só entrega mídia por base64, nunca por URL). Grande demais →
     // recusa SEM baixar/decodificar (evita materializar base64 gigante em memória à toa).
     if (mediaType === "video" && media.fileLength !== undefined && media.fileLength > d.maxWhatsappVideoBytes) {
-      await d.sendToConversation(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
+      await notify(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
       d.logger.warn({ conversationId, fileLength: media.fileLength }, "intake:video_too_large_metadata");
       return;
     }
@@ -152,7 +145,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     const base64 =
       inline.length > 0 ? inline : (await d.ports.messaging.fetchMediaBase64({ instanceId }, media.messageKey)) ?? "";
     if (base64.length === 0) {
-      await d.sendToConversation(ref, NOTICE.noBytes, { split: true, quoteLastInbound: true });
+      await notify(ref, NOTICE.noBytes, { split: true, quoteLastInbound: true });
       d.logger.warn({ conversationId }, "intake:no_bytes");
       return;
     }
@@ -161,7 +154,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     // vídeo: teto de tamanho PÓS-decode (fallback quando `fileLength` não veio na metadata) —
     // teto de memória do worker. Grande demais → manda pro upload web.
     if (mediaType === "video" && bytes.byteLength > d.maxWhatsappVideoBytes) {
-      await d.sendToConversation(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
+      await notify(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
       d.logger.warn({ conversationId, bytes: bytes.byteLength }, "intake:video_too_large");
       return;
     }
@@ -173,16 +166,37 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       const accountRef: AdAccountRef = { adAccountId: account.metaAdAccountId, accessToken };
       const ext = EXT_BY_TYPE[media.mimetype] ?? (mediaType === "video" ? "mp4" : "jpg");
       const filename = media.caption ? `${media.caption}.${ext}` : `whatsapp-${Date.now()}.${ext}`;
-      const ingestInput = { orgId, adAccountId: adAccountUuid, ref: accountRef, bytes, contentType: media.mimetype, filename };
+      const ingestInput = {
+        orgId,
+        adAccountId: adAccountUuid,
+        ref: accountRef,
+        bytes,
+        contentType: media.mimetype,
+        filename,
+        // Slice 3 (memória do criativo): liga o asset à conversa + mensagem (recência/reply).
+        conversationId,
+        ...(media.messageKey?.id ? { sourceMessageId: media.messageKey.id } : {}),
+      };
 
       if (mediaType === "video") {
         const v = await ingestCreativeVideo({ db: d.db, storage: d.ports.storage, ads: d.ports.ads }, ingestInput);
         if (v.status === "pending") {
+          // B1: escrita ligada → o poll oferece "usar/criar" ao flipar `ready` (vídeo nasce pending,
+          // então a oferta não pode sair agora como na imagem). OFF → sem oferta (só a biblioteca).
+          // suppressNotice (vídeo-pergunta) → SEM oferta tardia: a análise é a voz (não empurra
+          // "usar/criar" depois do ack + resposta — senão vira toque duplo fora de contexto).
           await d.ports.scheduler.enqueue(
-            buildCreativeVideoPollJob({ orgId, adAccountId: adAccountUuid, assetId: v.assetId, metaVideoId: v.metaVideoId, attempt: 1 }),
+            buildCreativeVideoPollJob({
+              orgId,
+              adAccountId: adAccountUuid,
+              assetId: v.assetId,
+              metaVideoId: v.metaVideoId,
+              attempt: 1,
+              ...(d.chatAdsWrites && !payload.suppressNotice ? { offer: { ref, conversationId } } : {}),
+            }),
           );
         }
-        await d.sendToConversation(ref, NOTICE.videoSaved(account.name), { split: true, quoteLastInbound: true });
+        await notify(ref, NOTICE.videoSaved(account.name), { split: true, quoteLastInbound: true });
         d.logger.debug({ conversationId, metaVideoId: v.metaVideoId }, "intake:video_saved");
         return;
       }
@@ -193,17 +207,25 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       );
       // imagem `ready` → analisa a visão 1x (cache) pra biblioteca (mesmo pipeline do web).
       await d.ports.scheduler.enqueue(buildCreativeAnalyzeJob({ orgId, adAccountId: adAccountUuid, assetId }));
+      // B3: imagem COM legenda → o turno já respondeu (com a imagem anexada). Salvou em silêncio;
+      // não manda cortesia/oferta próprias (o turno é a voz). Analisada + guardada mesmo assim.
+      if (payload.suppressNotice) {
+        d.logger.debug({ conversationId, metaImageHash }, "intake:saved (suppressed — turno responde)");
+        return;
+      }
       // v1 (kill-switch): usar o criativo enviado = autoria/edição por chat. OFF → salva na
       // biblioteca e NÃO guarda oferta (o uso num rascunho é na plataforma). ON → fecha o loop
       // (Slice 7): guarda uma OFERTA pro próximo turno resolver no "sim". (Vídeo = fast-follow.)
       if (!d.chatAdsWrites) {
-        await d.sendToConversation(ref, NOTICE.savedLibraryOnly(account.name), { split: true, quoteLastInbound: true });
+        await notify(ref, NOTICE.savedLibraryOnly(account.name), { split: true, quoteLastInbound: true });
         d.logger.debug({ conversationId, metaImageHash }, "intake:saved (writes off — sem oferta)");
         return;
       }
-      const draftId = await pendingFromScratchDraftId(d.db, orgId, adAccountUuid);
-      await setCreativeOffer(d.redis, conversationId, { assetId, ...(draftId ? { draftId } : {}) });
-      await d.sendToConversation(ref, draftId ? NOTICE.savedOfferUse() : NOTICE.savedOfferCreate(account.name), {
+      const { draftId } = await stageCreativeOffer(
+        { db: d.db, redis: d.redis },
+        { orgId, adAccountId: adAccountUuid, assetId, conversationId },
+      );
+      await notify(ref, draftId ? NOTICE.savedOfferUse() : NOTICE.savedOfferCreate(account.name), {
         split: true,
         quoteLastInbound: true,
       });
@@ -212,7 +234,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       // Falha de IO: RE-LANÇA → BullMQ re-tenta com backoff (upload/storage transitórios). O
       // aviso de cortesia só sai na ÚLTIMA tentativa (`notifyOnFailure`) — senão o usuário
       // receberia "problema pra guardar" a cada retry (até 3×).
-      if (notifyOnFailure) await d.sendToConversation(ref, NOTICE.failed, { split: true }).catch(() => undefined);
+      if (notifyOnFailure) await notify(ref, NOTICE.failed, { split: true }).catch(() => undefined);
       throw err;
     }
   };
@@ -224,7 +246,11 @@ export function startWhatsappMediaIntakeWorker(deps: WorkerDeps, connection: Red
   const repo = createNotifyRepo(db);
   const intake = makeMediaIntake({
     db,
-    repo,
+    // MESMA régua do turno p/ resolver a conta INEQUÍVOCA (sole ?? foco fresco no TTL ?? conta
+    // nomeada na legenda) — fonte única em account-focus. Nunca o foco cru/velho: ambíguo → o
+    // intake pergunta a conta (não chuta), e o que ele salva casa com o que o turno confirma.
+    resolveSaveAccount: (orgId, conversationId, caption) =>
+      resolveContextAccountId(db, orgId, conversationId, caption, deps.conversation.focusTtlHours),
     analysisRepo: createAnalysisRepo(db),
     ports: { ads: ports.ads, messaging: ports.messaging, vault: ports.vault, storage: ports.storage, scheduler: ports.scheduler },
     maxWhatsappVideoBytes: deps.creative.maxWhatsappVideoBytes,

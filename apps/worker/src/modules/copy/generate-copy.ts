@@ -5,6 +5,7 @@
 
 import { AI_JARGON_BLOCKLIST } from "@trafego/core";
 import { CTA_TYPES, type ConversionGoal, type CopyVariant } from "@trafego/shared";
+import { CIALDINI_TRIGGERS } from "../vision/resolver.js";
 import type { LLMProviderPort } from "@trafego/shared/ports";
 import { LLMProviderError } from "@trafego/shared/ports";
 
@@ -42,6 +43,12 @@ export interface GenerateCopyInput {
   readonly guidance?: string | null;
   /** copy do vencedor (aterramento) — texto/título de anúncios que já performam. */
   readonly winnerCopy?: ReadonlyArray<{ readonly primaryText?: string; readonly headline?: string }>;
+  /** decomposição de visão do criativo LÍDER (gancho/ângulo/prova) — a copy deve CONVERSAR com o
+   *  criativo que vai acompanhá-la, não escrever às cegas. Ausente → degrada (sem o bloco). */
+  readonly creativeDescription?: string | null;
+  /** público resolvido (geo/idade/gênero) pra quem a copy fala — ex: "Belo Horizonte, 45+ anos,
+   *  mulheres". Ausente → degrada (público amplo, sem o bloco). */
+  readonly audience?: string | null;
 }
 
 export interface GenerateCopyMeta {
@@ -67,14 +74,24 @@ function systemPrompt(): string {
     // audiência = cliente final; não é a voz do Roy, mas o anti-jargão-de-IA vale igual.
     `Nunca use jargão de IA nem clichê de marketing vazio (ex: ${AI_JARGON_BLOCKLIST.join(", ")}).`,
     "Cada variação: texto principal curto, título objetivo, descrição opcional e um CTA.",
-    "As variações compartilham a mesma mídia — varie o ângulo da copy, não a oferta.",
+    "As variações compartilham a mesma mídia — varie o ÂNGULO da copy, não a oferta.",
+    // método (squad): estrutura + gatilhos de persuasão, sem virar clichê nem forçar todos.
+    "MÉTODO: comece com um gancho que prende na 1ª linha; deixe o benefício/ângulo claro; ancore em",
+    "PROVA (dado, resultado, credencial) quando houver; feche com um CTA alinhado ao objetivo.",
+    `Use os gatilhos de persuasão que fizerem sentido (não force todos): ${CIALDINI_TRIGGERS}.`,
   ].join(" ");
 }
 
 function userPrompt(input: GenerateCopyInput): string {
   const parts: string[] = [`Objetivo de negócio: ${input.goal}.`, `Gere ${input.variantsCount} variações.`];
+  if (input.audience) parts.push(`Para quem (público): ${input.audience} — fale a língua desse público.`);
   if (input.businessContext) parts.push(`Contexto do negócio: ${input.businessContext}`);
   if (input.guidance) parts.push(`Orientações: ${input.guidance}`);
+  if (input.creativeDescription) {
+    parts.push(
+      `O criativo que ACOMPANHA a copy (escreva conversando com ele — mesmo gancho/ângulo/prova, sem contradizer a imagem): ${input.creativeDescription}`,
+    );
+  }
   if (input.winnerCopy && input.winnerCopy.length > 0) {
     const sample = input.winnerCopy
       .slice(0, 3)

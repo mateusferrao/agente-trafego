@@ -16,20 +16,38 @@ import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo, loadDailyToolContext } from "../analysis/repo.js";
 import { loadEnabledTools, enabledActionTypes } from "../tools/enabled.js";
 
+/** Tipo do orçamento da entidade: diário (por dia) ou vitalício (total do período). */
+export type BudgetPeriodKind = "daily" | "lifetime";
+
+/**
+ * Compatibilidade de tipo de orçamento entre as duas pernas de uma realocação. Mover "X/dia" de um
+ * diário pra um vitalício (ou vice-versa) não é coerente (um é por dia, o outro é o total) →
+ * incompatível. Mesmo tipo → devolve o rótulo de período pro eco. PURA (testável sem IO).
+ */
+export function reallocKindPeriod(
+  fromKind: BudgetPeriodKind,
+  toKind: BudgetPeriodKind,
+): { readonly ok: true; readonly period: string } | { readonly ok: false } {
+  if (fromKind !== toKind) return { ok: false };
+  return { ok: true, period: fromKind === "lifetime" ? " no total" : "/dia" };
+}
+
 export interface WriteContext {
   readonly account: AdAccountRef;
   /** moeda da conta (ISO) — formata o budget no eco de escrita. */
   readonly currency: string;
   readonly cfg: GuardrailConfig;
   readonly ctx: GuardrailContext;
+  /** tipo do orçamento (diário/vitalício) por entidade — rotula o eco (não confunde /dia com total). */
+  readonly budgetKindByEntity: Map<string, BudgetPeriodKind>;
 }
 
-/** Budget do estado (daily preferido) em unidade mínima, ou null se o nível não tem. */
-function budgetAmountOf(state: Record<string, unknown>): number | null {
+/** Budget do estado (daily preferido) em unidade mínima + o TIPO, ou null se o nível não tem. */
+function budgetAmountOf(state: Record<string, unknown>): { amountMinor: number; kind: BudgetPeriodKind } | null {
   const daily = Number(state["daily_budget"]);
-  if (Number.isFinite(daily) && daily > 0) return daily;
+  if (Number.isFinite(daily) && daily > 0) return { amountMinor: daily, kind: "daily" };
   const lifetime = Number(state["lifetime_budget"]);
-  if (Number.isFinite(lifetime) && lifetime > 0) return lifetime;
+  if (Number.isFinite(lifetime) && lifetime > 0) return { amountMinor: lifetime, kind: "lifetime" };
   return null;
 }
 
@@ -72,6 +90,7 @@ export async function loadWriteContext(
   const statusByEntity = new Map<string, EntityStatus>();
   const budgetByEntity = new Map<string, boolean>();
   const budgetAmountByEntity = new Map<string, number>();
+  const budgetKindByEntity = new Map<string, BudgetPeriodKind>();
   // 1 leitura fresca por alvo distinto (chat = baixo volume; interativo).
   const seen = new Set<string>();
   for (const target of targets) {
@@ -81,9 +100,12 @@ export async function loadWriteContext(
     try {
       const fresh = await ports.ads.readEntityState(ref, target.id);
       statusByEntity.set(key, mapStatus(fresh["effective_status"] as string | undefined, fresh["status"] as string | undefined));
-      const amount = budgetAmountOf(fresh);
-      budgetByEntity.set(key, amount !== null);
-      if (amount !== null) budgetAmountByEntity.set(key, amount);
+      const budget = budgetAmountOf(fresh);
+      budgetByEntity.set(key, budget !== null);
+      if (budget !== null) {
+        budgetAmountByEntity.set(key, budget.amountMinor);
+        budgetKindByEntity.set(key, budget.kind);
+      }
     } catch (err) {
       logger.warn({ agentId, entityId: target.id, err }, "chat-write:leitura fresca falhou");
     }
@@ -93,6 +115,7 @@ export async function loadWriteContext(
     account: ref,
     currency: account.currency ?? DEFAULT_CURRENCY,
     cfg,
+    budgetKindByEntity,
     ctx: {
       touchedToday: daily.touchedToday,
       budgetChangedToday: daily.budgetChangedToday,

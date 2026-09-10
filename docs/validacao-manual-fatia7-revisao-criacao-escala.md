@@ -81,6 +81,33 @@ Legenda: 🟢 caminho feliz · 🔴 caminho triste (estresse).
 - 🟢 "escala o vencedor" cujo budget novo passa do teto de gasto novo → o eco mostra "(você pediu R$X, mas seu teto é R$Y)". No site (card de duplicata) → "(você pediu X — cortei pro seu teto)".
 - 🔴 Sem clamp (dentro do teto) → sem a nota.
 
+## Slice 6 — copiar campanha de CONVERSAS (CTWA) preserva a Página (bug prod 2026-09-10)
+
+- 🟢 **Precisa de token real (BM Automato).** Numa conta com uma campanha de **conversas** (destino WhatsApp) ativa: "@Roy duplica a campanha X". Aprove. **Esperado:** o conjunto é criado COM a Página de destino (`promoted_object.page_id`) — **sem** a recusa "A Página é necessária no objeto promovido para o tipo de destino do WhatsApp". Antes: falhava determinístico + deixava campanha órfã.
+- 🟢 **Unit (sem token):** `readCampaignStructure` de fonte messaging captura `structure.pageId` (`campaign-structure.test.ts`); conversão com pixel → `pixelId`, sem `pageId` (OFFSITE não exige Página). `resolveAdSetConversion("messaging_started", {pageId})` → `promoted_object.page_id` (`meta-conversion-map.test.ts`).
+- 🟢 **Guard honesto (`copyRequiresDestinationPage`, escopado a CONVERSAS):** cópia de conversas com a Página não lida → o Roy BLOQUEIA com o próximo passo ("não consegui ler a Página de destino… tenta de novo, ou crie pela análise/site") em vez de tentar e deixar órfã. Vendas/conversão-com-pixel → não exige Página; lead-sem-pixel já é barrado antes pelo pré-check de pixel (G1).
+- 🔴 Copiar campanha de **vendas com pixel** → segue por `pixelId`/OFFSITE, sem exigir Página (sem regressão).
+
+## Slice 7 — cópia ciente do mecanismo + picker de pixel + público herdado nomeado (Blocos A/B/C, 2026-09-10)
+
+### Bloco A — lead-form na cópia
+- 🟢 **Token real:** copiar uma campanha de **formulário de lead** (objetivo lead, sem pixel, com Página) → **cria sem** "esse objetivo precisa do pixel" (o formulário vem pelo reuso do `creative_id`). Antes a trava de pixel barrava.
+- 🟢 **Unit:** `promotedObjectGap` (matriz em `refine.test.ts`) — conversas→page; lead reuse+page→ok; lead reuse sem page→"page"; lead do-zero sem pixel→"pixel"; venda sem pixel→"pixel"; app→null.
+- 🔴 Criar do zero um objetivo de **lead sem pixel** → segue **barrando honesto** (não geramos formulário do zero — fast-follow).
+
+### Bloco B — picker de pixel
+- 🟢 Conta com >1 pixel, criar sem dizer o pixel → o eco **NOMEIA o inferido** ("rastreando pelo pixel *X* — você tem outros; me diz se quer trocar"). Conta com 1 pixel → sem essa linha.
+- 🟢 "@Roy cria uma campanha de vendas usando o pixel da Loja Nova" → resolve e o eco confirma "Pixel escolhido: *Loja Nova*".
+- 🔴 Nome ambíguo/inexistente ("usa o pixel X" que não bate) → o Roy **LISTA os pixels e pergunta** (nunca chuta). Conta com 1 pixel → usa ele sozinho.
+- 🟢 `list_pixels` responde os pixels da conta; num rascunho `from_scratch` pendente, "troca o pixel pra Loja Antiga" (`adjust_draft setPixel`) resolve. Escala/duplicata → bloqueia honesto (pixel herdado).
+- 🟢 **Unit (sem token):** `matchPixelsByQuery`/`pixelChoiceLabel`/`cleanPixelQuery` (`draft-proposal.test.ts`); adapter `listPixels` mapeia `{id,name}` + degrada vazio (`creation.test.ts`).
+
+### Bloco C — público herdado nomeado + gênero + propor por contexto
+- 🟢 Rascunho que herda o público ("herda o vencedor"): "@Roy qual público exatamente?" (`get_pending_draft`) → **NOMEIA** cidades/idade/gênero/interesses/salvos, não o genérico "a mesma segmentação que está rodando".
+- 🟢 **Token real:** copiar/herdar de um conjunto **só de mulheres** → o novo conjunto **continua de mulheres** (`genders:[2]` reemitido), e o Roy **diz o gênero**. Antes virava "todos".
+- 🟢 Criar sem dizer o público → o Roy **PROPÕE por contexto** (prospecção: interesses+geo do nicho; remarketing: salvos reais + excluir compradores), **NOMEIA + diz por quê + oferece trocar**; só herda (nomeado) como fallback, nunca "amplo" às cegas.
+- 🟢 **Unit:** `describeResolvedSnapshot` nomeia tudo (`draft-proposal.test.ts`); `audienceFromTargeting`/`buildResolvedSnapshot`/`snapshotToRawTargeting` round-trip de gênero ([1,2]/ausente = todos; só-um restringe) (`meta-audience-map.test.ts`, `creation.test.ts`).
+
 ---
 
 ## Roteiro E2E docker (resumo executável)

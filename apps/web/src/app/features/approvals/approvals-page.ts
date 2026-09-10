@@ -80,16 +80,37 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                       </span>
                       <dl class="grid grid-cols-1 gap-1 text-sm text-ink sm:grid-cols-2">
                         <div><dt class="inline text-muted">{{ d.approvalKind === 'activation' ? 'Gasto' : 'Gasto novo' }}: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd>@if (d.clampedFromMajor; as req) {<dd class="inline text-xs text-muted"> (você pediu {{ money(req, d.currency) }} — cortei pro seu teto)</dd>}</div>
+                        @if (d.budgetMode; as bm) { <div><dt class="inline text-muted">Orçamento: </dt><dd class="inline">{{ budgetModeLabel(bm) }}</dd></div> }
                         <div><dt class="inline text-muted">Status: </dt><dd class="inline">{{ activationStatusText(d) }}</dd></div>
                         @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">conectada</dd></div> }
                         @if (d.pixelId) { <div><dt class="inline text-muted">Rastreamento: </dt><dd class="inline">pixel conectado</dd></div> }
                         @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ objectiveLabel(d.objective) }}</dd></div> }
                         @if (d.sourceLevel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
                       </dl>
-                      @if (d.audience; as aud) {
+                      @if (!d.adsets?.length && d.audience; as aud) {
                         <div class="text-sm text-ink">
                           <span class="text-muted">Público: </span>{{ aud === 'reuse' ? 'herda o que já converte' : 'a Meta escolhe (mais amplo)' }}
                         </div>
+                      }
+                      <!-- C2: teste multi-conjunto — lista os N conjuntos (nome + público + orçamento). -->
+                      @if (d.adsets?.length) {
+                        <div class="text-sm text-ink">
+                          <span class="text-muted">Conjuntos ({{ d.adsets!.length }}): </span>
+                          <ul class="mt-1 flex flex-col gap-1">
+                            @for (aset of d.adsets!; track $index) {
+                              <li class="rounded-md border border-line bg-panel px-2 py-1">
+                                <span class="font-semibold text-ink">{{ aset.name || ('Conjunto ' + ($index + 1)) }}</span>
+                                <span class="text-muted"> · {{ adsetAudienceSummary(aset) }}</span>
+                                @if (aset.dailyBudgetMajor != null) { <span class="text-muted"> · {{ money(aset.dailyBudgetMajor, d.currency) }}/dia</span> }
+                                <span class="text-muted"> · {{ aset.copyVariants?.length ? (aset.copyVariants!.length + (aset.copyVariants!.length === 1 ? ' anúncio próprio' : ' anúncios próprios')) : 'anúncios compartilhados' }}</span>
+                              </li>
+                            }
+                          </ul>
+                        </div>
+                      }
+                      <!-- C3: aviso honesto de Advantage também no site (não perder na aprovação via site). -->
+                      @if (d.advantageCreative) {
+                        <app-ui-callout tone="warning">Advantage ligado: a Meta pode expandir o público e ajustar automaticamente a imagem/o texto do anúncio, então o criativo entregue pode sair um pouco diferente do que você aprovou.</app-ui-callout>
                       }
                       @if (d.copyVariants && d.copyVariants.length > 0) {
                         <ul class="flex flex-col gap-2">
@@ -381,6 +402,17 @@ export class ApprovalsPage implements OnInit {
     return lvl ? `o ${lvl} vencedor` : 'o vencedor';
   };
   protected objectiveLabel = (o: string | null): string => (o ? conversionLabel(o) : '');
+  /** Rótulo de negócio do modo de orçamento (C1) — nunca a sigla CBO/ABO crua (§13). */
+  protected budgetModeLabel = (bm: 'cbo' | 'abo'): string =>
+    bm === 'cbo' ? 'único na campanha (a Meta distribui entre os conjuntos)' : 'por conjunto';
+  /** Resumo do público de um conjunto (C2) — reuse/amplo/explícito, sem jargão. */
+  protected adsetAudienceSummary = (aset: NonNullable<DraftApprovalOutput['adsets']>[number]): string => {
+    if (aset.explicitAudience) {
+      const geo = aset.explicitAudience.geo.map((g) => g.name);
+      return geo.length > 0 ? `público em ${geo.slice(0, 3).join(', ')}${geo.length > 3 ? '…' : ''}` : 'público personalizado';
+    }
+    return aset.audience === 'reuse' ? 'herda o que já converte' : 'a Meta escolhe (mais amplo)';
+  };
   protected money = money;
   protected currencySymbol = currencySymbol;
 

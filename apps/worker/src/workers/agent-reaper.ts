@@ -7,6 +7,7 @@ import type { Redis } from "ioredis";
 import { AGENT_REAPER_QUEUE, type AgentReaperTickPayload } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 import { createRunReaper } from "../modules/dispatch/run-reaper.js";
+import { reapStaleCreatingDrafts } from "../modules/apply/draft-reaper.js";
 import { reapStalePendingVideos } from "./creative-video-poll.js";
 
 export function startAgentReaperWorker(
@@ -28,7 +29,12 @@ export function startAgentReaperWorker(
         deps.logger.warn({ err: String(err) }, "reaper:video sweep falhou");
         return 0;
       });
-      deps.logger.debug({ count, videos }, "reaper:tick");
+      // piggyback: reaper de rascunho de criação preso em `creating` (crash no meio da saga) — G7.
+      const drafts = await reapStaleCreatingDrafts(deps.db, deps.logger, deps.reaper.staleMinutes).catch((err: unknown) => {
+        deps.logger.warn({ err: String(err) }, "reaper:draft sweep falhou");
+        return 0;
+      });
+      deps.logger.debug({ count, videos, drafts }, "reaper:tick");
     },
     { connection },
   );

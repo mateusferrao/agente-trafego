@@ -2,6 +2,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   ALERTABLE_ACCOUNT_HEALTH_STATUSES,
+  BUDGET_MODES,
   CONVERSION_GOALS,
   CREATIVE_FORMATS,
   CREATIVE_SOURCE_MODES,
@@ -135,7 +136,7 @@ export const targetingSpecSchema = z.discriminatedUnion("kind", [
     kind: z.literal("explicit"),
     geo: z.array(
       geoRefSchema.extend({
-        kind: z.enum(["country", "region", "city"]),
+        kind: z.enum(["country", "region", "city", "neighborhood"]),
         radius: z.number().positive().optional(),
         distanceUnit: z.enum(["mile", "kilometer"]).optional(),
       }),
@@ -151,15 +152,39 @@ export const targetingSpecSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+// Conjunto de anúncios de um teste multi-conjunto (C2, `1-N-M`). Cada conjunto tem seu PÚBLICO
+// (targeting) e, no ABO, seu orçamento diário. O CRIATIVO é COMPARTILHADO (o teste isola só o
+// público) — vem de `spec.creative`/`copyVariants`, não repetido por conjunto. `copyVariants`
+// aqui é override raro por-conjunto (default = os do spec). Ausência de `adsets` OU 1 conjunto =
+// comportamento single-conjunto pré-C2 (retrocompat).
+export const adsetSpecSchema = z.object({
+  name: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  targeting: targetingSpecSchema.optional(),
+  dailyBudgetMinor: z.number().int().positive().optional(),
+  creative: creativeAssetRefSchema.optional(),
+  copyVariants: z.array(copyVariantSchema).optional(),
+});
+
 export const campaignDraftSpecSchema = z.object({
   version: z.literal(1),
   currency: z.string().min(1),
   dailyBudgetMinor: z.number().int().positive(),
   requestedDailyBudgetMinor: z.number().int().positive().optional(),
   activation: z.enum(["active", "paused"]),
+  // Onde mora a verba (C1): "cbo" = orçamento único na campanha; "abo" = por conjunto. Opcional
+  // p/ read-back seguro + retrocompat (ausência = ABO, o comportamento do from_scratch antes do C1).
+  budgetMode: z.enum(BUDGET_MODES).optional(),
+  // Advantage+ (C3): expansão de público × melhorias de criativo. Opcionais (ausência = fixo/off,
+  // comportamento pré-C3); só aplicam sob eco+confirma. Ver CampaignDraftSpec.
+  advantageAudience: z.boolean().optional(),
+  advantageCreative: z.boolean().optional(),
   // ─── só `from_scratch` (opcionais p/ read-back seguro) ───
   objective: conversionGoalSchema.optional(),
   targeting: targetingSpecSchema.optional(),
+  // Multi-conjunto (C2, teste de público `1-N-M`): N conjuntos, cada um com seu público. Ausência
+  // ou 1 = single-conjunto (usa `targeting`/`copyVariants` acima; retrocompat total). Criativo
+  // compartilhado entre os conjuntos.
+  adsets: z.array(adsetSpecSchema).optional(),
   variantsCount: z.number().int().positive().optional(),
   copyVariants: z.array(copyVariantSchema).optional(),
   creative: creativeAssetRefSchema.optional(),
@@ -280,6 +305,11 @@ export const notifyPolicySchema = z.object({
   // Saúde da conta Meta — ver schema acima. Default ON em TODOS os arquétipos (mais
   // urgente que reativação: isso aqui é dinheiro parado, não uma boa notícia opcional).
   accountHealthAlert: accountHealthAlertSchema.optional(),
+  // Próximo passo proativo (S1): fecha o push da análise com 1-2 linhas de movimento de
+  // CRESCIMENTO (escalar/testar público/preparar criativo), distinto das recs corretivas.
+  // Default ON (baixo volume — só quando há um movimento claro). Opcional (ausência = ON)
+  // p/ compat com policies gravadas antes do campo — mesmo padrão de `learning`.
+  nextStep: z.object({ enabled: z.boolean() }).optional(),
 });
 export type NotifyPolicy = z.infer<typeof notifyPolicySchema>;
 
@@ -296,6 +326,7 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
     spendThreshold: { source: "meta_cap" },
     balanceThreshold: { enabled: false },
   },
+  nextStep: { enabled: true },
 };
 
 // ─── Referência de mercado configurável (pivô — currency-aware) ───────────

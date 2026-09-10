@@ -113,3 +113,74 @@ describe("MetaWhatsappDestinationService.resolve", () => {
     expect(await makeService().resolve(account, "CMP1")).toEqual({ number: null, source: "none" });
   });
 });
+
+/** Roteia o fetch por alvo: (a) leitura direta do nó da Página (`/{pageId}?fields=name,whatsapp_number`)
+ *  e (b) páginas do NEGÓCIO da conta (`/act_{id}?fields=business{owned_pages,client_pages}`). "fail" = 403. */
+function stubPagesGraph(opts: {
+  direct?: { name?: string; whatsapp_number?: string } | "fail";
+  business?: { owned?: Array<{ id?: string; name?: string }>; client?: Array<{ id?: string; name?: string }> } | "fail";
+}): void {
+  const fail = () => new Response(JSON.stringify({ error: { message: "no permission" } }), { status: 403, headers: { "content-type": "application/json" } });
+  const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("business")) {
+        if (opts.business === "fail") return fail();
+        const b = opts.business ?? {};
+        return ok({ business: { owned_pages: { data: b.owned ?? [] }, client_pages: { data: b.client ?? [] } } });
+      }
+      // leitura direta do nó da Página
+      if (opts.direct === undefined || opts.direct === "fail") return fail();
+      return ok(opts.direct);
+    }),
+  );
+}
+
+describe("MetaWhatsappDestinationService.pageInfo (destino no rascunho)", () => {
+  it("nó direto tem nome + número → usa o nó (não precisa do negócio)", async () => {
+    stubPagesGraph({ direct: { name: "CaquiAI Oficial", whatsapp_number: "+55 (31) 3333-4444" } });
+    expect(await makeService().pageInfo(account, "P1")).toEqual({ pageId: "P1", name: "CaquiAI Oficial", whatsappNumber: "553133334444" });
+  });
+
+  it("nó direto 403 → NOME vem das páginas do NEGÓCIO (fallback confiável, item 1)", async () => {
+    stubPagesGraph({ direct: "fail", business: { owned: [{ id: "P1", name: "CaquiAI Oficial" }] } });
+    expect(await makeService().pageInfo(account, "P1")).toEqual({ pageId: "P1", name: "CaquiAI Oficial" });
+  });
+
+  it("nó direto tem número mas SEM nome → mantém o número e pega o nome no negócio", async () => {
+    stubPagesGraph({ direct: { whatsapp_number: "+553133334444" }, business: { client: [{ id: "P1", name: "CaquiAI Oficial" }] } });
+    expect(await makeService().pageInfo(account, "P1")).toEqual({ pageId: "P1", name: "CaquiAI Oficial", whatsappNumber: "553133334444" });
+  });
+
+  it("nó direto 403 E negócio vazio → só { pageId } (degrada honesto, nunca quebra)", async () => {
+    stubPagesGraph({ direct: "fail", business: { owned: [], client: [] } });
+    expect(await makeService().pageInfo(account, "P1")).toEqual({ pageId: "P1" });
+  });
+});
+
+describe("MetaWhatsappDestinationService.listAccountPages (páginas do negócio — escolher entre N)", () => {
+  it("funde owned + client, dedupe por id, sem id é dropado (owned vence o dup)", async () => {
+    stubPagesGraph({
+      business: {
+        owned: [{ id: "P1", name: "CaquiAI Oficial" }, { name: "sem id — ignorada" }],
+        client: [{ id: "P2", name: "CaquiAI Loja" }, { id: "P1", name: "dup ignorado" }],
+      },
+    });
+    expect(await makeService().listAccountPages(account)).toEqual([
+      { pageId: "P1", name: "CaquiAI Oficial" },
+      { pageId: "P2", name: "CaquiAI Loja" },
+    ]);
+  });
+
+  it("403/sem acesso → lista vazia (o caller degrada honesto)", async () => {
+    stubPagesGraph({ business: "fail" });
+    expect(await makeService().listAccountPages(account)).toEqual([]);
+  });
+
+  it("conta sem negócio → lista vazia", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } })));
+    expect(await makeService().listAccountPages(account)).toEqual([]);
+  });
+});

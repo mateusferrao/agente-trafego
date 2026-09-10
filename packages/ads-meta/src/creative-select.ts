@@ -128,7 +128,7 @@ function num(v: string | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function metricsOf(ad: RawAdCandidate): { spend: number; results: number } {
+export function metricsOf(ad: RawAdCandidate): { spend: number; results: number } {
   const row = ad.insights?.data?.[0];
   const spend = num(row?.spend);
   const results = (row?.actions ?? []).reduce(

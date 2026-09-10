@@ -149,6 +149,16 @@ export type InboundMessage =
   | InboundVideoMessage
   | InboundUnsupportedMessage;
 
+/**
+ * Diagnóstico (observabilidade) de um payload inbound que o parser IGNOROU: os nomes crus das
+ * chaves da mensagem (+ tipo), sem conteúdo. Deixa um tipo de mídia novo visível no log antes de
+ * virar silêncio. Chaves são opacas p/ a casca (só loga) — o vocabulário do provider fica no adapter.
+ */
+export interface InboundPayloadShape {
+  readonly messageKeys: readonly string[];
+  readonly messageType?: string;
+}
+
 /** Grupo do WhatsApp em que o número da org já está (registro — G4). */
 export interface GroupSummary {
   readonly jid: string;
@@ -194,6 +204,8 @@ export interface MessagingChannelPort {
   parseInbound(payload: unknown): InboundMessage | null;
   /** Extrai o status de um evento de conexão do webhook (ou null se não for). */
   parseConnectionUpdate(payload: unknown): InstanceStatus | null;
+  /** Forma (chaves) de um payload que `parseInbound` ignoraria — só p/ log de diagnóstico. */
+  describeInbound(payload: unknown): InboundPayloadShape | null;
   connect(instance: ChannelInstanceRef): Promise<InstanceState>;
   getState(instance: ChannelInstanceRef): Promise<InstanceState>;
   /**

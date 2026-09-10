@@ -6,7 +6,8 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, assessCreativePick, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, creativeSourceForIntent, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, hasHardFatigue, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, promotedObjectGap, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type CreativeCritique, type CreativeIntent, type CreativePickSignals, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -19,20 +20,28 @@ import {
   MAX_ADS_PER_DRAFT,
   resolveCreationActivation,
   toGuardrailConfig,
+  toMinorUnits,
+  minorToMajor,
   type Action,
   type AgentId,
+  type AudienceStage,
   type CreationActivation,
   type AudienceProfile,
   type CampaignDraftSpec,
   type ConversionGoal,
+  type AdsetSpec,
+  type BudgetMode,
   type CopyVariant,
   type CreativeAssetRef,
   type CustomAudience,
   type CreativeSourceStrategy,
   type DraftId,
+  type PageInfo,
+  type PixelInfo,
   type ResolvedAudienceSnapshot,
   type TargetingSpec,
   withTimeout,
+  TimeoutError,
 } from "@trafego/shared";
 import type { AdAccountRef, DraftApproval } from "@trafego/shared/ports";
 import type { DraftKind } from "@trafego/shared";
@@ -41,11 +50,10 @@ import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
 import { generateCopy } from "../copy/generate-copy.js";
 import { createVisionResolver, creativeContentHash, servingVisionKey } from "../vision/resolver.js";
-import { pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
+import { pickCreativeByReference, pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
 import { joinBalloons } from "../notify/split.js";
 import { assembleExplicitTargeting, hasExplicitContent, type ExplicitTargetingParts } from "./explicit-targeting.js";
 
-const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STARTER_BUDGET_MINOR = 3000;
 /** Máx. de anúncios com criativos DISTINTOS que o agente monta sozinho ao criar (1 por criativo).
@@ -81,16 +89,18 @@ export interface DraftProposalContext {
 export type ChatDraftProposal =
   | { readonly kind: "draft"; readonly echo: string; readonly approvalId: string; readonly draftId: string }
   | { readonly kind: "action"; readonly action: Action }
-  // passo agressivo, intent aberto: o agente PERGUNTA (subir seguro vs duplicar) e re-chama
-  // proposeScaleWinner com `choice`. Nada é criado ainda.
+  // o agente PERGUNTA e nada é criado ainda; o usuário responde e o LLM re-chama a tool. Dois usos:
+  // (1) passo agressivo de escala (subir seguro vs duplicar) → re-chama proposeScaleWinner com `choice`
+  //     (carrega winnerLabel/entityId/… informativos); (2) picker de criativo (Slice 3): faltou escolha
+  //     ou nome ambíguo → só o `echo` da pergunta. Os campos de escala são opcionais (só o eco é lido).
   | {
       readonly kind: "ask";
       readonly echo: string;
-      readonly winnerLabel: string;
-      readonly entityId: string;
-      readonly entityLevel: "campaign" | "adset";
-      readonly raisePct: number;
-      readonly duplicatePct: number;
+      readonly winnerLabel?: string;
+      readonly entityId?: string;
+      readonly entityLevel?: "campaign" | "adset";
+      readonly raisePct?: number;
+      readonly duplicatePct?: number;
     }
   | { readonly kind: "blocked"; readonly reason: string };
 
@@ -116,6 +126,12 @@ export interface AgentContext {
 
 function money(reais: number, currency: string): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(reais);
+}
+
+/** Formata um valor em unidade MENOR na moeda da conta — converte pela moeda (JPY sem casas,
+ *  BHD com 3), nunca pelo ×100 mágico. Fonte única do "minor→exibição" aqui. */
+function moneyMinor(minor: number, currency: string): string {
+  return money(minorToMajor(minor, currency), currency);
 }
 
 /** Frase honesta sobre o que acontece ao confirmar (P0.1): a criação SEMPRE nasce pausada —
@@ -154,11 +170,24 @@ export function audienceEchoPhrase(args: {
 }): string {
   if (args.targetingKind === "explicit" && args.explicitAudienceDescription) return args.explicitAudienceDescription;
   if (args.targetingKind === "reuse_adset") {
+    // G13: não afirmar "que já converte" — a fonte é o melhor anúncio por RANKING (pode ter gasto e
+    // zero conversão). Honesto (§7 target×proxy): herda o público do conjunto que está rodando.
     return args.resolvedAudienceDescription
-      ? `herda o conjunto que já converte — ${args.resolvedAudienceDescription}`
-      : "herdado do conjunto que já converte";
+      ? `herda o público do conjunto que está rodando — ${args.resolvedAudienceDescription}`
+      : "herdado do conjunto que está rodando";
   }
   return "amplo (Advantage+)";
+}
+
+/** Rótulo PT de gênero a partir da taxonomia neutra (1=homens, 2=mulheres). Só-um = restrição real;
+ *  ambos/vazio = todos (null — não anuncia). Fonte única dos describers. PURO. */
+function genderLabelPt(genders: readonly (1 | 2)[] | undefined): string | null {
+  if (!genders) return null;
+  const men = genders.includes(1);
+  const women = genders.includes(2);
+  if (men && !women) return "homens";
+  if (women && !men) return "mulheres";
+  return null;
 }
 
 /** Descrição HONESTA do público EXPLÍCITO (Fase 1, subfatia 3a) — geo/idade/gênero pro eco. Pura. */
@@ -170,8 +199,18 @@ export function describeExplicitAudience(targeting: Extract<TargetingSpec, { rea
   const areaNames = (targeting.radiusAreas ?? []).map((a) => `${a.address} (raio ${a.radius} ${a.distanceUnit === "mile" ? "mi" : "km"})`);
   const allPlaces = [...geoNames, ...areaNames];
   const placesLabel = allPlaces.length > 0 ? summarizePlaces(allPlaces) : null;
-  const ageLabel = targeting.ageMin !== undefined || targeting.ageMax !== undefined ? `${targeting.ageMin ?? "?"}-${targeting.ageMax ?? "?"} anos` : null;
-  const genderLabel = targeting.genders?.includes(1) && !targeting.genders.includes(2) ? "homens" : targeting.genders?.includes(2) && !targeting.genders.includes(1) ? "mulheres" : null;
+  // idade: "45+" quando não há teto (a Meta trata age_max ausente como sem limite — na prática 45–65,
+  // o teto da plataforma); "até X" quando só há teto; "X-Y" quando há os dois. NUNCA "45-?" (o "?"
+  // do teto ausente vazava um alvo aberto como intervalo quebrado no eco).
+  const ageLabel =
+    targeting.ageMin !== undefined && targeting.ageMax !== undefined
+      ? `${targeting.ageMin}-${targeting.ageMax} anos`
+      : targeting.ageMin !== undefined
+        ? `${targeting.ageMin}+ anos`
+        : targeting.ageMax !== undefined
+          ? `até ${targeting.ageMax} anos`
+          : null;
+  const genderLabel = genderLabelPt(targeting.genders);
   // grupos (Slice 3/4): "A ou B" dentro do grupo, " e " entre grupos (AND narrowing).
   const describeGroups = (gs: readonly (readonly { readonly name: string }[])[] | undefined, label: string): string | null => {
     const groups = (gs ?? []).filter((g) => g.length > 0);
@@ -235,12 +274,45 @@ export function describeResolvedAudience(profile: AudienceProfile): string {
   const places = cityNames.length > 0 ? cityNames : regionNames.length > 0 ? regionNames : (profile.geo ?? []);
   const placesLabel = places.length > 0 ? summarizePlaces(places) : null;
   const ageLabel = profile.ageMin !== undefined || profile.ageMax !== undefined ? `${profile.ageMin ?? "?"}-${profile.ageMax ?? "?"} anos` : null;
+  const genderLabel = genderLabelPt(profile.genders); // C2: nomeia o gênero herdado (só-homens/só-mulheres)
   const { summary } = resolveExpansion(profile.expansion);
   const expansionLabel = summary === "on" ? "expansão de público ligada" : "sem expansão de público";
   // Slice 9: eco honesto — a cópia reuse_adset preserva os públicos salvos; anuncia quando houver.
   const savedLabel = profile.customAudienceCount > 0 ? `${profile.customAudienceCount} público(s) salvo(s)` : null;
   const exclLabel = profile.exclusionCount > 0 ? `${profile.exclusionCount} exclusão(ões)` : null;
-  return [placesLabel, ageLabel, savedLabel, exclLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
+  return [placesLabel, ageLabel, genderLabel, savedLabel, exclLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
+}
+
+/**
+ * Descrição HONESTA e NOMEADA do público herdado a partir do SNAPSHOT resolvido (C1) — cidades/regiões/
+ * países, idade, GÊNERO, interesses/comportamentos (com nome, do snapshot), públicos salvos e expansão.
+ * Diferente de `describeResolvedAudience` (que parte do `AudienceProfile` e só CONTA os salvos), aqui o
+ * snapshot já traz os grupos com nome → o `get_pending_draft` para de dizer o genérico "a mesma
+ * segmentação que está rodando" e NOMEIA o que o público herdado é. PURA. */
+export function describeResolvedSnapshot(snapshot: ResolvedAudienceSnapshot): string {
+  const cities = (snapshot.geo.cities ?? []).map((c) => c.name);
+  const regions = (snapshot.geo.regions ?? []).map((r) => r.name);
+  const places = cities.length > 0 ? cities : regions.length > 0 ? regions : (snapshot.geo.countries ?? []);
+  const placesLabel = places.length > 0 ? summarizePlaces(places) : null;
+  const ageLabel =
+    snapshot.ageMin !== undefined && snapshot.ageMax !== undefined
+      ? `${snapshot.ageMin}-${snapshot.ageMax} anos`
+      : snapshot.ageMin !== undefined
+        ? `${snapshot.ageMin}+ anos`
+        : snapshot.ageMax !== undefined
+          ? `até ${snapshot.ageMax} anos`
+          : null;
+  const genderLabel = genderLabelPt(snapshot.genders);
+  const nameGroups = (gs: readonly (readonly { readonly name: string }[])[] | undefined, label: string): string | null => {
+    const groups = (gs ?? []).filter((g) => g.length > 0);
+    return groups.length > 0 ? `${label}: ${groups.map((g) => g.map((i) => i.name).join(" ou ")).join(" e ")}` : null;
+  };
+  const interestsLabel = nameGroups(snapshot.interestGroups, "interesses");
+  const behaviorsLabel = nameGroups(snapshot.behaviorGroups, "comportamentos");
+  const savedLabel = snapshot.customAudienceIncludeIds && snapshot.customAudienceIncludeIds.length > 0 ? "+ público salvo indicado" : null;
+  const exclLabel = snapshot.customAudienceExcludeIds && snapshot.customAudienceExcludeIds.length > 0 ? "excluindo público salvo" : null;
+  const expansionLabel = snapshot.expansionRaw.advantageAudience === 1 ? "expansão de público ligada" : "sem expansão de público";
+  return [placesLabel, ageLabel, genderLabel, interestsLabel, behaviorsLabel, savedLabel, exclLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
 }
 
 /** Rótulo PT do formato não-reusável (o vocabulário neutro vem do adapter). */
@@ -350,9 +422,22 @@ export async function loadAccountAudiences(deps: WorkerDeps, ctx: DraftProposalC
   return live;
 }
 
+/**
+ * Opções congeladas de uma desambiguação numerada (D1). Quando um resolvedor de público/
+ * interesse/geo acha 2+ candidatos, além da mensagem "Qual desses? 1..." ele devolve ISTO —
+ * o gate guarda no estado e o próximo turno resolve determinístico (índice/nome), sem o LLM
+ * reconstruir a intenção (fim do "1" virar outra coisa). Só nas trilhas de ADIÇÃO (re-rodar
+ * pelo nome exato aplica como "add") — nunca narrow/exclude/remove.
+ */
+export interface DisambiguationFreeze {
+  readonly field: "addInterests" | "geo" | "audience" | "page";
+  readonly query: string;
+  readonly options: readonly { readonly index: number; readonly id: string; readonly name: string }[];
+}
+
 type AudiencePrep =
-  | { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[]; readonly sizeWarnings: string[]; readonly dropped: string[] }
-  | { readonly kind: "blocked"; readonly reason: string };
+  | { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[]; readonly sizeWarnings: string[]; readonly dropped: string[]; readonly includeWarm: boolean }
+  | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
 
 /**
  * Resolve os públicos pedidos (por NOME/descrição) → ids, de forma DETERMINÍSTICA (mesmo
@@ -368,29 +453,34 @@ async function prepareAudiences(
   excludeQueries: readonly string[],
   autonomous = false,
 ): Promise<AudiencePrep> {
-  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [] };
+  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [], includeWarm: false };
   const audiences = await loadAccountAudiences(deps, ctx, ref);
   if (audiences.length === 0) {
-    if (autonomous) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [...includeQueries, ...excludeQueries] };
+    if (autonomous) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [...includeQueries, ...excludeQueries], includeWarm: false };
     return { kind: "blocked", reason: "não achei públicos salvos nessa conta — confere no Gerenciador ou rode uma análise que eu cacheio os públicos" };
   }
   const byId = new Map(audiences.map((a) => [a.id, a]));
   const acc = { name: (a: CustomAudience) => a.name, keys: (a: CustomAudience) => [a.id] };
   const dropped: string[] = [];
 
-  const resolve = (q: string): { id: string } | { blocked: string } | { drop: true } => {
+  const resolve = (q: string): { id: string } | { blocked: string; options?: readonly { index: number; id: string; name: string }[] } | { drop: true } => {
     const m = resolveNamedMatch(audiences, q, acc);
     if (m.kind === "one") return { id: m.row.id };
     if (autonomous) return { drop: true }; // proativo: ambíguo/inexistente → descarta
     if (m.kind === "none") return { blocked: `não achei um público chamado "${q}" na conta. Chega perto? me diga o nome exato (posso listar com "quais públicos eu tenho").` };
     const opts = m.rows.map((r, i) => `${i + 1}. ${r.name}`).join("\n");
-    return { blocked: `achei mais de um público parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)` };
+    return {
+      blocked: `achei mais de um público parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)`,
+      options: m.rows.map((r, i) => ({ index: i + 1, id: r.id, name: r.name })),
+    };
   };
 
   const includeIds: string[] = [];
   for (const q of includeQueries) {
     const r = resolve(q);
-    if ("blocked" in r) return { kind: "blocked", reason: r.blocked };
+    // freeze só na INCLUSÃO (D1): re-rodar pelo nome aplica como addAudiences — exclusão iria pro
+    // caminho errado, então exclusão ambígua segue sem congelar (cai pro LLM).
+    if ("blocked" in r) return { kind: "blocked", reason: r.blocked, ...(r.options ? { disambiguation: { field: "audience", query: q, options: r.options } } : {}) };
     if ("drop" in r) { dropped.push(q); continue; }
     includeIds.push(r.id);
   }
@@ -421,42 +511,65 @@ async function prepareAudiences(
       sizeWarnings.push(`⚠️ o público *${a.name}* é pequeno (~${a.approximateCount} pessoas) — pode entregar pouco.`);
     }
   }
-  return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings, dropped };
+  // S3: estágio de público da campanha — QUENTE se algum público de INCLUSÃO é custom audience
+  // não-lookalike. Usa o flag AUTORITATIVO `isLookalike` (do banco — superconjunto da heurística de
+  // nome: cobre lookalike por SUBTYPE cujo nome não tem dica, ex "Compradores 1%"). Só-lookalike/
+  // interesses = frio (prospecção). Alimenta o fit + o matcher enriquecido.
+  const includeWarm = includeIds.some((id) => byId.get(id)?.isLookalike === false);
+  return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings, dropped, includeWarm };
 }
 
 /** Rótulo PT do tipo de geo (vocabulário Meta fica no adapter — aqui só o kind neutro). */
-function geoKindPt(kind: "country" | "region" | "city"): string {
-  return kind === "country" ? "país" : kind === "region" ? "região" : "cidade";
+function geoKindPt(kind: "country" | "region" | "city" | "neighborhood"): string {
+  return kind === "country" ? "país" : kind === "region" ? "região" : kind === "neighborhood" ? "bairro" : "cidade";
 }
 
 const MAX_GEO_AMBIGUOUS_OPTIONS = 5;
 
+type GeoKind = "country" | "region" | "city" | "neighborhood";
 type GeoPrep =
-  | { readonly kind: "ok"; readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[]; readonly dropped: readonly string[] }
-  | { readonly kind: "blocked"; readonly reason: string };
+  | { readonly kind: "ok"; readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: GeoKind }[]; readonly dropped: readonly string[] }
+  | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
 
 /**
  * Resolve geo pedida (por NOME) → lugar real na Meta. Honestidade: 1 match/exato → resolve; 0 →
  * honesto; 2+ → PERGUNTA. `autonomous` (proativo) descarta o ambíguo/inexistente em `dropped`.
  */
 async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[], autonomous = false): Promise<GeoPrep> {
-  const resolved: { key: string; name: string; kind: "country" | "region" | "city" }[] = [];
+  const resolved: { key: string; name: string; kind: GeoKind }[] = [];
   const dropped: string[] = [];
   for (const q of queries) {
-    const matches = await deps.ports.ads.searchGeo(ref, q, ["country", "region", "city"]);
-    const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(q));
+    let matches = await deps.ports.ads.searchGeo(ref, q, ["country", "region", "city", "neighborhood"]);
+    let usedQuery = q;
+    // 0 matches com a string crua? retenta SEM o qualificador (", MG"/", cidade") — a Meta casa pelo
+    // nome do lugar, não pela string composta. (o incidente "Belo Horizonte, MG" → "não achei").
+    if (matches.length === 0) {
+      const stripped = stripGeoQualifier(q);
+      if (stripped) {
+        matches = await deps.ports.ads.searchGeo(ref, stripped, ["country", "region", "city", "neighborhood"]);
+        usedQuery = stripped;
+      }
+    }
+    const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(usedQuery));
     const pick = exact ?? (matches.length === 1 ? matches[0] : undefined);
     if (pick) {
       resolved.push({ key: pick.key, name: pick.name, kind: pick.kind });
       continue;
     }
     if (autonomous) { dropped.push(q); continue; }
-    if (matches.length === 0) return { kind: "blocked", reason: `não achei "${q}" na busca de localização da Meta — confere o nome? (cidade, região ou país)` };
-    const opts = matches
-      .slice(0, MAX_GEO_AMBIGUOUS_OPTIONS)
+    // 0 matches (nem cidade/região/país/bairro): em vez de travar, OFERECE o raio em torno do
+    // endereço (a Meta geocodifica qualquer string) — cobre bairro fora do catálogo da Meta. O dono
+    // aceita → o LLM re-chama com `addressAreas` (G3). Confere o nome como fallback secundário.
+    if (matches.length === 0) return { kind: "blocked", reason: `não achei "${q}" como cidade, região ou bairro no catálogo da Meta. Mas dá pra mirar um RAIO em torno dele (a Meta localiza pelo endereço) — quer que eu use um raio de ~2 km em torno de "${q}"? Se preferir outro raio ou for outro nome, me diz.` };
+    const capped = matches.slice(0, MAX_GEO_AMBIGUOUS_OPTIONS);
+    const opts = capped
       .map((m, i) => `${i + 1}. ${m.name}${m.countryCode ? ` (${m.countryCode})` : ""} — ${geoKindPt(m.kind)}`)
       .join("\n");
-    return { kind: "blocked", reason: `achei mais de um lugar parecido com "${q}":\n${opts}\nQual desses? (me diz mais específico, tipo "Belo Horizonte, MG")` };
+    return {
+      kind: "blocked",
+      reason: `achei mais de um lugar parecido com "${q}":\n${opts}\nQual desses? (responda o número, ou me diz a cidade por extenso)`,
+      disambiguation: { field: "geo", query: q, options: capped.map((m, i) => ({ index: i + 1, id: m.key, name: m.name })) },
+    };
   }
   return { kind: "ok", geo: resolved, dropped };
 }
@@ -465,7 +578,17 @@ const MAX_INTEREST_AMBIGUOUS_OPTIONS = 5;
 
 type InterestPrep =
   | { readonly kind: "ok"; readonly interests: readonly { readonly id: string; readonly name: string }[]; readonly dropped: readonly string[] }
-  | { readonly kind: "blocked"; readonly reason: string };
+  | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
+
+/** Remove o QUALIFICADOR após a última vírgula (ex: "Belo Horizonte, MG" → "Belo Horizonte";
+ *  "Buritis, Belo Horizonte" → "Buritis") — a busca de geo da Meta casa pelo nome do lugar, não pela
+ *  string com estado/cidade anexada. `undefined` quando não há vírgula ou o resto ficaria vazio. PURO. */
+export function stripGeoQualifier(q: string): string | undefined {
+  const i = q.lastIndexOf(",");
+  if (i <= 0) return undefined;
+  const head = q.slice(0, i).trim();
+  return head.length > 0 && head !== q.trim() ? head : undefined;
+}
 
 /** normaliza termo p/ match tolerante (minúsculas, sem acento, sem espaço extra). */
 function normalizeTerm(s: string): string {
@@ -490,11 +613,32 @@ async function resolveDetailedTargeting(
   query: string,
   labelSingular: string,
   autonomous = false,
-): Promise<{ kind: "ok"; ref: { id: string; name: string } } | { kind: "blocked"; reason: string } | { kind: "dropped" }> {
-  let matches = await search(query);
+  timeoutMs?: number,
+  // quando presente, uma ambiguidade CONGELA as opções p/ o próximo turno resolver (D1). Só o
+  // interesse passa (mapeia p/ `addInterests`); comportamento não tem campo de estado → não congela.
+  disambiguationField?: "addInterests",
+): Promise<{ kind: "ok"; ref: { id: string; name: string } } | { kind: "blocked"; reason: string; disambiguation?: DisambiguationFreeze } | { kind: "dropped" }> {
+  // G18: a busca de público por NOME (N termos × ida à Meta) rodava SEM teto → um termo lento
+  // estourava o `turnTimeoutMs` do turno inteiro e o dono recebia o fallback genérico sem próximo
+  // passo. `withTimeout` por-termo → timeout DESCARTA o termo (honesto: "deixei de fora"), sem travar.
+  const runSearch = async (q: string): Promise<readonly { id: string; name: string; audienceSize?: number; path?: readonly string[] }[] | null> => {
+    try {
+      return timeoutMs ? await withTimeout(search(q), timeoutMs) : await search(q);
+    } catch (err) {
+      if (err instanceof TimeoutError) return null;
+      throw err;
+    }
+  };
+  const first = await runSearch(query);
+  if (first === null) return { kind: "dropped" };
+  let matches = first;
   if (matches.length === 0) {
     const stripped = query.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
-    if (stripped && normalizeTerm(stripped) !== normalizeTerm(query)) matches = await search(stripped);
+    if (stripped && normalizeTerm(stripped) !== normalizeTerm(query)) {
+      const retry = await runSearch(stripped);
+      if (retry === null) return { kind: "dropped" };
+      matches = retry;
+    }
   }
   const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(query));
   if (exact) return { kind: "ok", ref: { id: exact.id, name: exact.name } };
@@ -502,11 +646,15 @@ async function resolveDetailedTargeting(
   // AUTÔNOMO (proativo, sem humano): ambíguo/inexistente → DESCARTA (nunca pergunta, nunca chuta).
   if (autonomous) return { kind: "dropped" };
   if (matches.length === 0) return { kind: "blocked", reason: `não achei ${labelSingular} "${query}" — confere o termo?` };
-  const opts = matches
-    .slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS)
+  const capped = matches.slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS);
+  const opts = capped
     .map((m, i) => `${i + 1}. ${m.name}${humanAudienceSize(m.audienceSize)}${m.path && m.path.length > 0 ? ` — ${m.path.join(" > ")}` : ""}`)
     .join("\n");
-  return { kind: "blocked", reason: `achei mais de um ${labelSingular} parecido com "${query}":\n${opts}\nQual desses? (me diz o nome exato da opção)` };
+  return {
+    kind: "blocked",
+    reason: `achei mais de um ${labelSingular} parecido com "${query}":\n${opts}\nQual desses? (me diz o nome exato da opção)`,
+    ...(disambiguationField ? { disambiguation: { field: disambiguationField, query, options: capped.map((m, i) => ({ index: i + 1, id: m.id, name: m.name })) } } : {}),
+  };
 }
 
 /** Resolve interesses pedidos (por NOME) → ids reais. `autonomous` (proativo) descarta o não-resolvido
@@ -515,7 +663,7 @@ async function prepareInterests(deps: WorkerDeps, ref: AdAccountRef, queries: re
   const resolved: { id: string; name: string }[] = [];
   const dropped: string[] = [];
   for (const q of queries) {
-    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse", autonomous);
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse", autonomous, deps.conversation?.liveFetchTimeoutMs, "addInterests");
     if (r.kind === "blocked") return r;
     if (r.kind === "dropped") dropped.push(q);
     else resolved.push(r.ref);
@@ -528,7 +676,7 @@ async function prepareBehaviors(deps: WorkerDeps, ref: AdAccountRef, queries: re
   const resolved: { id: string; name: string }[] = [];
   const dropped: string[] = [];
   for (const q of queries) {
-    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchBehaviors(ref, s), q, "o comportamento", autonomous);
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchBehaviors(ref, s), q, "o comportamento", autonomous, deps.conversation?.liveFetchTimeoutMs);
     if (r.kind === "blocked") return r;
     if (r.kind === "dropped") dropped.push(q);
     else resolved.push(r.ref);
@@ -574,6 +722,41 @@ export interface ProposedExplicitInput {
   readonly excludeAudiences?: readonly string[];
   readonly radiusKm?: number;
   readonly addressAreas?: readonly AddressArea[];
+}
+
+/** Público COMPLETO de UM conjunto do teste (P7) — o mesmo shape do público de topo (`ProposedExplicitInput`)
+ *  + um rótulo. O dono varia QUALQUER dimensão por conjunto (idade/gênero/geo/interesse/comportamento/
+ *  público salvo), resolvido pelo MESMO `resolveProposedExplicitTargeting` do rascunho de 1 conjunto. */
+export interface SegmentPublicoInput extends ProposedExplicitInput {
+  readonly label?: string;
+}
+
+/** Público de um segmento SOBRE a base compartilhada (campos de topo): cada campo do segmento VENCE
+ *  quando presente; ausente herda a base. Fonte única do merge do teste multi-conjunto (P7). PURO. */
+export function mergeSegmentPublico(base: ProposedExplicitInput, seg: ProposedExplicitInput): ProposedExplicitInput {
+  const pick = <T>(s: T | undefined, b: T | undefined): T | undefined => (s !== undefined ? s : b);
+  const geo = pick(seg.geo, base.geo);
+  const ageMin = pick(seg.ageMin, base.ageMin);
+  const ageMax = pick(seg.ageMax, base.ageMax);
+  const gender = pick(seg.gender, base.gender);
+  const interests = pick(seg.interests, base.interests);
+  const behaviors = pick(seg.behaviors, base.behaviors);
+  const includeAudiences = pick(seg.includeAudiences, base.includeAudiences);
+  const excludeAudiences = pick(seg.excludeAudiences, base.excludeAudiences);
+  const radiusKm = pick(seg.radiusKm, base.radiusKm);
+  const addressAreas = pick(seg.addressAreas, base.addressAreas);
+  return {
+    ...(geo !== undefined ? { geo } : {}),
+    ...(ageMin !== undefined ? { ageMin } : {}),
+    ...(ageMax !== undefined ? { ageMax } : {}),
+    ...(gender !== undefined ? { gender } : {}),
+    ...(interests !== undefined ? { interests } : {}),
+    ...(behaviors !== undefined ? { behaviors } : {}),
+    ...(includeAudiences !== undefined ? { includeAudiences } : {}),
+    ...(excludeAudiences !== undefined ? { excludeAudiences } : {}),
+    ...(radiusKm !== undefined ? { radiusKm } : {}),
+    ...(addressAreas !== undefined ? { addressAreas } : {}),
+  };
 }
 
 export type ResolvedExplicitTargeting =
@@ -656,6 +839,12 @@ export const PROACTIVE_REACH_FLOOR_REASON = "público estreito demais para veicu
  *  público de inclusão resolveu — degrada pra recomendação humana em vez de criar amplo às cegas. */
 export const PROACTIVE_AUDIENCE_UNRESOLVED_REASON = "não consegui resolver o público específico para criar sozinho";
 
+/** Bloqueio honesto (§13) quando a base é campanha de CONVERSAS (ou lead sem pixel) mas eu não consegui
+ *  ler a Página de destino da fonte — a Meta EXIGE a Página no objeto promovido; sem ela o conjunto seria
+ *  recusado no apply e deixaria campanha órfã. Melhor barrar antes com o próximo passo. */
+export const COPY_MISSING_DESTINATION_PAGE_REASON =
+  "essa campanha leva as conversas pro WhatsApp de uma Página, mas eu não consegui ler essa Página de destino da campanha-base agora — sem ela a Meta não deixa criar o conjunto. Tenta de novo em instantes, ou crie a nova campanha pela análise/site (lá dá pra escolher a Página).";
+
 /**
  * Ajusta o nº de anúncios PRESERVANDO os existentes: aumentar duplica o último (copy + criativo
  * próprio); diminuir corta os últimos (mín 1). Clampado ao teto. Não regenera copy nem apaga edições.
@@ -705,7 +894,7 @@ export async function proposeScaleWinner(
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
 
   const winners = await deps.db
-    .select({ entityId: entityAnalyses.entityId, entityLevel: entityAnalyses.entityLevel, entityName: entityAnalyses.entityName })
+    .select({ entityId: entityAnalyses.entityId, entityLevel: entityAnalyses.entityLevel, entityName: entityAnalyses.entityName, curated: entityAnalyses.curatedJson })
     .from(entityAnalyses)
     .where(and(eq(entityAnalyses.agentId, ctx.agentId), eq(entityAnalyses.tier, "winner")))
     .orderBy(desc(entityAnalyses.analyzedAt))
@@ -734,6 +923,17 @@ export async function proposeScaleWinner(
   const label = chosen.entityName ?? chosen.entityId;
   const scalePct = ac.cfg.scalePct ?? 50;
 
+  // G5/G6 (on-demand): o proativo já rebaixa/avisa vencedor fatigado ou sem base; a escala PEDIDA
+  // pelo humano (chat/site) não avisava — a "escala contraditória" da Fatia A reaberta. Anexa as
+  // ressalvas do snapshot PERSISTIDO (fadiga/significância) à AÇÃO de subir orçamento (surgem no
+  // card + chat via renderRessalvas + travam o auto-apply). A DUPLICAÇÃO (não é ação de escala) usa
+  // a nota de fadiga direto no eco. Mesma fonte de verdade do proativo (§13), zero divergência.
+  const curated = chosen.curated ?? null;
+  const attachRessalvas = (action: Action): Action => {
+    const rs = ressalvasFromSnapshot(action, curated);
+    return rs.length > 0 ? { ...action, ressalvas: rs } : action;
+  };
+
   // Vencedor ADSET sem orçamento DIÁRIO próprio. Dois casos: (a) o adset tem orçamento VITALÍCIO
   // (ABO lifetime) → sobe o vitalício do PRÓPRIO conjunto; (b) sem nenhum budget no adset → é CBO
   // (orçamento na CAMPANHA) → sobe o da campanha-mãe (diário ou vitalício). O adapter escreve
@@ -745,7 +945,7 @@ export async function proposeScaleWinner(
     const pct = Math.min(scalePct, ac.cfg.maxBudgetChangePct);
     const raise = (targetLevel: "adset" | "campaign", targetId: string, currentMinor: number, reason: string): ChatDraftProposal => ({
       kind: "action",
-      action: {
+      action: attachRessalvas({
         id: `scale:${targetId}`,
         type: "adjust_budget",
         target: { level: targetLevel, id: targetId, name: label },
@@ -758,7 +958,7 @@ export async function proposeScaleWinner(
         source: "llm",
         riskLevel: "medium",
         reason,
-      },
+      }),
     });
     // (a) adset com orçamento VITALÍCIO próprio → sobe o vitalício do conjunto.
     if (sourceLifetimeMinor > 0) {
@@ -844,7 +1044,7 @@ export async function proposeScaleWinner(
       riskLevel: "medium",
       reason: `escalar o vencedor "${label}": +${move.pct}% de budget`,
     };
-    return { kind: "action", action };
+    return { kind: "action", action: attachRessalvas(action) };
   }
 
   // clampa JÁ no propose ao teto de gasto novo → o eco mostra o valor REAL (o guardrail
@@ -864,31 +1064,73 @@ export async function proposeScaleWinner(
     name: label, // nome do vencedor → card mostra "Duplicar conjunto <nome>" (não o id cru)
   });
   const budgetLine = clampedByCap
-    ? `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}) · ${activationPhrase(ac.creationActivation)}.`
-    : `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · ${activationPhrase(ac.creationActivation)}.`;
+    ? `Gasto novo: ${moneyMinor(newDailyMinor, ac.currency)}/dia (você pediu ${moneyMinor(requested, ac.currency)}, mas seu teto de gasto novo é ${moneyMinor(newDailyMinor, ac.currency)}) · ${activationPhrase(ac.creationActivation)}.`
+    : `Gasto novo: ${moneyMinor(newDailyMinor, ac.currency)}/dia · ${activationPhrase(ac.creationActivation)}.`;
+  // G5: duplicar joga o MESMO criativo num público novo — se o vencedor está com fadiga, o incremento
+  // tende a piorar o CPA/CPM. Avisa honesto no eco (a duplicação não é ação de escala p/ o card de
+  // ressalva, então a nota vai direto aqui). Nunca em silêncio — o dono decide ciente.
+  // Gradua a nota pelo desgaste: AGING (ainda entrega) → "prepare o sucessor" (não trocar o
+  // vencedor provado agora); fadiga real → "renove antes". Ambos avisam que duplicar espalha o
+  // criativo desgastando; a distinção evita dizer "cansado" de um criativo que ainda vende.
+  const fatigueNote = isAging(curated?.healthSignals)
+    ? "⚠️ esse vencedor ainda entrega, mas já dá sinais de desgaste — duplicar leva o mesmo criativo pro público novo; vale deixar o próximo criativo pronto antes de escalar."
+    : isFatigued(curated?.healthSignals)
+      ? "⚠️ esse vencedor está com sinal de fadiga de criativo — duplicar leva o mesmo criativo cansado pro público novo; vale renovar o criativo antes de escalar."
+      : null;
   const echo = joinBalloons([
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
     budgetLine,
+    ...(fatigueNote ? [fatigueNote] : []),
     `Confirma? (o original fica intocado)`,
   ]);
   return { kind: "draft", echo, approvalId, draftId };
 }
 
+/** Lista os N conjuntos de um teste de público (nome + público resumido) — fonte ÚNICA do eco (§13),
+ *  reusada pela criação (P1) E pelo refino (P2). Mesmo criativo em todos = a variável comparada é só
+ *  o público. */
+export function describeConjuntosBlock(adsets: readonly AdsetSpec[]): string {
+  const conjuntos = adsets
+    .map((as, i) => {
+      const pub = as.targeting?.kind === "explicit" ? describeExplicitAudience(as.targeting) : "amplo (a Meta escolhe)";
+      return `  ${i + 1}. *${as.name ?? `Conjunto ${i + 1}`}* — ${pub}`;
+    })
+    .join("\n");
+  return `Teste de público, **${adsets.length} conjuntos** (mesmo criativo em todos, pra comparar só o público):\n${conjuntos}`;
+}
+
 /** Eco genérico de um rascunho (após refino) — o quê/quanto/ativação/copy. Exportado p/ teste. */
+/**
+ * Linha de eco do Advantage (C3/F1a) — fonte ÚNICA do aviso honesto usado na criação E no refino do
+ * rascunho pendente. LIGADO avisa que a Meta pode EXPANDIR o público e ALTERAR imagem/texto (o
+ * entregue pode sair diferente do aprovado); DESLIGADO confirma tudo fixo. PURO.
+ */
+export function advantageEchoLine(on: boolean): string {
+  return on
+    ? "Advantage ligado: a Meta pode expandir o público além do que escolhemos e ajustar automaticamente a imagem/o texto do anúncio pra performar melhor — ou seja, o criativo entregue pode sair um pouco diferente do que você aprovou. Se preferir tudo fixo, é só dizer."
+    : "Advantage desligado: público e criativo exatamente como você aprovou, sem ajuste automático da Meta.";
+}
+
 export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   const head = kind === "duplicate" ? "Rascunho de escala atualizado" : "Rascunho de campanha atualizado";
   const lines = [
-    `${head}: gasto novo ${money(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
+    `${head}: gasto novo ${moneyMinor(spec.dailyBudgetMinor, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
   ];
   if (kind === "from_scratch" && spec.objective) lines.push(`Objetivo: ${goalNounPt(spec.objective)}.`);
+  // destino do clique (só quando há link — objetivo de site/tráfego/conversão).
+  if (kind === "from_scratch" && spec.linkUrl && !isMessagingGoal(spec.objective)) lines.push(`Destino: leva pra *${spec.linkUrl}*.`);
   // copies/composição só no rascunho de criação (escala/duplicate não tem copyVariants próprios).
   if (kind === "from_scratch" && spec.copyVariants && spec.copyVariants.length > 0) {
     const distinct = new Set(spec.copyVariants.map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
     if (spec.copyVariants.length >= 2) lines.push(`${spec.copyVariants.length} anúncios · ${distinct} criativo(s) distinto(s).`);
     lines.push(describeCopiesBlock(spec.copyVariants));
   }
+  // P2: teste de público (N conjuntos) → lista os conjuntos + onde a verba mora; senão a linha única.
   const t = spec.targeting;
-  if (kind === "from_scratch" && t) {
+  if (kind === "from_scratch" && spec.adsets && spec.adsets.length >= 2) {
+    lines.push(describeConjuntosBlock(spec.adsets));
+    lines.push(`Orçamento ${budgetModeLabel(spec.budgetMode ?? "cbo")}.`);
+  } else if (kind === "from_scratch" && t) {
     // fonte ÚNICA do eco de público (§13 reuso): antes duplicava a lógica aqui e assumia "amplo"
     // p/ explicit/custom_audiences — mesma classe do bug já corrigido em `audienceEchoPhrase`.
     lines.push(
@@ -898,6 +1140,11 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
       })}.`,
     );
   }
+  // F1a: Advantage é editável no rascunho pendente → o eco reflete o estado atual, com o aviso honesto
+  // quando ligado (a Meta pode alterar imagem/texto). INVARIANTE: os dois flags são um BUNDLE (setados
+  // sempre juntos em toda escrita — create/refino/site), então `??` lê o par com segurança.
+  const adv = spec.advantageAudience ?? spec.advantageCreative;
+  if (kind === "from_scratch" && adv !== undefined) lines.push(advantageEchoLine(adv));
   lines.push("Confirma agora ou quer ajustar mais?");
   return joinBalloons(lines);
 }
@@ -951,6 +1198,9 @@ export interface RefineDraftPatch {
   readonly regenerateCopy?: boolean;
   /** público (só from_scratch): `reuse` = herda o conjunto que converte; `broad` = a Meta escolhe. */
   readonly audience?: "reuse" | "broad";
+  /** URL de destino (só from_scratch, objetivo de site/tráfego/conversão) — troca o link do rascunho.
+   *  Objetivo de conversas no WhatsApp → bloqueia honesto; URL inválida → bloqueia pedindo a correta. */
+  readonly link?: string;
   /** nome da campanha (chat leve — ajuste de intenção única, só from_scratch). */
   readonly campaignName?: string;
   /** nome do conjunto de anúncios (só from_scratch) — paridade com o painel do site. */
@@ -1001,9 +1251,45 @@ export interface RefineDraftPatch {
     readonly description?: string;
     readonly adName?: string;
   }[];
+  /** TROCAR o criativo de anúncios específicos (picker de chat, Slice 3): `creative` é o NOME/descrição
+   *  que o dono disse — resolvido determinístico p/ asset (veiculando + biblioteca); ambíguo/não-achado
+   *  → bloqueia honesto (nunca troca pelo errado). Só o `creative` do slot muda (o texto fica). */
+  readonly setAdCreative?: readonly {
+    readonly index: number;
+    readonly creative: string;
+  }[];
+  /** TROCAR a Página de destino do rascunho (W2 — escolher entre N): NOME ou NÚMERO de WhatsApp que o
+   *  dono disse — resolvido determinístico contra as Páginas da conta; ambíguo/não-achado → bloqueia
+   *  honesto (lista as opções). Em campanha de conversas muda pra qual WhatsApp o clique leva. */
+  readonly setPage?: string;
+  /** TROCAR o pixel de conversão do rascunho (B — escolher entre N): NOME que o dono disse — resolvido
+   *  determinístico contra os pixels da conta; ambíguo/não-achado → bloqueia honesto (lista as opções);
+   *  conta com 1 pixel → usa ele. Só em objetivo de conversão (conversas não usam pixel). */
+  readonly setPixel?: string;
+  /** ADICIONAR conjunto(s) ao teste de público (P2 — paridade com adicionar anúncio). Cada segmento
+   *  carrega o público COMPLETO (P7: idade/gênero/geo/interesses/comportamentos/públicos/raio),
+   *  resolvido como na criação de 1 conjunto. Rascunho de 1 conjunto → vira teste multi-conjunto (o
+   *  público atual é o conjunto 1; verba única na campanha, mesmo criativo — por-conjunto é no site). */
+  readonly addSegment?: ReadonlyArray<SegmentPublicoInput>;
+  /** REMOVER conjunto(s) do teste de público pelo índice (começa em 0). Sobrar 1 = volta a 1 conjunto. */
+  readonly removeSegment?: readonly number[];
+  /** Advantage (F1a — editável no rascunho pendente, só from_scratch): `true` liga (a Meta expande o
+   *  público + ajusta imagem/texto), `false` desliga (tudo fixo). Bundle único → seta os dois flags.
+   *  Ausente = não mexe. O eco AVISA quando liga. */
+  readonly advantage?: boolean;
+  /** Onde a verba mora (F1b — editável no rascunho pendente, só from_scratch): `"cbo"` = única na
+   *  campanha (a Meta distribui entre os conjuntos), `"abo"` = por conjunto. Num teste multi-conjunto,
+   *  trocar MOVE a verba de nível (spend-preserving, `flipBudgetLevel`). Ausente = não mexe. */
+  readonly budgetMode?: BudgetMode;
+  /** Resolução do conflito idade×otimização (B4, só from_scratch): `"lock_age"` desliga o Advantage e
+   *  mantém a faixa; `"drop_age"` mantém o Advantage e LIMPA a idade dura de todos os conjuntos. É a
+   *  resposta determinística à pergunta do conflito (o LLM não tem como zerar a idade sozinho). */
+  readonly resolveAgeConflict?: "lock_age" | "drop_age";
 }
 
-export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
+export type RefineResult =
+  | { readonly kind: "ok"; readonly echo: string }
+  | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
 
 type MutableEdit = { -readonly [K in keyof DraftEdit]: DraftEdit[K] };
 
@@ -1018,7 +1304,7 @@ function refineErrorReason(error: RefineError): string {
     case "empty_variants":
       return "toda campanha precisa de pelo menos um anúncio";
     case "objective_requires_pixel":
-      return "esse objetivo precisa do pixel configurado na conta, e ela ainda não tem";
+      return OBJECTIVE_REQUIRES_PIXEL_REASON;
   }
 }
 
@@ -1028,6 +1314,59 @@ function refineErrorReason(error: RefineError): string {
  * (§13 DRY) — a casca só resolve os fragmentos de IO (copy via LLM, público ao vivo). O chat é LEVE
  * (Slice 8): budget/ativação/nome/público/regenerar copy; edição pesada vai pro painel do site.
  */
+/**
+ * G16: campos do refino que só valem no rascunho DO ZERO — numa ESCALA (duplicate) público/objetivo/
+ * copy/nomes são HERDADOS do vencedor (só budget/ativação editáveis). Retorna o rótulo do 1º campo
+ * herdado que o usuário tentou mexer, ou null. Fonte da honestidade: em vez de re-ecoar mudo o mesmo
+ * spec (o usuário fica sem saber por que "não mudou"), a casca responde por que não dá (§7).
+ */
+const hasValue = (v: unknown): boolean => v !== undefined && v !== null && (!Array.isArray(v) || v.length > 0);
+
+/** O patch mexe no público do ÚNICO conjunto (converter/geo/idade/gênero/interesses/comportamentos/
+ *  públicos salvos)? NÃO inclui add/removeSegment (isso é operar OS conjuntos, não o público de um).
+ *  Fonte única do guard de escala E do guard multi-conjunto (P2). PURO. */
+export function patchTouchesSinglePublico(patch: RefineDraftPatch): boolean {
+  return (
+    hasValue(patch.audience) || hasValue(patch.addGeo) || hasValue(patch.removeGeo) || patch.ageMin !== undefined || patch.ageMax !== undefined ||
+    hasValue(patch.gender) || hasValue(patch.addInterests) || hasValue(patch.removeInterests) || hasValue(patch.narrowInterests) ||
+    hasValue(patch.addBehaviors) || hasValue(patch.removeBehaviors) || hasValue(patch.narrowBehaviors) || hasValue(patch.radiusKm) ||
+    hasValue(patch.addressAreas) || hasValue(patch.addAudiences) || hasValue(patch.excludeAudiences) || hasValue(patch.removeAudiences)
+  );
+}
+
+/** O patch pede ALGO além de trocar o `link`? (Bug A) Usado pra um `link` ESPÚRIO (alucinação do
+ *  modelo — ex: "ativa o advantage" e o LLM inventa uma URL do negócio) NÃO bloquear/descartar um turno
+ *  que na verdade pedia outra coisa. Só quando o link é o ÚNICO pedido é que a mensagem honesta de link
+ *  faz sentido. Reusa `patchTouchesSinglePublico` pro público. PURO. */
+export function patchHasNonLinkAction(patch: RefineDraftPatch): boolean {
+  return (
+    patch.advantage !== undefined || hasValue(patch.budgetMode) || hasValue(patch.activation) || patch.budgetReais != null ||
+    hasValue(patch.objective) || hasValue(patch.campaignName) || hasValue(patch.adsetName) || hasValue(patch.setPage) || hasValue(patch.setPixel) ||
+    patch.regenerateCopy === true || patch.variantsCount != null || hasValue(patch.copyEdits) || hasValue(patch.setAdCreative) ||
+    hasValue(patch.distinctCreatives) || hasValue(patch.mediaPreference) || hasValue(patch.addSegment) || hasValue(patch.removeSegment) ||
+    hasValue(patch.resolveAgeConflict) ||
+    patchTouchesSinglePublico(patch)
+  );
+}
+
+export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | "pixelId" | "advantage" | "budgetMode" | null {
+  const has = hasValue;
+  if (has(patch.objective)) return "objective";
+  if (has(patch.link)) return "link";
+  if (has(patch.setPage)) return "pageId";
+  if (has(patch.setPixel)) return "pixelId";
+  // F1a/F1b: Advantage e onde a verba mora (CBO/ABO) são da estrutura do rascunho do zero — na escala
+  // vêm herdados da fonte (não editáveis ali; bloqueio honesto em vez de no-op silencioso).
+  if (patch.advantage !== undefined) return "advantage";
+  if (has(patch.budgetMode)) return "budgetMode";
+  // add/removeSegment = mexer nos conjuntos (público) → herdado numa escala, não editável.
+  if (patchTouchesSinglePublico(patch) || has(patch.addSegment) || has(patch.removeSegment)) return "targeting";
+  if (patch.regenerateCopy === true || patch.variantsCount !== undefined || has(patch.copyEdits) || has(patch.setAdCreative) || has(patch.distinctCreatives) || has(patch.mediaPreference)) return "copyVariants";
+  if (has(patch.campaignName)) return "campaignName";
+  if (has(patch.adsetName)) return "adsetName";
+  return null;
+}
+
 export async function refineDraft(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
@@ -1037,6 +1376,13 @@ export async function refineDraft(
   const loaded = await loadDraftForEdit(deps.db, { orgId: ctx.orgId, draftId, adAccountId: ctx.adAccountId });
   if (!loaded) return { kind: "blocked", reason: NOT_OPEN_REASON };
   const { kind, spec } = loaded;
+
+  // G16: numa escala (duplicate) só budget/ativação são editáveis — pedir mexer no herdado responde
+  // HONESTO (antes caía fora de todos os `if (kind === "from_scratch")` e re-ecoava o spec sem mudança).
+  if (kind === "duplicate") {
+    const forbidden = scaleForbiddenRefineField(patch);
+    if (forbidden) return { kind: "blocked", reason: refineErrorReason({ code: "field_not_editable", field: forbidden }) };
+  }
 
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -1048,8 +1394,17 @@ export async function refineDraft(
 
   const edit: MutableEdit = {};
   const refineNotes: string[] = []; // avisos (ex: clamp de raio) anexados ao eco
-  if (patch.budgetReais != null) edit.budgetMinor = Math.round(patch.budgetReais * MINOR_PER_UNIT);
+  if (patch.budgetReais != null) edit.budgetMinor = toMinorUnits(patch.budgetReais, ac.currency);
   if (patch.activation) edit.activation = patch.activation;
+  // F1a: Advantage (só from_scratch) — bundle: liga/desliga expansão de público E melhorias de criativo
+  // juntas (o toggle único foi deprecado na Graph v22, mas a decisão do dono continua uma só, §7).
+  if (kind === "from_scratch" && patch.advantage !== undefined) {
+    edit.advantageAudience = patch.advantage;
+    edit.advantageCreative = patch.advantage;
+  }
+  // B4: resolução determinística do conflito idade×otimização (o dono respondeu à pergunta). O core
+  // aplica (`lock_age` desliga o Advantage; `drop_age` limpa a idade de todos os conjuntos).
+  if (kind === "from_scratch" && patch.resolveAgeConflict) edit.resolveAgeConflict = patch.resolveAgeConflict;
   if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
   if (kind === "from_scratch" && patch.adsetName != null) edit.adsetName = patch.adsetName;
   // OBJETIVO (só from_scratch, paridade com o site §13): re-resolve o pixel DA CONTA (não de
@@ -1061,6 +1416,31 @@ export async function refineDraft(
     hasPixel = Boolean(defaults.pixelId);
     edit.objective = patch.objective;
     if (defaults.pixelId) edit.pixelId = defaults.pixelId;
+  }
+
+  // DESTINO (link, só from_scratch): troca a URL de destino do rascunho.
+  if (kind === "from_scratch" && patch.link != null) {
+    const link = normalizeLinkUrl(patch.link);
+    // Bug A: um `link` só BLOQUEIA o turno quando é o ÚNICO pedido (o dono realmente falou de link). Se
+    // veio junto de outra ação (advantage/ativação/…), é alucinação do modelo (ele acopla "Advantage+" a
+    // destino de site e inventa uma URL) → IGNORA o link em silêncio e segue o resto (§7 diz×faz).
+    const linkIsSoleIntent = !patchHasNonLinkAction(patch);
+    if (isMessagingGoal(edit.objective ?? spec.objective)) {
+      // Conversas: só a mensagem honesta de link quando é uma URL DE VERDADE E foi o único pedido. Um
+      // valor não-URL (ex: "futebol americano") já era misroute silencioso; agora uma URL válida junto de
+      // outra ação também é ignorada (o dono nunca falou de link — pediu advantage/ativação/…).
+      if (link && linkIsSoleIntent) return { kind: "blocked", reason: "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino." };
+      // URL válida junto de OUTRA ação: aplica a outra ação e ignora o link, mas avisa (§7 diz×faz — não
+      // some em silêncio; o eco não afirma que pôs link, então a nota é o que fecha a honestidade).
+      if (link && !linkIsSoleIntent) refineNotes.push("Não pus link de destino — conversas leva a pessoa pro WhatsApp, não pra um site.");
+    } else {
+      // Site/tráfego: URL válida aplica (com ou sem outras ações). Link malformado só pede a URL certa
+      // quando foi o único pedido; junto de outra ação, ignora o lixo e segue.
+      if (link) edit.linkUrl = link;
+      else if (linkIsSoleIntent) {
+        return { kind: "blocked", reason: `não reconheci "${patch.link}" como um link válido — me manda a URL completa (ex: https://sualoja.com/promo).` };
+      }
+    }
   }
 
   // anúncios (só from_scratch): `regenerateCopy` re-aterra TUDO na copy que já performa (LLM na
@@ -1078,6 +1458,9 @@ export async function refineDraft(
         businessContext: ac.businessContext,
         guidance: ac.guidance,
         ...(defaults.winnerCopy ? { winnerCopy: defaults.winnerCopy } : {}),
+        // aterramento no público do rascunho (fonte única `describeExplicitAudience`); a decomposição
+        // do criativo no refino degrada (sem o pool à mão aqui — fica no caminho de criação).
+        ...(spec.targeting?.kind === "explicit" ? { audience: describeExplicitAudience(spec.targeting) } : {}),
       },
       { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
     );
@@ -1100,6 +1483,71 @@ export async function refineDraft(
       }
     }
     edit.copyVariants = variants;
+  }
+
+  // ── CONJUNTOS (P2): teste de público multi-conjunto no chat — add/remover conjuntos + GUARD ──
+  // O rascunho multi-conjunto entrega pelos `spec.adsets` e IGNORA `spec.targeting`. Então uma edição
+  // de público ÚNICO (addInterests/geo/idade/…) num rascunho multi seria um NO-OP silencioso na
+  // entrega (diz×faz §7): bloqueio honesto pedindo QUAL conjunto — ou add/remover conjunto, ou o site.
+  const currentAdsets = kind === "from_scratch" ? (spec.adsets ?? []) : [];
+  const isMultiConjunto = currentAdsets.length >= 2;
+  const wantsAddSegment = (patch.addSegment?.length ?? 0) > 0;
+  const wantsRemoveSegment = (patch.removeSegment?.length ?? 0) > 0;
+  const wantsConjuntoOp = wantsAddSegment || wantsRemoveSegment;
+  // Editar o público de UM conjunto do teste (não a lista de conjuntos) por aqui seria um no-op na
+  // entrega (o multi entrega por `adsets`, não por `targeting`) OU ambíguo (qual conjunto?). Bloqueio
+  // honesto: por aqui eu adiciono/removo conjuntos INTEIROS; editar o público de um é no site.
+  if (patchTouchesSinglePublico(patch) && (isMultiConjunto || wantsConjuntoOp)) {
+    return {
+      kind: "blocked",
+      reason:
+        'pra mexer no público de um conjunto específico do teste, edite cada um no site — por aqui eu adiciono ou removo conjuntos inteiros ("adiciona um conjunto de corredores", "tira o conjunto 2").',
+    };
+  }
+  if (kind === "from_scratch" && (wantsAddSegment || wantsRemoveSegment)) {
+    let base: AdsetSpec[] = [...currentAdsets];
+    const wasSingle = !isMultiConjunto;
+    // remover primeiro (índices sobre a lista ATUAL) — só faz sentido num teste JÁ multi-conjunto.
+    if (wantsRemoveSegment) {
+      if (!isMultiConjunto) {
+        return { kind: "blocked", reason: 'esse rascunho tem só 1 conjunto — não tem conjunto pra remover. Pra testar públicos, me diz quais (ex: "testa interesse A e B").' };
+      }
+      base = [...removeAdsetsAt(base, patch.removeSegment ?? [])];
+    }
+    // adicionar: rascunho de 1 conjunto → o público ATUAL vira o conjunto 1 (converte em teste).
+    if (wantsAddSegment) {
+      if (wasSingle) base = [seedAdsetFromSingle(spec)];
+      for (const seg of patch.addSegment ?? []) {
+        const label = seg.label?.trim() || `Conjunto ${base.length + 1}`;
+        // P7: conjunto novo com o público COMPLETO do segmento (sem base compartilhada aqui), resolvido
+        // pelo MESMO resolvedor do single. Ambíguo → bloqueia honesto (nomeando o conjunto).
+        const { label: _label, ...segInput } = seg;
+        const res = await resolveProposedExplicitTargeting(deps, ctx, ac.ref, segInput, { autonomous: false });
+        if (res.kind === "blocked") return { kind: "blocked", reason: `no público do conjunto "${label}": ${res.reason}` };
+        const targeting: NonNullable<CampaignDraftSpec["targeting"]> = res.kind === "ok" ? res.targeting : { kind: "advantage_plus" };
+        base.push({ name: label, targeting });
+      }
+    }
+    if (base.length === 0) {
+      return { kind: "blocked", reason: "toda campanha precisa de pelo menos um público — não dá pra remover todos os conjuntos." };
+    }
+    if (base.length >= 2) {
+      edit.adsets = base;
+      // teste de público = verba ÚNICA na campanha (CBO), dividida entre os conjuntos: isola a
+      // variável público E evita N× o gasto (no ABO cada conjunto novo cairia no diário cheio do
+      // spec). Conversão single→multi FORÇA CBO; num teste já multi, respeita o budgetMode existente.
+      if (wasSingle || !spec.budgetMode) edit.budgetMode = "cbo";
+      if (wasSingle) {
+        refineNotes.push("Virei um teste de público: mesmo criativo em todos os conjuntos (pra comparar só o público), orçamento único na campanha. Criativo diferente por conjunto é no site.");
+      }
+    } else {
+      // colapsou pra 1 conjunto → volta a campanha de 1 conjunto (público único). `adsets: []` limpa.
+      edit.adsets = [];
+      const only = base[0]!;
+      if (only.targeting) edit.targeting = only.targeting;
+      if (only.name) edit.adsetName = only.name;
+      refineNotes.push("Voltei pra 1 conjunto só.");
+    }
   }
 
   // público (só from_scratch): thunk lazy (broad/keep não tocam a conta). O reuse SEMPRE nasce com
@@ -1144,7 +1592,7 @@ export async function refineDraft(
     // 2) geo (add/remove) + idade + gênero
     if (patch.removeGeo?.length || patch.addGeo?.length || patch.ageMin != null || patch.ageMax != null || patch.gender != null) {
       const addGeoPrep = patch.addGeo?.length ? await prepareGeo(deps, ac.ref, patch.addGeo) : { kind: "ok" as const, geo: [] };
-      if (addGeoPrep.kind === "blocked") return { kind: "blocked", reason: addGeoPrep.reason };
+      if (addGeoPrep.kind === "blocked") return { kind: "blocked", reason: addGeoPrep.reason, ...(addGeoPrep.disambiguation ? { disambiguation: addGeoPrep.disambiguation } : {}) };
       const r = applyExplicitGeoEdit(expl, {
         ...(patch.removeGeo ? { removeGeo: patch.removeGeo } : {}),
         ...(addGeoPrep.geo.length > 0 ? { addGeo: addGeoPrep.geo } : {}),
@@ -1166,7 +1614,8 @@ export async function refineDraft(
     // 4) interesses (OR-widen / AND narrow / remove)
     if (patch.removeInterests?.length || patch.addInterests?.length || patch.narrowInterests?.length) {
       const addP = patch.addInterests?.length ? await prepareInterests(deps, ac.ref, patch.addInterests) : { kind: "ok" as const, interests: [] };
-      if (addP.kind === "blocked") return { kind: "blocked", reason: addP.reason };
+      if (addP.kind === "blocked") return { kind: "blocked", reason: addP.reason, ...(addP.disambiguation ? { disambiguation: addP.disambiguation } : {}) };
+      // narrow NÃO congela: re-rodar pelo nome aplicaria como addInterests (OR-widen), não narrow.
       const narrowP = patch.narrowInterests?.length ? await prepareInterests(deps, ac.ref, patch.narrowInterests) : { kind: "ok" as const, interests: [] };
       if (narrowP.kind === "blocked") return { kind: "blocked", reason: narrowP.reason };
       const r = applyExplicitInterestEdit(expl, {
@@ -1194,7 +1643,7 @@ export async function refineDraft(
     // 6) públicos salvos (incluir/excluir/remover, por NOME → id determinístico; ambíguo→pergunta)
     if (patch.addAudiences?.length || patch.excludeAudiences?.length || patch.removeAudiences?.length) {
       const add = await prepareAudiences(deps, ctx, ac.ref, patch.addAudiences ?? [], patch.excludeAudiences ?? []);
-      if (add.kind === "blocked") return { kind: "blocked", reason: add.reason };
+      if (add.kind === "blocked") return { kind: "blocked", reason: add.reason, ...(add.disambiguation ? { disambiguation: add.disambiguation } : {}) };
       const rem = patch.removeAudiences?.length ? await prepareAudiences(deps, ctx, ac.ref, patch.removeAudiences, []) : { kind: "ok" as const, includeIds: [], excludeIds: [], notes: [], sizeWarnings: [] };
       if (rem.kind === "blocked") return { kind: "blocked", reason: rem.reason };
       const rmSet = new Set(rem.includeIds);
@@ -1254,8 +1703,118 @@ export async function refineDraft(
     edit.copyVariants = arr;
   }
 
+  // TROCA do criativo por anúncio (picker de chat, Slice 3): "troca o anúncio 2 pro vídeo da praia".
+  // Resolve o NOME pro asset com o matcher que NÃO chuta (ambíguo → bloqueia honesto); troca só o
+  // `creative` do slot (o texto da copy fica). Índice fora do rascunho → bloqueia (nunca troca o errado).
+  if (kind === "from_scratch" && patch.setAdCreative?.length) {
+    const arr = [...(edit.copyVariants ?? currentVariants)];
+    // ESCOLHA explícita por-anúncio → inclui vídeos sem capa guardada (o apply resolve a capa ao vivo);
+    // senão o dono não conseguiria trocar pro vídeo que a lista mostrou (diz×faz §7).
+    const pool = await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, { includeCoverlessVideo: true });
+    const candidates = pool.map(toLibraryCandidate);
+    for (const e of patch.setAdCreative) {
+      if (e.index < 0 || e.index >= arr.length) {
+        return { kind: "blocked", reason: `esse rascunho tem ${arr.length} anúncio(s) — não achei o anúncio nº ${e.index + 1} pra trocar o criativo.` };
+      }
+      const assetId = await pickCreativeByReference(deps.ports.llm, ac.model, e.creative, candidates, { orgId: ctx.orgId });
+      const hit = assetId ? pool.find((c) => c.key === assetId) : undefined;
+      if (!hit) {
+        return { kind: "blocked", reason: `não achei o criativo "${e.creative}" pra pôr no anúncio nº ${e.index + 1}. Me diz de outro jeito, ou peça "quais criativos eu tenho" que eu listo.` };
+      }
+      arr[e.index] = { ...arr[e.index]!, creative: creativeRefOf(hit.ref) };
+    }
+    edit.copyVariants = arr;
+  }
+
+  // Trocar a PÁGINA de destino (W2): resolve o nome/número contra as Páginas da conta. Ambíguo/não-achado
+  // → bloqueia honesto listando as opções (nunca troca pela errada). `listPages` vazio (sem acesso) →
+  // não dá pra resolver aqui, então bloqueia dizendo pra escolher no site.
+  const setPageQuery = cleanPageQuery(patch.setPage); // lixo do modelo → null → ignora (não troca, não ecoa)
+  if (setPageQuery) {
+    const pages = await deps.ports.ads.listPages(ac.ref);
+    if (pages.length === 0) {
+      return { kind: "blocked", reason: "não consegui listar suas Páginas agora pra trocar o destino — tente de novo, ou troque pela plataforma." };
+    }
+    const hits = matchPagesByQuery(pages, setPageQuery);
+    if (hits.length !== 1) {
+      const listPt = (hits.length === 0 ? pages : hits).map((p) => `• ${pageChoiceLabel(p)}`).join("\n");
+      return {
+        kind: "blocked",
+        reason:
+          hits.length === 0
+            ? `não achei uma Página que bata com "${setPageQuery}". Suas Páginas:\n${listPt}\n\nMe diz qual.`
+            : `achei mais de uma Página pra "${setPageQuery}":\n${listPt}\n\nQual delas?`,
+      };
+    }
+    edit.pageId = hits[0]!.pageId;
+    refineNotes.push(`Página trocada pra *${pageChoiceLabel(hits[0]!)}*.`);
+  }
+
+  // Trocar o PIXEL de conversão (B): resolve o nome contra os pixels da conta. Conta com 1 pixel → usa ele;
+  // ambíguo/não-achado → bloqueia honesto listando as opções (nunca troca pelo errado). `listPixels` vazio
+  // (sem acesso) → não dá pra resolver, bloqueia dizendo pra escolher no site.
+  const setPixelQuery = cleanPixelQuery(patch.setPixel); // lixo do modelo → null → ignora
+  if (setPixelQuery) {
+    const pixels = await deps.ports.ads.listPixels(ac.ref);
+    if (pixels.length === 0) {
+      return { kind: "blocked", reason: "não consegui listar seus pixels agora pra trocar — tente de novo, ou troque pela plataforma." };
+    }
+    if (pixels.length === 1) {
+      edit.pixelId = pixels[0]!.pixelId; // 1 pixel na conta → nada a escolher, uso ele
+      refineNotes.push(`Pixel: *${pixelChoiceLabel(pixels[0]!)}*.`);
+    } else {
+      const hits = matchPixelsByQuery(pixels, setPixelQuery);
+      if (hits.length !== 1) {
+        const listPt = (hits.length === 0 ? pixels : hits).map((p) => `• ${pixelChoiceLabel(p)}`).join("\n");
+        return {
+          kind: "blocked",
+          reason:
+            hits.length === 0
+              ? `não achei um pixel que bata com "${setPixelQuery}". Seus pixels:\n${listPt}\n\nMe diz qual.`
+              : `achei mais de um pixel pra "${setPixelQuery}":\n${listPt}\n\nQual deles?`,
+        };
+      }
+      edit.pixelId = hits[0]!.pixelId;
+      refineNotes.push(`Pixel trocado pra *${pixelChoiceLabel(hits[0]!)}*.`);
+    }
+  }
+
+  // F1b: onde a verba mora (CBO/ABO) — POR ÚLTIMO, pra a escolha explícita do dono vencer o default
+  // de conversão single→multi (que semeia CBO acima). O core move a verba de nível se for um flip.
+  if (kind === "from_scratch" && patch.budgetMode) {
+    edit.budgetMode = patch.budgetMode;
+    // flip real num teste multi-conjunto → nota honesta do que muda no gasto (a verba muda de nível).
+    const wasMulti = (edit.adsets ?? spec.adsets ?? []).length >= 2;
+    if (wasMulti && patch.budgetMode !== (spec.budgetMode ?? "cbo")) {
+      refineNotes.push(
+        patch.budgetMode === "abo"
+          ? "Agora a verba é por conjunto: cada um passa a ter o próprio gasto por dia (o gasto total sobe conforme o nº de conjuntos). Ajuste cada um no site se quiser."
+          : "Agora a verba é única na campanha e a Meta distribui entre os conjuntos (juntei o gasto que estava em cada um).",
+      );
+    }
+  }
+
   const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel });
   if (!result.ok) return { kind: "blocked", reason: refineErrorReason(result.error) };
+
+  // DIAGNÓSTICO (B4): quando o dono resolve o conflito idade×otimização, registra o estado da idade
+  // no rascunho DEPOIS de aplicar — prova que `drop_age` REMOVEU a idade (ou `lock_age` desligou o
+  // Advantage) antes do apply. Pareado com o log de payload do createAdSet, fecha a certeza.
+  if (edit.resolveAgeConflict) {
+    const ageOf = (t: CampaignDraftSpec["targeting"] | undefined) => (t?.kind === "explicit" ? { ageMin: t.ageMin, ageMax: t.ageMax } : null);
+    const s = result.value.spec;
+    deps.logger.info(
+      {
+        draftId,
+        resolveAgeConflict: edit.resolveAgeConflict,
+        advantageAudience: s.advantageAudience,
+        baseAge: ageOf(s.targeting),
+        conjuntoAges: (s.adsets ?? []).map((a) => ({ name: a.name, age: ageOf(a.targeting) })),
+        conflitoResidual: advantageAgeConflict(s, s.advantageAudience ?? false),
+      },
+      "draft-proposal:resolução conflito idade×otimização",
+    );
+  }
 
   const persisted = await persistDraftSpec(deps.db, { orgId: ctx.orgId, draftId, adAccountId: ctx.adAccountId }, result.value.spec);
   if (!persisted) return { kind: "blocked", reason: NOT_OPEN_REASON };
@@ -1309,34 +1868,82 @@ async function loadForcedCreative(
   };
 }
 
+/** Máx. de chars do tema/oferta do vencedor no prompt do matcher (compacto — é contexto, não copy). */
+const WINNER_COPY_MAX_CHARS = 240;
+
+/** Achata a 1ª variante da copy do vencedor em texto legível (headline + corpo) pro matcher (S3).
+ *  Vazio/ausente → undefined (nunca injeta placeholder). PURA. */
+function summarizeWinnerCopy(variants: readonly { readonly primaryText?: string; readonly headline?: string }[] | undefined): string | undefined {
+  const first = variants?.[0];
+  if (!first) return undefined;
+  const text = [first.headline?.trim(), first.primaryText?.trim()].filter(Boolean).join(" — ");
+  if (!text) return undefined;
+  return text.length > WINNER_COPY_MAX_CHARS ? `${text.slice(0, WINNER_COPY_MAX_CHARS)}…` : text;
+}
+
+/** Nota do especialista crítico (S5) pro eco do chat: o "porém + recomendação" quando o pick tem
+ *  fraqueza real (caveat) ou nada casa bem (recommend_new). `solid` → sem nota (respeita o fluxo).
+ *  Voz honesta do Roy: opina sem travar (a palavra final é do dono). */
+function creativeCritiqueNote(critique: CreativeCritique): string | undefined {
+  if (critique.verdict === "solid" || !critique.recommendation) return undefined;
+  return `Sobre o criativo: ${critique.recommendation}`;
+}
+
+/** Diagnóstico do anúncio-fonte "provado" (S3): fadiga + estágio de público de ORIGEM. */
+interface ServingSourceAssessment {
+  /** o criativo veiculando já está desgastado (fadiga DURA ou aging) — sinal p/ a crítica S5. */
+  readonly fatigued: boolean;
+  /** o desgaste é do tipo AGING (ainda entrega, mas desgastando) — distingue "prepare o próximo"
+   *  (caveat, reusa com ressalva) de fadiga DURA (já caiu → cai na biblioteca). */
+  readonly aging: boolean;
+  /** estágio do público onde o anúncio-fonte RODOU (do snapshot curado) — `unknown` se sem dado. */
+  readonly stage: AudienceStage;
+}
+
 /**
- * O anúncio-fonte "provado" (melhor por desempenho) está com o criativo fatigado? Fadiga é
- * detectada por CAMPANHA/ADSET (`entity_analyses.flags`), não por anúncio individual — então
- * resolve a campanha/adset do anúncio (`ad_creatives`) e checa se algum dos dois tem o sinal
- * `creative_fatigue` na última análise. Sem dado nenhum (nunca analisado) → assume não-fatigado
- * (nunca bloqueia por ausência de sinal).
+ * Diagnóstico do anúncio-fonte "provado" (melhor por desempenho). Fadiga + público são detectados
+ * por CAMPANHA/ADSET (`entity_analyses.curated_json`), não por anúncio individual — resolve a
+ * campanha/adset do anúncio (`ad_creatives`) e lê a última análise curada:
+ *  - `fatigued` (`isFatigued`: creative_fatigue OU creative_aging OU weak_hook — fonte única): reusar
+ *    um criativo desgastando queima verba igual → cai na biblioteca por contexto.
+ *  - `stage` (`audience.stage`, S3): o estágio de público onde o vencedor performou. Serve pra a
+ *    camada de cima NÃO herdar um criativo de prospecção fria numa campanha de remarketing (ou
+ *    vice-versa) sem crítica. Sem dado nenhum (nunca analisado) → `unknown` (nunca bloqueia por ausência).
+ * O adset (pai imediato do anúncio) tem prioridade sobre a campanha pra o estágio (mais específico).
  */
-async function isSourceFatigued(
+async function assessServingSource(
   deps: WorkerDeps,
   orgId: string,
   accountId: string,
   agentId: string,
   sourceAdId: string,
-): Promise<boolean> {
+): Promise<ServingSourceAssessment> {
   const [ad] = await deps.db
     .select({ campaignId: adCreatives.campaignId, adsetId: adCreatives.adsetId })
     .from(adCreatives)
     .where(and(eq(adCreatives.orgId, orgId), eq(adCreatives.adAccountId, accountId), eq(adCreatives.adId, sourceAdId)))
     .limit(1);
-  const ids = [ad?.adsetId, ad?.campaignId].filter((id): id is string => Boolean(id));
-  if (ids.length === 0) return false;
+  // ordem [adset, campanha]: o adset (mais específico) decide o estágio quando ambos têm dado.
+  const orderedIds = [ad?.adsetId, ad?.campaignId].filter((id): id is string => Boolean(id));
+  if (orderedIds.length === 0) return { fatigued: false, aging: false, stage: "unknown" };
   const rows = await deps.db
-    .select({ curatedJson: entityAnalyses.curatedJson })
+    .select({ entityId: entityAnalyses.entityId, curatedJson: entityAnalyses.curatedJson })
     .from(entityAnalyses)
-    .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, ids)));
-  // `creative_fatigue` é um healthSignal (curated_json), NÃO uma flag (flags é
-  // cpa_acima_da_meta/roas_abaixo_da_meta/anomalia:* — outro conjunto, bug corrigido).
-  return rows.some((r) => (r.curatedJson?.healthSignals ?? []).includes("creative_fatigue"));
+    .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, orderedIds)));
+  const byId = new Map(rows.map((r) => [r.entityId, r.curatedJson]));
+  const fatigued = rows.some((r) => isFatigued(r.curatedJson?.healthSignals));
+  // aging só conta como "desgaste que ainda entrega" quando NÃO há fadiga DURA junto (a dura vence:
+  // some da reutilização). `hasHardFatigue` = sinal duro que não é só aging — robusto quando a MESMA
+  // entidade carrega creative_aging + weak_hook_retention juntos (o duro não é mascarado pelo aging).
+  const anyHard = rows.some((r) => hasHardFatigue(r.curatedJson?.healthSignals));
+  const aging = !anyHard && rows.some((r) => isAging(r.curatedJson?.healthSignals));
+  // 1º estágio conhecido na ordem adset→campanha (o resto do array é o fallback).
+  let stage: AudienceStage = "unknown";
+  for (const id of orderedIds) {
+    const s = byId.get(id)?.audience?.stage;
+    if (s && s !== "unknown") { stage = s; break; }
+  }
+  return { fatigued, aging, stage };
 }
 
 /**
@@ -1348,6 +1955,28 @@ async function isSourceFatigued(
  * um criativo que você subiu mas nunca veiculou também é candidato (antes era ignorado). O
  * picker manual segue podendo forçar qualquer asset. `null` = nenhum criativo em lugar nenhum.
  */
+/** Resultado da escolha de criativo (S5): a ref + a CRÍTICA-estrategista do pick (o "não só faz").
+ *  A crítica é determinística sobre os sinais que a própria seleção já computou (fadiga/aging/estágio
+ *  do vencedor + prova da visão cacheada do pick da biblioteca) — custo LLM zero. */
+export interface ChosenCreativeOutcome {
+  readonly creative: ChosenCreative | null;
+  readonly critique: CreativeCritique;
+}
+
+/** Sinais de crítica de um pick da BIBLIOTECA (prova/persuasão vêm da visão cacheada; estágio/fadiga
+ *  são desconhecidos p/ um upload que nunca veiculou → neutros). */
+function libraryPickSignals(c: DescribedCandidate, campaignStage: AudienceStage): CreativePickSignals {
+  return {
+    fatigued: false,
+    aging: false,
+    stageMismatch: false,
+    campaignStage,
+    ...(c.proofStrength ? { proofStrength: c.proofStrength } : {}),
+    ...(c.persuasionSignals != null ? { persuasionSignals: c.persuasionSignals } : {}),
+    poolHasNoAcceptableFit: false,
+  };
+}
+
 export async function chooseCreative(
   deps: WorkerDeps,
   orgId: string,
@@ -1357,29 +1986,49 @@ export async function chooseCreative(
   serving: { imageHash?: string; videoId?: string; sourceAdId?: string },
   strategy: CreativeSourceStrategy,
   match?: MatchContext & { readonly model: string },
-): Promise<ChosenCreative | null> {
-  const servingRef = async (): Promise<ChosenCreative | null> => {
+): Promise<ChosenCreativeOutcome> {
+  const campaignStage = match?.campaignStage ?? "unknown";
+  // pick VEICULANDO + os sinais da fonte (pra a crítica S5). `null` = não há veiculando OU foi
+  // rebaixado (fadiga dura / cross-stage), caindo na biblioteca.
+  const servingPick = async (): Promise<{ ref: ChosenCreative; src: ServingSourceAssessment } | null> => {
     if (!serving.imageHash && !serving.videoId) return null;
-    // gap real corrigido (pivô saúde): não reusar automaticamente um anúncio "provado" cujo
-    // criativo já está fatigado (mesmo princípio de `rankCreatives.excludeFatigued`, adaptado
-    // à granularidade real disponível — fadiga é sinal de campanha/adset, não de anúncio
-    // individual). Sem sourceAdId (ex: picker manual) → nada pra checar, segue.
-    if (serving.sourceAdId && (await isSourceFatigued(deps, orgId, accountId, agentId, serving.sourceAdId))) {
-      return null;
+    let src: ServingSourceAssessment = { fatigued: false, aging: false, stage: "unknown" };
+    if (serving.sourceAdId) {
+      src = await assessServingSource(deps, orgId, accountId, agentId, serving.sourceAdId);
+      // fadiga DURA (já caiu) → não reusa (cai na biblioteca por contexto). AGING (ainda entrega) é
+      // MANTIDO — a crítica S5 anexa um "prepare o próximo" (caveat/Ressalva), não descarta o pick.
+      if (src.fatigued && !src.aging) return null;
+      // S3 (o caso que o dono levantou): vencedor de estágio de público OPOSTO ao da campanha nova
+      // (prospecção fria → remarketing, ou vice-versa) → não herda automático; cai na biblioteca.
+      if (isOppositeStage(campaignStage, src.stage)) return null;
     }
-    return {
+    const chosenRef: ChosenCreative = {
       ...(serving.imageHash ? { imageHash: serving.imageHash } : {}),
       ...(serving.videoId ? { videoId: serving.videoId } : {}),
       assetId: serving.sourceAdId ?? "reuse",
       origin: "reuse",
       source: "serving",
     };
+    return { ref: chosenRef, src };
   };
+
+  const servingOutcome = (sp: { ref: ChosenCreative; src: ServingSourceAssessment }): ChosenCreativeOutcome => ({
+    creative: sp.ref,
+    // vencedor provado: fadiga só entra aqui como AGING (a dura já foi rebaixada) → caveat "prepare o
+    // próximo". Estágio nunca é oposto aqui (cross-stage foi rebaixado). Sem prova de visão (é provado
+    // por desempenho, não por decomposição de criativo).
+    critique: assessCreativePick({ fatigued: sp.src.fatigued, aging: sp.src.aging, stageMismatch: false, campaignStage, poolHasNoAcceptableFit: false }),
+  });
+  const libraryOutcome = (c: DescribedCandidate | null): ChosenCreativeOutcome =>
+    c
+      ? { creative: c.ref, critique: assessCreativePick(libraryPickSignals(c, campaignStage)) }
+      : { creative: null, critique: assessCreativePick({ fatigued: false, aging: false, stageMismatch: false, campaignStage, poolHasNoAcceptableFit: true }) };
 
   // MODO PADRÃO (serving.best_performing = comportamento de hoje): reusa o melhor veiculando (provado
   // por desempenho, determinístico, SEM LLM); sem veiculando (ou fatigado), cai na biblioteca por contexto.
   if (strategy.mode === "serving" && (strategy.servingPick ?? "best_performing") === "best_performing") {
-    return (await servingRef()) ?? (await chooseLibraryByContext(deps, orgId, accountId, match));
+    const sp = await servingPick();
+    return sp ? servingOutcome(sp) : libraryOutcome(await chooseLibraryByContext(deps, orgId, accountId, match));
   }
 
   // MODOS COM LLM (serving.agent / library / both): monta o POOL de candidatos DESCRITOS por visão
@@ -1394,7 +2043,9 @@ export async function chooseCreative(
   }
   if (pool.length === 0) {
     // pediu veiculando mas não há candidato descrito → cai no melhor veiculando; senão nada.
-    return strategy.mode === "library" ? null : await servingRef();
+    if (strategy.mode === "library") return libraryOutcome(null);
+    const sp = await servingPick();
+    return sp ? servingOutcome(sp) : libraryOutcome(null);
   }
 
   let chosen = pool[0]!; // fallback: ordem (veiculando recentes primeiro, depois biblioteca)
@@ -1408,7 +2059,7 @@ export async function chooseCreative(
     );
     if (picked) chosen = pool.find((c) => c.key === picked) ?? chosen;
   }
-  return chosen.ref;
+  return libraryOutcome(chosen);
 }
 
 /** Um candidato a criativo com descrição (pro matcher) + a ref concreta (pro spec). Sinais de
@@ -1433,13 +2084,14 @@ function toLibraryCandidate(c: DescribedCandidate): { assetId: string; descripti
   };
 }
 
-/** Escolha na BIBLIOTECA por contexto (o caminho de hoje quando não há veiculando). `null` = vazia. */
+/** Escolha na BIBLIOTECA por contexto (o caminho de hoje quando não há veiculando). Devolve o
+ *  CANDIDATO escolhido (não só a ref) pra a crítica S5 ler os sinais de prova/persuasão. `null` = vazia. */
 async function chooseLibraryByContext(
   deps: WorkerDeps,
   orgId: string,
   accountId: string,
   match?: MatchContext & { readonly model: string },
-): Promise<ChosenCreative | null> {
+): Promise<DescribedCandidate | null> {
   const pool = await describeLibraryCandidates(deps, orgId, accountId);
   if (pool.length === 0) return null;
   let chosen = pool[0]!; // recência
@@ -1453,7 +2105,7 @@ async function chooseLibraryByContext(
     );
     if (picked) chosen = pool.find((c) => c.key === picked) ?? chosen;
   }
-  return chosen.ref;
+  return chosen;
 }
 
 /** Chave de identidade de um criativo p/ dedupe entre anúncios (mídia distinta). */
@@ -1531,6 +2183,112 @@ export function normalizeAdCount(adCount: number | undefined): number | undefine
   return Math.max(1, Math.min(Math.round(adCount), MAX_ADS_PER_DRAFT));
 }
 
+/**
+ * Política do PICKER de criativo (Slice 3): o dono ESCOLHEU `picked` criativos por nome; decide
+ * quantos anúncios e se o agente completa o resto. `agent` = completa os slots faltantes pela
+ * estratégia; `only_picked` = só os escolhidos (reduz o nº de anúncios ao que ele nomeou). Picks
+ * cobrindo tudo (`picked >= adCount`) → usa os escolhidos, 1 por anúncio. Sem decisão E faltando
+ * criativo → `ask` (o Roy pergunta: completo ou você escolhe mais). PURO/testável. */
+export type CreativeFill =
+  | { readonly decision: "ask" }
+  | { readonly decision: "agent"; readonly variants: number }
+  | { readonly decision: "only_picked"; readonly variants: number };
+
+export function resolveCreativeFill(picked: number, adCount: number, fill: "agent" | "only_picked" | undefined): CreativeFill {
+  const target = Math.max(1, adCount);
+  if (picked <= 0) return { decision: "agent", variants: target }; // sem picks → estratégia (comportamento atual)
+  if (picked >= target) return { decision: "only_picked", variants: target }; // escolhas cobrem os anúncios
+  if (fill === "agent") return { decision: "agent", variants: target };
+  if (fill === "only_picked") return { decision: "only_picked", variants: picked };
+  return { decision: "ask" }; // faltando criativo e sem decisão → pergunta ao dono
+}
+
+/** Casa a Página que o dono DESCREVEU (nome ou número de WhatsApp) contra as Páginas da conta.
+ *  Nome = match por substring (case-insensitive); número = substring dos dígitos (mín. 6 pra não
+ *  casar fragmento curto). Retorna as Páginas candidatas — 1 = escolha clara; 0 ou N = o caller
+ *  pergunta (nunca chuta). PURO/testável (W2 — escolher entre N Páginas/números). */
+/** mínimo de dígitos pra casar uma Página por NÚMERO — evita que um fragmento curto (ex: "553",
+ *  código de país/DDD) case várias Páginas à toa. Um número de WhatsApp real tem bem mais que isto. */
+const MIN_PHONE_MATCH_DIGITS = 6;
+
+/** comprimento máximo plausível de uma referência (nome/número) dita pelo dono pra ESCOLHER uma
+ *  entidade (Página/pixel). Acima disso é quase sempre alucinação do modelo (raciocínio/JSON malformado
+ *  que caiu no arg da tool). */
+const MAX_CHOICE_QUERY_LEN = 80;
+
+/** Valores-sentinela que o LLM emite quando NÃO há escolha dita (artefato de JSON/serialização que cai
+ *  no arg): `null`/`undefined`/`nil`/`none`/`n/a`/`false`/`true`. Tratados como "sem escolha", nunca como
+ *  um nome a casar (senão "não achei :null"). Cada picker soma os seus (ex: "página"/"pixel"). */
+const SENTINEL_CHOICE_QUERIES: readonly string[] = ["null", "undefined", "nil", "none", "na", "false", "true"];
+const SENTINEL_PAGE_QUERIES: ReadonlySet<string> = new Set([...SENTINEL_CHOICE_QUERIES, "page", "pagina"]);
+const SENTINEL_PIXEL_QUERIES: ReadonlySet<string> = new Set([...SENTINEL_CHOICE_QUERIES, "pixel"]);
+
+/** Sanitiza uma referência de ESCOLHA vinda do LLM ANTES de casar/ecoar (§7/§13, fonte única Página+pixel):
+ *  colapsa pra UMA linha, tira caracteres de controle/formato, e descarta o que for vazio, longo demais
+ *  (alucinação) OU um valor-sentinela/artefato (ex: `:null`, `null`, `{}`) → null. O caller trata null como
+ *  "sem escolha" (usa o default), NUNCA ecoa o texto cru nem trava o dono. Incidente real: o modelo mandou
+ *  `":null"` no campo `page` numa criação SEM Página dita e o Roy puniu ("não achei :null"). PURO. */
+function sanitizeChoiceQuery(raw: string | undefined | null, sentinels: ReadonlySet<string>): string | null {
+  if (!raw) return null;
+  const oneLine = raw
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (oneLine.length === 0 || oneLine.length > MAX_CHOICE_QUERY_LEN) return null;
+  // núcleo alfanumérico (sem pontuação/aspas/chaves/dois-pontos): vazio (`{}`, `:`) OU sentinela
+  // (`:null`→"null") → não é um nome de verdade → "sem escolha".
+  const core = oneLine.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+  if (core.length === 0 || sentinels.has(core)) return null;
+  return oneLine;
+}
+
+/** Sanitiza a referência de Página (delegando a `sanitizeChoiceQuery` com os sentinelas de Página). PURO. */
+export function cleanPageQuery(raw?: string | null): string | null {
+  return sanitizeChoiceQuery(raw, SENTINEL_PAGE_QUERIES);
+}
+
+/** Sanitiza a referência de pixel (mesma régua da Página; sentinelas incluem "pixel"). PURO. */
+export function cleanPixelQuery(raw?: string | null): string | null {
+  return sanitizeChoiceQuery(raw, SENTINEL_PIXEL_QUERIES);
+}
+
+/** Casa a Página pela referência do dono. NOME → o MESMO matcher fuzzy das outras entidades
+ *  (`resolveNamedMatch`: typo/acento/caixa/ordem de palavra toleradas — §13 reuso-primeiro, sem
+ *  matcher paralelo). NÚMERO → substring dos dígitos (o dono costuma dar só os últimos dígitos do
+ *  WhatsApp, que o match por nome não pega). Devolve `PageInfo[]`: o número casa direto; pro nome,
+ *  `one`→[1] (autoescolhe com folga) / `ambiguous`→[N] (o caller pergunta) / `none`→[]. */
+export function matchPagesByQuery(pages: readonly PageInfo[], query: string): PageInfo[] {
+  const digits = query.replace(/\D+/g, "");
+  if (digits.length >= MIN_PHONE_MATCH_DIGITS) {
+    const byNumber = pages.filter((p) => p.whatsappNumber?.includes(digits));
+    if (byNumber.length > 0) return byNumber; // 0 → cai pro nome (pode ser um nome com dígitos)
+  }
+  const m = resolveNamedMatch(pages, query, { name: (p) => p.name ?? null });
+  if (m.kind === "one") return [m.row];
+  if (m.kind === "ambiguous") return [...m.rows];
+  return [];
+}
+
+/** Rótulo de UMA Página pra listar na desambiguação (nome + WhatsApp quando houver). PURO. */
+export function pageChoiceLabel(p: PageInfo): string {
+  return `${p.name ?? "Página do Facebook"}${p.whatsappNumber ? ` (WhatsApp +${p.whatsappNumber})` : ""}`;
+}
+
+/** Casa o pixel pela referência do dono. Só por NOME (o dono não decora o id numérico do pixel) — o
+ *  MESMO matcher fuzzy das outras entidades (`resolveNamedMatch`: typo/acento/caixa/ordem toleradas,
+ *  §13 reuso-primeiro). `one`→[1] (autoescolhe) / `ambiguous`→[N] (o caller pergunta) / `none`→[]. */
+export function matchPixelsByQuery(pixels: readonly PixelInfo[], query: string): PixelInfo[] {
+  const m = resolveNamedMatch(pixels, query, { name: (p) => p.name ?? null });
+  if (m.kind === "one") return [m.row];
+  if (m.kind === "ambiguous") return [...m.rows];
+  return [];
+}
+
+/** Rótulo de UM pixel pra listar/confirmar (nome quando houver, senão o id abreviado). PURO. */
+export function pixelChoiceLabel(p: PixelInfo): string {
+  return p.name ?? `pixel ${p.pixelId}`;
+}
+
 /** Preferência de MÍDIA que o dono pode pedir pra composição (o adapter/estratégia escolhe QUAIS). */
 export const MEDIA_PREFERENCES = ["video", "image", "mixed"] as const;
 export type MediaPreference = (typeof MEDIA_PREFERENCES)[number];
@@ -1594,23 +2352,37 @@ export function interleaveMedia(refs: readonly ChosenCreative[]): { ordered: Cho
   return { ordered, hasVideo: videos.length > 0, hasImage: images.length > 0 };
 }
 
+/** Um vídeo tem capa CONHECIDA offline (image_hash guardado)? Anúncio de vídeo precisa de capa;
+ *  sem ela guardada, o apply RESOLVE a capa ao vivo (thumbnail do vídeo). Portanto: no AUTO-fill o
+ *  agente só adiciona vídeo com capa conhecida (não arrisca padding que dependa de fetch #10); numa
+ *  ESCOLHA explícita do dono, o vídeo sem capa é permitido (o apply busca a capa — mesma garantia do
+ *  criativo-base, cuja capa é resolvida ao vivo). Imagem sempre tem capa; o discriminador é o videoId. */
+export function hasOfflineCover(r: ChosenCreative): boolean {
+  return !r.videoId || Boolean(r.imageHash);
+}
+
 /** Pool de candidatos (veiculando + biblioteca) conforme a ESTRATÉGIA do agente — mesma fonte de
- *  chooseCreative (números ao vivo + visão), reusada p/ pegar criativos DISTINTOS adicionais. */
-async function buildCreativePool(
+ *  chooseCreative (números ao vivo + visão), reusada p/ pegar criativos DISTINTOS adicionais.
+ *  `includeCoverlessVideo` (ESCOLHA explícita do dono): mantém vídeos da biblioteca SEM capa guardada
+ *  no pool (o apply resolve a capa ao vivo) — sem ele, o dono não conseguiria escolher um vídeo que a
+ *  lista mostrou (diz×faz §7). Default false = só criativos montáveis offline (auto-fill seguro). */
+export async function buildCreativePool(
   deps: WorkerDeps,
   orgId: string,
   accountId: string,
   ref: AdAccountRef,
   strategy: CreativeSourceStrategy,
+  opts?: { includeCoverlessVideo?: boolean },
 ): Promise<DescribedCandidate[]> {
   const pool: DescribedCandidate[] = [];
   if (strategy.mode !== "library") pool.push(...(await describeServingCandidates(deps, orgId, accountId, ref)));
+  // Fatia 2 (paridade com a lista): sem veiculando CAPTURADO (nunca analisou / tudo pausado), busca
+  // os anúncios AO VIVO (inclui pausados) pra o dono conseguir NOMEAR um criativo que a lista mostrou.
+  if (pool.length === 0 && strategy.mode !== "library") pool.push(...(await describeLiveServingCandidates(deps, ref)));
   if (strategy.mode !== "serving" || pool.length === 0) pool.push(...(await describeLibraryCandidates(deps, orgId, accountId)));
-  // ENTREGÁVEL: um anúncio de VÍDEO exige capa (image_hash) no video_data — e ler o thumbnail do
-  // vídeo pode falhar com o token (#10). Sem capa conhecida, o anúncio extra falharia no apply; então
-  // o agente só ADICIONA extras que sabe montar: imagem sempre, vídeo só com capa. (O criativo
-  // principal vem de chooseCreative, cuja capa é resolvida ao vivo em inferCreationDefaults.)
-  return pool.filter((c) => !c.ref.videoId || Boolean(c.ref.imageHash));
+  // Numa ESCOLHA explícita, mantém tudo (o apply resolve a capa do vídeo ao vivo); no auto-fill, só o
+  // que é montável offline (não arrisca padding que dependa de fetch #10). Ver `hasOfflineCover`.
+  return opts?.includeCoverlessVideo ? pool : pool.filter((c) => hasOfflineCover(c.ref));
 }
 
 
@@ -1755,6 +2527,47 @@ async function describeServingCandidates(deps: WorkerDeps, orgId: string, accoun
   return out;
 }
 
+/** Candidatos do picker buscados AO VIVO (Fatia 2): quando a análise nunca capturou (ex.: tudo
+ *  pausado), pega os anúncios direto na Meta (`listEntities` SEM filtro → inclui pausados) + o
+ *  criativo (`getCreatives`, que traz image_hash/video_id reusáveis). SEM visão cacheada → a descrição
+ *  é o NOME do anúncio + a copy (o matcher casa por texto). Só ads com mídia reusável entram (o filtro
+ *  de vídeo-sem-capa do `buildCreativePool` ainda se aplica). Falha → vazio (degrada pra biblioteca). */
+async function describeLiveServingCandidates(deps: WorkerDeps, ref: AdAccountRef): Promise<DescribedCandidate[]> {
+  let ads: Awaited<ReturnType<typeof deps.ports.ads.listEntities>>;
+  try {
+    ads = await withTimeout(deps.ports.ads.listEntities(ref, "ad"), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return [];
+  }
+  const usable = ads.filter((a) => a.status !== "deleted" && a.status !== "archived").slice(0, SERVING_PICK_CANDIDATES);
+  if (usable.length === 0) return [];
+  const nameById = new Map(usable.map((a) => [a.id, a.name]));
+  let creatives: Awaited<ReturnType<typeof deps.ports.ads.getCreatives>> = [];
+  try {
+    creatives = await withTimeout(deps.ports.ads.getCreatives(ref, usable.map((a) => a.id)), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return [];
+  }
+  const out: DescribedCandidate[] = [];
+  for (const c of creatives) {
+    if (!c.imageHash && !c.videoId) continue; // sem mídia reusável → não dá pra clonar
+    const name = nameById.get(c.adId) ?? "";
+    const copy = [c.title, c.body, c.callToAction].filter(Boolean).join(" ");
+    out.push({
+      key: `srv:${c.adId}`,
+      description: [name ? `Anúncio "${name}"` : "Anúncio", copy ? `Texto: ${copy}` : ""].filter(Boolean).join(". "),
+      ref: {
+        ...(c.imageHash ? { imageHash: c.imageHash } : {}),
+        ...(c.videoId ? { videoId: c.videoId } : {}),
+        assetId: c.adId,
+        origin: "reuse",
+        source: "serving",
+      },
+    });
+  }
+  return out;
+}
+
 /** Descrição compacta da visão cacheada p/ o matcher de contexto (o que o criativo comunica). */
 function describeVision(result: unknown): string {
   const r = (result ?? {}) as { summary?: string; hook?: string; angle?: string; format?: string };
@@ -1787,6 +2600,9 @@ export async function proposeCreateCampaign(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
   args: {
+    /** NOME da campanha dado pelo dono (ex: "Teste de Criação"). Vira `campaignName` no spec; o
+     *  conjunto/anúncios derivam dele. Omitido → nome padrão (`goalNounPt`) no apply (zero-config). */
+    readonly name?: string;
     readonly goal?: ConversionGoal;
     readonly budgetReais?: number;
     readonly forcedCreativeAssetId?: string;
@@ -1814,6 +2630,51 @@ export async function proposeCreateCampaign(
     readonly distinctCreatives?: number;
     /** preferência de MÍDIA da composição — "video" | "image" | "mixed". O agente escolhe os assets. */
     readonly mediaPreference?: MediaPreference;
+    /** CRIATIVOS escolhidos pelo dono por NOME/descrição (picker de chat, Slice 3): cada um resolvido
+     *  determinístico p/ asset (veiculando + biblioteca) e distribuído 1/anúncio. Ambíguo/não-achado →
+     *  pergunta (nunca chuta). Vazio → o agente escolhe pela estratégia (comportamento anterior). */
+    readonly creatives?: readonly string[];
+    /** o que fazer quando o dono escolheu MENOS criativos que anúncios (`creatives` < `adCount`):
+     *  "agent" completa o resto pela performance; "only_picked" reduz os anúncios aos escolhidos.
+     *  Ausente com faltante → pergunta (decisão do dono). */
+    readonly fillRemaining?: "agent" | "only_picked";
+    /** URL de DESTINO informada pelo dono (site/tráfego/conversão) — vence o link herdado da conta.
+     *  Ignorada (com nota) em objetivo de conversas no WhatsApp; inválida → nota + destino padrão. */
+    readonly link?: string;
+    /** PÁGINA de destino DESCRITA pelo dono por nome ou número de WhatsApp (W2 — quando há N Páginas).
+     *  Resolvida determinístico p/ a Página real; ambígua/não-achada → pergunta (nunca chuta). Vazia →
+     *  usa a Página do anúncio-base (`defaults.pageId`, comportamento anterior). */
+    readonly page?: string;
+    /** PIXEL de rastreamento DESCRITO pelo dono por nome (B — quando a conta tem N pixels). Resolvido
+     *  determinístico p/ o pixel real; ambíguo/não-achado → pergunta (nunca chuta); conta com 1 pixel →
+     *  usa ele. Vazio → o pixel INFERIDO do melhor anúncio (`defaults.pixelId`); quando há >1 pixel, o eco
+     *  NOMEIA o inferido (transparência). */
+    readonly pixel?: string;
+    /** SINAL de estrutura extraído da fala (C1, decisão #1): o core `resolveStructure` decide a
+     *  estrutura-default do playbook a partir daqui; ausência = "create" (genérico). */
+    readonly intent?: CampaignIntent;
+    /** OVERRIDE do dono de onde mora a verba (C1): vence o default do playbook. Ausente = o
+     *  recomendado pra intenção. */
+    readonly budgetMode?: BudgetMode;
+    /** FOCO do criativo declarado pelo dono (S4): ângulo a destacar (preço/prova/benefício/…) —
+     *  guia a ESCOLHA do criativo via o matcher. Ausente = escolha só por contexto/desempenho. */
+    readonly creativeAngle?: string;
+    /** INTENÇÃO de criativo do dono (S4): reusar o que converte × testar algo novo. Presente →
+     *  override da estratégia de fonte (`creativeSourceForIntent`); ausente = a config do agente. */
+    readonly creativeIntent?: CreativeIntent;
+    /** OVERRIDE explícito do dono do Advantage (C3): "liga o Advantage" = true; "tira" = false.
+     *  Vence a inferência. Ausente = infere de `localBusiness` (ou não mexe). */
+    readonly advantage?: boolean;
+    /** SINAL de negócio LOCAL (C3) que o LLM infere do businessContext (atende só uma região) —
+     *  entra na inferência de Advantage (local → recomenda OFF). */
+    readonly localBusiness?: boolean;
+    /** SEGMENTOS do teste de público multi-conjunto (C2/P7 producer): ≥2 → um CONJUNTO por segmento.
+     *  Cada segmento carrega o PÚBLICO COMPLETO (`SegmentPublicoInput`: idade/gênero/geo/interesses/
+     *  comportamentos/públicos salvos/raio) — o dono varia QUALQUER dimensão por conjunto; o que o
+     *  segmento não define herda a base compartilhada dos args top-level (`mergeSegmentPublico`).
+     *  Resolvido pelo MESMO `resolveProposedExplicitTargeting` do rascunho de 1 conjunto. Criativo
+     *  COMPARTILHADO (Roy escolhe; ajuste por-conjunto é no site). Ambíguo → bloqueia honesto. */
+    readonly segments?: ReadonlyArray<SegmentPublicoInput>;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -1829,9 +2690,104 @@ export async function proposeCreateCampaign(
     return { kind: "blocked", reason: "criar campanha está desligado para este agente (ligue em ações permitidas)" };
   }
 
+  // PIXEL cedo (§7 clareza): o OBJETIVO decide se precisa de pixel — valida ANTES de resolver
+  // público/geo, pra não arrastar o dono por rodadas de desambiguação de LUGAR numa campanha que nem
+  // pode nascer (incidente: purchase sem pixel só bloqueava DEPOIS do geo, confundindo "público" com
+  // "objetivo"). A alternativa nativa (mensagens no WhatsApp) não precisa de pixel. Mesma verdade do refino.
+  const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
+  const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
+
+  // PIXEL (B): o default é INFERIDO em silêncio (`defaults.pixelId` = pixel do melhor anúncio). O dono só
+  // ESCOLHE quando NOMEIA um ("usa o pixel X"): resolvo determinístico; 1 acerto seta; conta com 1 pixel →
+  // uso ele (nada a escolher); 0/N → PERGUNTO listando (§8 nunca chuto). Sem escolha → sigo no inferido; a
+  // transparência do inferido (quando há >1 pixel) entra abaixo, já com o `auto` conhecido.
+  let pixelId = defaults.pixelId;
+  let pixelChoiceNote: string | undefined;
+  const pixelQuery = cleanPixelQuery(args.pixel);
+  if (pixelQuery) {
+    const pixels = await deps.ports.ads.listPixels(ac.ref);
+    if (pixels.length === 1) {
+      pixelId = pixels[0]!.pixelId; // 1 pixel na conta → nada a escolher, uso ele
+      pixelChoiceNote = `Pixel: *${pixelChoiceLabel(pixels[0]!)}*.`;
+    } else {
+      const hits = matchPixelsByQuery(pixels, pixelQuery);
+      if (hits.length === 1) {
+        pixelId = hits[0]!.pixelId;
+        pixelChoiceNote = `Pixel escolhido: *${pixelChoiceLabel(hits[0]!)}*.`;
+      } else if (pixels.length === 0) {
+        // não consegui listar (sem acesso) → uso o pixel do anúncio-base, honesto.
+        pixelChoiceNote = `Não consegui listar seus pixels agora, então usei o pixel do seu anúncio-base.`;
+      } else {
+        // 0 matches OU N matches → pergunta, listando o que a conta tem (§8: nunca escolho sozinho).
+        const listPt = pixels.map((p) => `• ${pixelChoiceLabel(p)}`).join("\n");
+        return {
+          kind: "ask",
+          echo:
+            hits.length === 0
+              ? `Não achei um pixel que bata com "${pixelQuery}". Seus pixels:\n${listPt}\n\nQual você quer usar?`
+              : `Achei mais de um pixel pra "${pixelQuery}":\n${hits.map((p) => `• ${pixelChoiceLabel(p)}`).join("\n")}\n\nQual deles?`,
+        };
+      }
+    }
+  }
+
+  // Criar do zero NÃO reusa criativo (não gera formulário de lead) → lead segue exigindo pixel. Só ajo no
+  // gap de PIXEL aqui (§7 clareza — o pixel decide se a campanha pode nascer); a Página é resolvida abaixo
+  // (picker) e tem a própria rede no apply, então não bloqueio por ela cedo. Usa o `pixelId` já resolvido
+  // (a escolha do dono vence o inferido).
+  if (promotedObjectGap(goal, { reusesCreatives: false, hasPixel: !!pixelId, hasPage: !!defaults.pageId }) === "pixel") {
+    return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
+  }
+
+  // PÁGINA de destino (W2): o dono pode ter N Páginas/números de WhatsApp. Se ele DESCREVEU uma
+  // (nome/número), resolvo determinístico contra as Páginas da conta; ambíguo/não-achado → PERGUNTO
+  // (lista as opções, nunca chuto). Sem escolha → a Página do anúncio-base (comportamento anterior).
+  // `listPages` é best-effort: vazio (403/sem acesso) e o dono nomeou → caio na base com nota honesta.
+  let pageId = defaults.pageId;
+  let pageChoiceNote: string | undefined;
+  // sanitiza (incidente real: o modelo mandou lixo no `page` e o eco vazou) — lixo/vazio → null →
+  // usa a Página padrão do anúncio-base sem ecoar nada nem travar.
+  const pageQuery = cleanPageQuery(args.page);
+  if (pageQuery) {
+    const pages = await deps.ports.ads.listPages(ac.ref);
+    const hits = matchPagesByQuery(pages, pageQuery);
+    if (hits.length === 1) {
+      pageId = hits[0]!.pageId;
+      // objetivo de conversas já mostra a Página na linha "Destino" (não duplico); demais objetivos
+      // não têm essa linha → confirmo a escolha aqui.
+      if (!isMessagingGoal(goal)) pageChoiceNote = `Página escolhida: *${pageChoiceLabel(hits[0]!)}*.`;
+    } else if (pages.length === 0) {
+      // não consegui listar as Páginas (sem acesso) → uso a do anúncio-base, honesto.
+      pageChoiceNote = `Não consegui listar suas Páginas agora, então usei a Página do seu anúncio-base. Dá pra trocar depois de eu criar, ou tente de novo.`;
+    } else {
+      // 0 matches OU N matches → pergunta, listando o que a conta tem (§8: nunca escolho sozinho).
+      const listPt = pages.map((p) => `• ${pageChoiceLabel(p)}`).join("\n");
+      return {
+        kind: "ask",
+        echo:
+          hits.length === 0
+            ? `Não achei uma Página que bata com "${pageQuery}". Suas Páginas:\n${listPt}\n\nQual você quer usar?`
+            : `Achei mais de uma Página pra "${pageQuery}":\n${hits.map((p) => `• ${pageChoiceLabel(p)}`).join("\n")}\n\nQual delas?`,
+      };
+    }
+  }
+
   // AUTÔNOMO (proativo, Fatia 8): ambíguo/inexistente é DESCARTADO (nunca pergunta — não há humano
   // no loop) e anotado no eco/rationale. Interativo (chat): ambíguo→pergunta, como sempre.
   const auto = opts.autonomous === true;
+  // Transparência do inferido (B, Opção 2): pixel NÃO escolhido + objetivo que usa pixel + conta com >1
+  // pixel → o eco NOMEIA o pixel que vou usar (o dono corrige antes de aprovar, sem eu perguntar). Só
+  // interativo (proativo não fala sozinho); 1 pixel → nada a decidir → sem linha.
+  if (!auto && !pixelQuery && pixelId && conversionRequiresPixel(goal)) {
+    const pixels = await deps.ports.ads.listPixels(ac.ref);
+    if (pixels.length > 1) {
+      // G14 (sem id cru): se o inferido não está no set listado, NÃO vaza o id numérico — rótulo genérico.
+      const inferred = pixels.find((p) => p.pixelId === pixelId);
+      pixelChoiceNote = inferred
+        ? `Rastreando pelo pixel *${pixelChoiceLabel(inferred)}* — você tem outros; me diz se quer trocar.`
+        : `Rastreando pelo pixel de conversão da conta — você tem outros; me diz se quer um específico.`;
+    }
+  }
   const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? [], auto);
   if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
   // Autônomo que EXIGE público específico (ex: remarketing): se nenhum público de inclusão resolveu,
@@ -1849,6 +2805,40 @@ export async function proposeCreateCampaign(
   // raio (Slice 5): aplica às cidades resolvidas + monta áreas por endereço (clampado + notas).
   const geoRadius = applyCityRadius(geoPrep.geo, args.radiusKm);
   const areas = buildRadiusAreas(args.addressAreas);
+
+  // C2 PRODUCER — teste de público multi-conjunto: cada SEGMENTO vira 1 CONJUNTO com seu público
+  // distinto (interesses/públicos salvos) sobre a base COMPARTILHADA (geo/idade/gênero). Reusa o
+  // MESMO pipeline de resolução (prepare-fns + D1) por segmento. Criativo compartilhado (o do rascunho).
+  // Ambíguo/não-achado num segmento → bloqueia honesto (nomeando o conjunto); D1 auto-resolve por
+  // segmento = refinamento. budgetMode = CBO (verba única na campanha — o padrão do teste de público).
+  const segmentAdsets = await (async (): Promise<AdsetSpec[] | { blocked: string } | null> => {
+    if (!args.segments || args.segments.length < 2) return null;
+    // P7: base compartilhada = o público de topo (nomes crus); cada segmento carrega o público COMPLETO
+    // e sobrepõe a base por campo (`mergeSegmentPublico`), resolvido pelo MESMO resolvedor do single.
+    const baseInput: ProposedExplicitInput = {
+      ...(args.geo ? { geo: args.geo } : {}),
+      ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
+      ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
+      ...(args.gender ? { gender: args.gender } : {}),
+      ...(args.interests ? { interests: args.interests } : {}),
+      ...(args.behaviors ? { behaviors: args.behaviors } : {}),
+      ...(args.includeAudiences ? { includeAudiences: args.includeAudiences } : {}),
+      ...(args.excludeAudiences ? { excludeAudiences: args.excludeAudiences } : {}),
+      ...(args.radiusKm !== undefined ? { radiusKm: args.radiusKm } : {}),
+      ...(args.addressAreas ? { addressAreas: args.addressAreas } : {}),
+    };
+    const out: AdsetSpec[] = [];
+    for (const [i, seg] of args.segments.entries()) {
+      const label = seg.label?.trim() || `Conjunto ${i + 1}`;
+      const { label: _label, ...segInput } = seg;
+      const res = await resolveProposedExplicitTargeting(deps, ctx, ac.ref, mergeSegmentPublico(baseInput, segInput), { autonomous: auto });
+      if (res.kind === "blocked") return { blocked: `no público do conjunto "${label}": ${res.reason}` };
+      const targeting: NonNullable<CampaignDraftSpec["targeting"]> = res.kind === "ok" ? res.targeting : { kind: "advantage_plus" };
+      out.push({ name: label, targeting });
+    }
+    return out;
+  })();
+  if (segmentAdsets && "blocked" in segmentAdsets) return { kind: "blocked", reason: segmentAdsets.blocked };
   const hasExplicitPrimitive =
     geoPrep.geo.length > 0 ||
     args.ageMin !== undefined ||
@@ -1858,13 +2848,26 @@ export async function proposeCreateCampaign(
     behaviorPrep.interests.length > 0 ||
     areas.radiusAreas.length > 0;
 
-  const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
-  const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
+  // S3: estágio de público da campanha NOVA — QUENTE se incluiu custom audience não-lookalike;
+  // FRIO se há segmentação explícita sem público quente; senão desconhecido (neutro no fit).
+  // Alimenta o matcher enriquecido + a demoção do vencedor cross-stage em `chooseCreative`.
+  const campaignStage: AudienceStage =
+    aud.includeIds.length > 0 ? (aud.includeWarm ? "remarketing" : "prospecting") : hasExplicitPrimitive ? "prospecting" : "unknown";
+  // tema/oferta do vencedor pro matcher (S3): a 1ª variante de copy do anúncio provado, achatada em
+  // texto legível (headline + corpo). Contexto de encaixe, nunca ordem de copiar.
+  const winnerCopyText = summarizeWinnerCopy(defaults.winnerCopy);
+  // S4: FOCO declarado pelo dono — a intenção (reusar × testar) sobrepõe a estratégia de fonte
+  // configurada; ausente = a config do agente (comportamento anterior). O ângulo entra no matcher.
+  const creativeStrategy = args.creativeIntent ? creativeSourceForIntent(args.creativeIntent) : ac.creativeSource;
+
   // Criativo: FORÇADO (o que o usuário mandou no WhatsApp, Slice 7) OU pool único — melhor
   // veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR CASA com o contexto
-  // (objetivo + negócio + orientações) via matcher LLM barato.
-  const chosen = args.forcedCreativeAssetId
-    ? await loadForcedCreative(deps, ctx.orgId, ctx.adAccountId, args.forcedCreativeAssetId)
+  // (objetivo + negócio + orientações + estágio de público + tema do vencedor) via matcher LLM barato.
+  // O criativo escolhido vem com a CRÍTICA-estrategista (S5): o "não só faz" — quando o pick tem uma
+  // fraqueza real (vencedor cansando/prova fraca/nada casa), o Roy OPINA + recomenda (Ressalva no
+  // rascunho, que trava o auto-apply e aparece no card). Forçado pelo dono = sem crítica (foi escolha dele).
+  const chosenOutcome = args.forcedCreativeAssetId
+    ? { creative: await loadForcedCreative(deps, ctx.orgId, ctx.adAccountId, args.forcedCreativeAssetId), critique: { verdict: "solid" as const } }
     : await chooseCreative(
         deps,
         ctx.orgId,
@@ -1876,18 +2879,36 @@ export async function proposeCreateCampaign(
           ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
           ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
         },
-        ac.creativeSource,
-        { goal, businessContext: ac.businessContext, guidance: ac.guidance, model: ac.model },
+        creativeStrategy,
+        {
+          goal,
+          businessContext: ac.businessContext,
+          guidance: ac.guidance,
+          model: ac.model,
+          campaignStage,
+          ...(winnerCopyText ? { winnerCopy: winnerCopyText } : {}),
+          ...(args.creativeAngle ? { angle: args.creativeAngle } : {}),
+        },
       );
-  // Página é obrigatória (object_story_spec). Vem do anúncio veiculando; conta sem NENHUM
-  // anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria (falta a Page).
-  if (!defaults.pageId || !chosen) {
+  const chosen = chosenOutcome.creative;
+  const creativeCritique = chosenOutcome.critique;
+  // Página é obrigatória (object_story_spec). Vem do anúncio veiculando (ou da escolha do dono, W2);
+  // conta sem NENHUM anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria.
+  if (!pageId || !chosen) {
     // criativo JÁ resolvido (ex: o usuário mandou um no WhatsApp) mas falta a Página → a mensagem
     // de "me manda um criativo" confundiria; o bloqueio real é a Página, que vem de um anúncio ativo.
-    if (chosen && !defaults.pageId) {
+    if (chosen && !pageId) {
       return {
         kind: "blocked",
         reason: "recebi o criativo, mas essa conta ainda não tem uma Página de onde eu monte o anúncio — ela vem de um anúncio ativo. Conecte uma conta com anúncios (ou publique um) que eu crio a campanha.",
+      };
+    }
+    // G17: o usuário MANDOU um criativo (forcedCreativeAssetId) mas ele não carregou (ainda
+    // processando ou ilegível) → NÃO pedir "me manda um criativo" (ele acabou de mandar). Diz o real.
+    if (args.forcedCreativeAssetId && !chosen) {
+      return {
+        kind: "blocked",
+        reason: "o criativo que você mandou ainda não ficou pronto (está processando) ou não consegui ler — me manda de novo, ou espera uns segundos e tenta outra vez.",
       };
     }
     return {
@@ -1897,46 +2918,162 @@ export async function proposeCreateCampaign(
         : "essa conta ainda não tem um anúncio de onde eu possa reusar a página e o criativo — me manda um criativo ou conecte uma conta com anúncios",
     };
   }
+  // G12: sem budget explícito, começa num STARTER conservador (não no TETO de gasto novo — um limite
+  // de segurança não deve virar o valor gasto por padrão). Se o teto for menor que o starter, respeita
+  // o teto. (O starter é flat em unidade menor — R$30/¥3000/etc, razoável em qualquer moeda.)
   const requested = args.budgetReais
-    ? Math.round(args.budgetReais * MINOR_PER_UNIT)
-    : (ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
+    ? toMinorUnits(args.budgetReais, ac.currency)
+    : Math.min(DEFAULT_STARTER_BUDGET_MINOR, ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
   // Transparência do teto (§8 clareza pro dono): pediu mais que o teto de gasto novo →
   // o eco/card mostram "pediu X, virou Y" (mesmo helper/campo do escalar).
   const { dailyBudgetMinor, clampedByCap } = clampNewBudget(requested, ac.cfg.maxNewDailyBudgetMinor);
+
+  // ESTRUTURA do playbook (C1, decisão #1): o core decide dos SINAIS (intent), o dono sobrepõe.
+  // C1 é 1 conjunto — só `budgetMode` (onde mora a verba) e `ads` (nº de anúncios default) saem
+  // daqui; multi-conjunto (structure.adsets) fica pro C2. O default de anúncios do playbook só
+  // vale quando o dono NÃO pediu um nº específico (args.adCount vence).
+  const structure = resolveStructure(args.intent ?? "create", args.adCount != null ? { ads: args.adCount } : {});
+  // Teste de público multi-conjunto → verba única na campanha (CBO) por padrão (o dono sobrepõe).
+  const budgetMode: BudgetMode = args.budgetMode ?? (segmentAdsets ? "cbo" : structure.budgetMode);
+  // Piso da Meta (C1: 1 conjunto → piso simples; C2 escala com N — no CBO a verba única precisa
+  // cobrir ~piso × nº de conjuntos). RECOMENDAÇÃO — avisa, não trava.
+  const budgetFloorMinor = resolveBudgetFloorMinor(budgetMode, segmentAdsets ? segmentAdsets.length : 1, MIN_BUDGET_MINOR);
+  const belowFloor = dailyBudgetMinor < budgetFloorMinor;
+  // Advantage (C3, decisão #2): o dono decide (override explícito vence); senão INFERE do contexto
+  // (negócio local → OFF). "Liga tudo" = expansão de público + melhorias de criativo (bundle).
+  // Ausência total de sinal = não mexe (undefined → adapter mantém o comportamento pré-C3). SEMPRE
+  // entra no eco+confirma abaixo — nunca aplica sem "sim".
+  const advantageOn: boolean | undefined =
+    args.advantage ?? (args.localBusiness !== undefined ? resolveAdvantage({ localBusiness: args.localBusiness }) : undefined);
 
   // COMPOSIÇÃO de criativo (Fatia 7/8): o agente monta N anúncios (adCount) com uma COMPOSIÇÃO pedida
   // — quantos DISTINTOS vs repetidos (distinctCreatives, ex: "2 iguais + 2 diferentes") e a mídia
   // (mediaPreference: vídeo/imagem/misto). O agente escolhe QUAIS criativos (estratégia); o usuário
   // troca o asset específico no site. Criativo forçado (WhatsApp) = anúncio único (comportamento antigo).
-  const requestedAdCount = args.forcedCreativeAssetId ? undefined : normalizeAdCount(args.adCount);
+  // adCount: o dono vence; sem pedido, usa o default de anúncios do playbook (structure.ads).
+  const requestedAdCount = args.forcedCreativeAssetId ? undefined : normalizeAdCount(args.adCount ?? structure.ads);
   const compositionNotes: string[] = [];
+  // Honestidade 1-N-1 antes do C2 (diz×faz, determinístico — não depende do LLM lembrar): pediu
+  // testar VÁRIOS públicos (structure.adsets > 1), mas por aqui eu só monto 1 conjunto. Monto o que
+  // dá + recomendo os demais pro site (INVARIANTE: nunca travo sem próximo passo).
+  if (structure.adsets > 1 && !segmentAdsets) {
+    compositionNotes.push(
+      "Você quer testar vários públicos — me diga os públicos (ex: \"testa interesse em estética, público de remarketing e lookalike\") que eu monto **um conjunto pra cada** (mesmo criativo, orçamento único na campanha), ou monta/edita os conjuntos no site. Sem os públicos, sigo com 1 conjunto no público mais forte.",
+    );
+  }
+  if (pageChoiceNote) compositionNotes.push(pageChoiceNote); // W2: eco da Página escolhida (ou da degradação honesta)
+  if (pixelChoiceNote) compositionNotes.push(pixelChoiceNote); // B: eco do pixel escolhido OU do inferido (transparência, >1 pixel)
   // pool DISTINTO priorizado (o melhor `chosen` primeiro), deduplicado por mídia, filtrado por preferência.
-  const poolRefs = args.forcedCreativeAssetId
-    ? []
-    : (await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource)).map((c) => c.ref);
+  // Mantém os candidatos DESCRITOS (não só o ref): a decomposição de visão do líder aterra a copy.
+  // pool inclui vídeos SEM capa guardada (o dono pode ESCOLHER um que a lista mostrou — o apply
+  // resolve a capa ao vivo); o auto-fill (poolRefs) filtra pra só o montável offline (sem padding
+  // que dependa de fetch de thumbnail). Assim a ESCOLHA explícita nunca some da resolução (diz×faz §7).
+  const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, creativeStrategy, { includeCoverlessVideo: true });
+  const poolRefs = pool.filter((c) => hasOfflineCover(c.ref)).map((c) => c.ref);
+
+  // PICKER (Slice 3): o dono ESCOLHEU criativos por nome ("o campeão", "o vídeo da praia"). Resolve
+  // cada nome pro asset com o matcher que NÃO chuta (pickCreativeByReference → null quando ambíguo);
+  // falha de resolução OU faltando criativo sem decisão → PERGUNTA (nunca cria com o criativo errado
+  // nem em silêncio). Sem picks → segue a estratégia (comportamento atual).
+  const pickerNames = args.forcedCreativeAssetId ? [] : (args.creatives ?? []).map((s) => s.trim()).filter(Boolean);
+  const pickedRefs: ChosenCreative[] = [];
+  let pickerVariants: number | undefined;
+  let pickerAgentFill = false;
+  if (pickerNames.length > 0) {
+    const candidates = pool.map(toLibraryCandidate);
+    const unresolved: string[] = [];
+    const seenPick = new Set<string>(); // dois nomes → o mesmo asset conta 1 vez (contagem/eco honestos)
+    for (const nameRef of pickerNames) {
+      const assetId = await pickCreativeByReference(deps.ports.llm, ac.model, nameRef, candidates, { orgId: ctx.orgId });
+      const hit = assetId ? pool.find((c) => c.key === assetId) : undefined;
+      if (!hit) unresolved.push(nameRef);
+      else if (!seenPick.has(creativeKey(hit.ref))) {
+        seenPick.add(creativeKey(hit.ref));
+        pickedRefs.push(hit.ref);
+      }
+    }
+    const listHint = 'me diz de outro jeito, ou peça "quais criativos eu tenho" que eu listo os disponíveis';
+    if (pickedRefs.length === 0 || unresolved.length > 0) {
+      return {
+        kind: "ask",
+        echo:
+          unresolved.length > 0
+            ? `Não achei ${unresolved.length === 1 ? "o criativo" : "os criativos"}: ${unresolved.join(", ")} — ${listHint}.`
+            : `Não achei os criativos que você citou — ${listHint}.`,
+      };
+    }
+    const adCount = requestedAdCount ?? pickedRefs.length;
+    const fill = resolveCreativeFill(pickedRefs.length, adCount, args.fillRemaining);
+    if (fill.decision === "ask") {
+      const faltam = adCount - pickedRefs.length;
+      return {
+        kind: "ask",
+        echo: `Você escolheu ${pickedRefs.length} criativo(s) pra ${adCount} anúncios. Completo ${faltam === 1 ? "o que falta" : `os outros ${faltam}`} com os que performam melhor, ou você quer escolher mais? (responda "completa" ou me diz os outros)`,
+      };
+    }
+    pickerVariants = fill.variants;
+    pickerAgentFill = fill.decision === "agent";
+  }
+
   const seenKey = new Set<string>();
-  let distinctList = [chosen, ...poolRefs].filter((c) => (seenKey.has(creativeKey(c)) ? false : (seenKey.add(creativeKey(c)), true)));
-  if (args.mediaPreference === "video" || args.mediaPreference === "image") {
+  // seed da composição: com picks, os ESCOLHIDOS lideram (+ pool só quando o dono pediu pra completar);
+  // sem picks, o comportamento atual (melhor `chosen` primeiro).
+  const seedList = pickedRefs.length > 0 ? [...pickedRefs, ...(pickerAgentFill ? poolRefs : [])] : [chosen, ...poolRefs];
+  let distinctList = seedList.filter((c) => (seenKey.has(creativeKey(c)) ? false : (seenKey.add(creativeKey(c)), true)));
+  // filtro de mídia NÃO se aplica quando o dono escolheu assets específicos (a escolha explícita vence).
+  if (pickedRefs.length === 0 && (args.mediaPreference === "video" || args.mediaPreference === "image")) {
     const filtered = filterByMedia(distinctList, args.mediaPreference);
     if (filtered.length === 0) compositionNotes.push(`Não achei criativo ${mediaLabelPt(args.mediaPreference)} pra reusar — usei os criativos que a conta tem. Você troca cada um no site.`);
     else distinctList = filtered;
-  } else if (args.mediaPreference === "mixed") {
+  } else if (pickedRefs.length === 0 && args.mediaPreference === "mixed") {
     // "vídeos E imagens" → GARANTE os dois tipos entre os distintos (alterna); avisa se só há um tipo.
     const mixed = interleaveMedia(distinctList);
     distinctList = mixed.ordered;
     if (!(mixed.hasVideo && mixed.hasImage)) compositionNotes.push(`Você pediu vídeos e imagens, mas a conta só tem ${mixed.hasVideo ? "vídeos" : "imagens"} reusáveis — usei o que há. Você troca cada um no site.`);
   }
-  // targetVariants: adCount pedido vence; senão, multi só quando há ≥2 distintos (senão o padrão de copy).
+  // targetVariants: picker manda; senão adCount pedido; senão multi só quando há ≥2 distintos.
   const targetVariants = args.forcedCreativeAssetId
     ? DEFAULT_VARIANTS
-    : (requestedAdCount ?? (distinctList.length >= 2 ? Math.min(distinctList.length, AGENT_MAX_CREATIVE_ADS) : DEFAULT_VARIANTS));
-  // distintos desejados: pedido explícito (clampado) OU todos distintos (padrão).
-  const distinctWanted = args.distinctCreatives != null ? Math.max(1, Math.min(args.distinctCreatives, targetVariants)) : targetVariants;
+    : (pickerVariants ?? requestedAdCount ?? (distinctList.length >= 2 ? Math.min(distinctList.length, AGENT_MAX_CREATIVE_ADS) : DEFAULT_VARIANTS));
+  // distintos desejados: com PICKS o dono já escolheu os assets (1 por anúncio) → distinctCreatives é
+  // ignorado (senão repetiria os picks e contrariaria "distribuo 1 por anúncio"); sem picks, pedido
+  // explícito (clampado) OU todos distintos (padrão).
+  const distinctWanted =
+    pickedRefs.length > 0
+      ? targetVariants
+      : args.distinctCreatives != null
+        ? Math.max(1, Math.min(args.distinctCreatives, targetVariants))
+        : targetVariants;
   const perAd = args.forcedCreativeAssetId ? [] : composeCreatives(targetVariants, distinctWanted, distinctList);
   // nota honesta (§8) quando não há criativos distintos suficientes pra composição pedida.
   if (args.distinctCreatives != null && distinctList.length < distinctWanted) {
     compositionNotes.push(`Você pediu ${distinctWanted} criativos distintos, mas a conta só tem ${distinctList.length}${args.mediaPreference && args.mediaPreference !== "mixed" ? ` de ${mediaLabelPt(args.mediaPreference)}` : ""} — repeti pra completar os ${targetVariants} anúncios. Você troca cada um no site.`);
   }
+
+  // ATERRAMENTO DA COPY (Slice 2): a copy conversa com o CRIATIVO líder (decomposição de visão já
+  // computada no pool) e fala pro PÚBLICO resolvido. `explicitTargeting` é computado AQUI (uma vez)
+  // e reusado no bloco de targeting abaixo — evita duplicar `assembleExplicitTargeting`.
+  // criativo LÍDER (1º da composição; forced/sem pool → `chosen`) — fonte única do aterramento da
+  // copy E do criativo padrão do rascunho (reusado no bloco de mídia abaixo).
+  const leadCreative = perAd[0] ?? chosen;
+  const leaderDescription = pool.find((c) => creativeKey(c.ref) === creativeKey(leadCreative))?.description;
+  // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão a estratégia padrão.
+  const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
+  const explicitTargeting =
+    hasExplicitPrimitive || hasAudience
+      ? assembleExplicitTargeting({
+          geo: geoRadius.geo,
+          ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
+          ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
+          ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
+          ...(args.gender ? { gender: args.gender } : {}),
+          interests: interestPrep.interests,
+          behaviors: behaviorPrep.interests,
+          includeAudienceIds: aud.includeIds,
+          excludeAudienceIds: aud.excludeIds,
+        })
+      : null;
+  const audienceForCopy = explicitTargeting ? describeExplicitAudience(explicitTargeting) : undefined;
 
   const baseCopy: CopyVariant[] = await generateCopy(
     deps.ports.llm,
@@ -1948,6 +3085,9 @@ export async function proposeCreateCampaign(
       guidance: ac.guidance,
       // aterramento no que já performa (§7): a copy dos melhores anúncios veiculando.
       ...(defaults.winnerCopy ? { winnerCopy: defaults.winnerCopy } : {}),
+      // aterramento no criativo líder (gancho/ângulo/prova) e no público — degrada se ausente.
+      ...(leaderDescription ? { creativeDescription: leaderDescription } : {}),
+      ...(audienceForCopy ? { audience: audienceForCopy } : {}),
     },
     { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
   );
@@ -1960,39 +3100,25 @@ export async function proposeCreateCampaign(
   // nº de criativos DISTINTOS de fato entre os anúncios (pro eco honesto de composição).
   const distinctUsed = new Set(copyVariants.map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
 
-  // Criativo LÍDER (padrão do rascunho) = 1º da composição — RESPEITA mediaPreference (que pode ter
-  // filtrado o `chosen` cross-mídia); anúncio ÚNICO herda este padrão em vez do `chosen` da mídia
-  // errada (correção do achado do reviewer §8: pediu vídeo, não recebe imagem em silêncio). Forced/
-  // sem pool → perAd vazio → cai no `chosen`.
-  const leadCreative = perAd[0] ?? chosen;
+  // Criativo LÍDER (padrão do rascunho) = 1º da composição (`leadCreative`, computado acima) — RESPEITA
+  // mediaPreference (que pode ter filtrado o `chosen` cross-mídia); anúncio ÚNICO herda este padrão em
+  // vez do `chosen` da mídia errada (correção do achado do reviewer §8: pediu vídeo, não recebe imagem
+  // em silêncio). Forced/sem pool → perAd vazio → cai no `chosen`.
   const reuseImageHash = leadCreative.imageHash;
   const reuseVideoId = leadCreative.videoId;
   // VÍDEO se tem video_id (o imageHash acompanha como CAPA do vídeo, não descaracteriza). Anúncio de
   // imagem tem imageHash e NÃO tem videoId → o videoId é o discriminador correto.
   const isVideo = Boolean(reuseVideoId);
-  // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão a estratégia padrão.
-  const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
   // P0.2/P1: reuse_adset resolve+cacheia o público REAL da fonte AGORA (não só no apply) — o eco
   // mostra cidades/idade/expansão de verdade, e a leitura falhar BLOQUEIA em vez de virar
   // Advantage+ silencioso depois de já ter prometido "o público que já converte".
   let audienceProfile: AudienceProfile | null = null;
   let targeting: NonNullable<CampaignDraftSpec["targeting"]>;
-  if (hasExplicitPrimitive || hasAudience) {
-    // COMPÕE, não escolhe (reanálise crítica do plano): geo/idade/gênero/interesses explícitos +
-    // público salvo (quando indicado) entram no MESMO `explicit` (kind SUPERSET — colapso do antigo
-    // `custom_audiences`). Só público salvo (sem primitivo) = geo amplo (BR) + o público. A montagem
-    // é PURA e compartilhada (`assembleExplicitTargeting`) — mesma fonte usada pela edição de público.
-    targeting = assembleExplicitTargeting({
-      geo: geoRadius.geo,
-      ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
-      ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
-      ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
-      ...(args.gender ? { gender: args.gender } : {}),
-      interests: interestPrep.interests,
-      behaviors: behaviorPrep.interests,
-      includeAudienceIds: aud.includeIds,
-      excludeAudienceIds: aud.excludeIds,
-    });
+  if (explicitTargeting) {
+    // COMPÕE, não escolhe: geo/idade/gênero/interesses explícitos + público salvo entram no MESMO
+    // `explicit`. Já montado acima (fonte única `assembleExplicitTargeting`, reusado pelo aterramento
+    // da copy). Só público salvo (sem primitivo) = geo amplo (BR) + o público.
+    targeting = explicitTargeting;
   } else {
     const baseTargeting = resolveCreationTargeting(defaults);
     if (baseTargeting.kind === "reuse_adset") {
@@ -2003,11 +3129,35 @@ export async function proposeCreateCampaign(
     }
     targeting = baseTargeting.kind === "reuse_adset" && audienceProfile ? { ...baseTargeting, resolved: buildResolvedSnapshot(audienceProfile) } : baseTargeting;
   }
+  // DESTINO (link): o dono pode informar a URL de destino (site/tráfego/conversão) — vence o herdado
+  // da conta. Objetivo de CONVERSAS no WhatsApp ignora o link (leva pro WhatsApp) → nota honesta.
+  // Link inválido (não é URL) → nota + mantém o destino padrão herdado.
+  const messagingGoal = isMessagingGoal(goal);
+  const userLink = args.link ? normalizeLinkUrl(args.link) : null;
+  if (args.link && messagingGoal) {
+    compositionNotes.push("Esse objetivo é conversas no WhatsApp, então ignorei o link — esse tipo de campanha leva pro WhatsApp, não pra um site.");
+  } else if (args.link && userLink === null) {
+    compositionNotes.push(`Não reconheci "${args.link}" como um link válido — usei o destino padrão do seu anúncio-base. Me manda a URL completa (ex: https://sualoja.com/promo) pra trocar.`);
+  }
+  const resolvedLinkUrl = messagingGoal ? undefined : (userLink ?? defaults.linkUrl);
+  // F1c: ABO = verba POR conjunto → semeia o diário de CADA conjunto (divide o diário resolvido entre os
+  // N, spend-preserving). Sem isso o apply cairia no diário CHEIO da campanha por conjunto (gasto N×) e o
+  // painel mostraria o campo por-conjunto vazio. CBO = verba na campanha → conjuntos sem diário próprio.
+  // Fonte única `flipBudgetLevel` (mesma regra do flip pós-criação).
+  const specAdsets = segmentAdsets ? (budgetMode === "abo" ? flipBudgetLevel(segmentAdsets, "abo", dailyBudgetMinor).adsets : segmentAdsets) : null;
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
     dailyBudgetMinor,
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
+    budgetMode,
+    // C2 producer: N conjuntos do teste de público (criativo compartilhado vem de creative/copyVariants).
+    ...(specAdsets ? { adsets: specAdsets } : {}),
+    // C3: "liga tudo" = expansão de público + melhorias de criativo (mesmo toggle). Só grava quando
+    // há sinal (undefined = mantém o comportamento pré-C3 no apply).
+    ...(advantageOn !== undefined ? { advantageAudience: advantageOn, advantageCreative: advantageOn } : {}),
+    // nome do dono (o apply deriva conjunto/anúncios dele); omitido → nome padrão no apply.
+    ...(args.name ? { campaignName: args.name } : {}),
     activation: ac.creationActivation,
     objective: goal,
     targeting,
@@ -2020,13 +3170,13 @@ export async function proposeCreateCampaign(
       ...(reuseImageHash ? { metaImageHash: reuseImageHash } : {}),
       ...(reuseVideoId ? { metaVideoId: reuseVideoId } : {}),
     },
-    pageId: defaults.pageId,
-    ...(defaults.pixelId ? { pixelId: defaults.pixelId } : {}),
-    ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
+    pageId,
+    ...(pixelId ? { pixelId } : {}),
+    ...(resolvedLinkUrl ? { linkUrl: resolvedLinkUrl } : {}),
   };
   // Piso de alcance (Fatia 8): no AUTÔNOMO, não cria (nem propõe) público estreito demais — degrada
   // honesto pra revisão humana. Best-effort: estimativa indisponível NÃO bloqueia (não inventa risco).
-  if (auto && opts.minMonthlyReach != null && (await reachBelowFloor(deps, ac.ref, targeting, goal, opts.minMonthlyReach, defaults.pixelId))) {
+  if (auto && opts.minMonthlyReach != null && (await reachBelowFloor(deps, ac.ref, targeting, goal, opts.minMonthlyReach, pixelId))) {
     return { kind: "blocked", reason: PROACTIVE_REACH_FLOOR_REASON };
   }
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin);
@@ -2050,7 +3200,8 @@ export async function proposeCreateCampaign(
         ? `montando **${variantsCount} anúncios** (mesmo criativo, copy própria em cada)`
         : `e ${variantsCount} variações de copy novas (baseadas no que já converte)`;
   const lines = [
-    `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase}${audienceSourcePhrase}, ${adsPhrase}.`,
+    // §7/§13: rótulo humano do objetivo (ex: "conversa"), NUNCA o id técnico cru (messaging_started).
+    `Vou **criar uma campanha de ${goalNounPt(goal)}** ${creativeSourcePhrase}${audienceSourcePhrase}, ${adsPhrase}.`,
   ];
   for (const n of compositionNotes) lines.push(n);
   lines.push(describeCopiesBlock(copyVariants));
@@ -2058,25 +3209,70 @@ export async function proposeCreateCampaign(
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
   }
   const budgetPhrase = clampedByCap
-    ? `${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)})`
-    : `${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
+    ? `${moneyMinor(dailyBudgetMinor, ac.currency)}/dia (você pediu ${moneyMinor(requested, ac.currency)}, mas seu teto de gasto novo é ${moneyMinor(dailyBudgetMinor, ac.currency)})`
+    : `${moneyMinor(dailyBudgetMinor, ac.currency)}/dia`;
   const audiencePhrase = audienceEchoPhrase({
     targetingKind: spec.targeting?.kind,
     ...(audienceProfile ? { resolvedAudienceDescription: describeResolvedAudience(audienceProfile) } : {}),
     ...(spec.targeting?.kind === "explicit" ? { explicitAudienceDescription: describeExplicitAudience(spec.targeting) } : {}),
   });
+  // C2 producer: teste de público → lista os N conjuntos (nome + público), mesmo criativo. Senão,
+  // a linha de público única.
+  if (segmentAdsets) {
+    lines.push(describeConjuntosBlock(segmentAdsets));
+  } else {
+    lines.push(`Público: ${audiencePhrase}.`);
+  }
   lines.push(
-    `Público: ${audiencePhrase}.`,
-    `Gasto novo: ${budgetPhrase} · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase(spec.activation)}.`,
+    // G14: sem id cru (jargão pro não-técnico, §13) — a Página vem do seu anúncio ativo; o pixel,
+    // quando há, é o de conversão da conta. O id técnico não ajuda o dono a decidir.
+    // C1: orçamento em linguagem de negócio (nunca a sigla CBO/ABO crua) — onde a verba mora.
+    `Gasto novo: ${budgetPhrase}, orçamento ${budgetModeLabel(budgetMode)} · usa a sua Página do Facebook${pixelId ? " e o pixel de conversão da conta" : ""} · ${activationPhrase(spec.activation)}.`,
   );
+  // C1: piso da Meta — recomenda subir, nunca trava (INVARIANTE: a palavra final é do dono).
+  if (belowFloor) {
+    lines.push(
+      `Obs: o mínimo que a Meta aceita por aqui é ${moneyMinor(budgetFloorMinor, ac.currency)}/dia — recomendo começar pelo menos nesse valor pra a campanha rodar (ajuste se quiser).`,
+    );
+  }
+  // C3: Advantage no eco+confirma, com aviso HONESTO reforçado (as melhorias ALTERAM o criativo
+  // visível — sem isso o entregue pode sair diferente do aprovado). Só quando há sinal.
+  if (advantageOn !== undefined) {
+    lines.push(advantageEchoLine(advantageOn));
+  }
+  // B4 (§8 dono decide): idade fixa (piso/teto fora de 18-25) + otimização automática NÃO vão juntas na
+  // Meta (recusa "Invalid parameter") — o antigo aviso "vira um mínimo" era falso (o age_min:45 é
+  // RECUSADO, não relaxado). PERGUNTA honesta as duas saídas ANTES de criar; a rede do apply barra se
+  // escapar. `advantageAgeConflict` é a fonte única (mesmo detector do apply).
+  if (advantageAgeConflict(spec, advantageOn === true)) {
+    lines.push(`⚠️ ${ADVANTAGE_AGE_CONFLICT_REASON} — me diz qual antes de eu criar.`);
+  }
+  // destino do clique (só quando há link — objetivo de site/tráfego/conversão): honesto sobre pra
+  // onde o anúncio leva. `args.link` explícito é "você indicou"; herdado é "o mesmo do anúncio-base".
+  if (spec.linkUrl) lines.push(`Destino: leva pra *${spec.linkUrl}*${userLink ? " (o link que você indicou)" : " (o mesmo do seu anúncio-base)"}.`);
+  // destino de CONVERSAS (CTWA): o número é da Página conectada, conhecível AGORA (não punir §7) —
+  // mostra a Página + o número best-effort; a Meta às vezes não expõe o número antes de criar.
+  if (messagingGoal && spec.pageId) {
+    const page = await deps.ports.ads.getPageWhatsappInfo(ac.ref, spec.pageId);
+    const pageLabel = page.name ? `sua Página *${page.name}*` : "sua Página do Facebook";
+    lines.push(
+      page.whatsappNumber
+        ? `Destino: leva pro WhatsApp de ${pageLabel} — número *+${page.whatsappNumber}*.`
+        : `Destino: leva pro WhatsApp de ${pageLabel}. O número exato eu confirmo depois de criar (a Meta nem sempre mostra antes).`,
+    );
+  }
   for (const n of aud.notes) lines.push(n);
   for (const n of [...geoRadius.notes, ...areas.notes]) lines.push(n);
   if (droppedNames.length > 0) lines.push(`Deixei de fora (não achei ou ambíguo na conta): ${droppedNames.join(", ")}.`);
   // alcance combinado (delivery_estimate ao vivo) quando o dono indicou público; superior ao
   // por-público → substitui o `sizeWarnings`, que fica de fallback quando a estimativa não vem.
-  const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, defaults.pixelId) : null;
+  const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, pixelId) : null;
   if (reachNote) lines.push(reachNote);
   else for (const w of aud.sizeWarnings) lines.push(w);
+  // S5 — o especialista crítico (o "não só faz"): quando o criativo escolhido tem uma fraqueza real
+  // (vencedor cansando/prova fraca), o Roy OPINA + recomenda, sem travar (a palavra final é do dono).
+  const critiqueNote = creativeCritiqueNote(creativeCritique);
+  if (critiqueNote) lines.push(critiqueNote);
   lines.push(`Confirma? (você pode trocar o criativo no site antes de aprovar)`);
   return { kind: "draft", echo: joinBalloons(lines), approvalId, draftId };
 }
@@ -2245,6 +3441,14 @@ export async function proposeCopyCampaign(
   }
 
   const goal = structure.objective;
+  // Guard honesto (bug prod CTWA + lead-formulário): o `promoted_object` que a cópia precisa depende do
+  // MECANISMO (`promotedObjectGap`). A cópia SEMPRE reusa o criativo da fonte (`creative_id`) → o formulário
+  // de lead vem junto SEM pixel (destravado). Falta a Página lida (conversas / lead-formulário) → barra com a
+  // mensagem de Página; falta o pixel (venda/lead-site cuja leitura falhou) → mensagem de pixel. Barrar ANTES
+  // de criar evita o conjunto recusado no apply + a campanha órfã. Base com pixel resolve por OFFSITE.
+  const promotedGap = promotedObjectGap(goal, { reusesCreatives: true, hasPixel: !!structure.pixelId, hasPage: !!structure.pageId });
+  if (promotedGap === "page") return { kind: "blocked", reason: COPY_MISSING_DESTINATION_PAGE_REASON };
+  if (promotedGap === "pixel") return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
   const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
   // P0.2 (subfatia 2): structure.targeting JÁ é o AudienceProfile da fonte (readCampaignStructure
   // leu — sem chamada extra); só falta cachear+ecoar. Diferente de proposeCreateCampaign, aqui a
@@ -2263,7 +3467,9 @@ export async function proposeCopyCampaign(
           ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
           ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}),
           ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}),
-          ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
+          // C2: gênero — o dono escolheu vence; senão HERDA o da fonte (do snapshot) igual a idade/interesses
+          // (antes o ramo explicit da cópia perdia um público só-de-homens/-mulheres em silêncio ao editar um primitivo).
+          ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : resolvedSnapshot.genders && resolvedSnapshot.genders.length > 0 ? { genders: resolvedSnapshot.genders } : {}),
           // Slice 6: sobrescreveu → usa o novo; senão HERDA os grupos da fonte (com id, do snapshot) —
           // a cópia fiel não perde mais interesses/comportamentos ao virar explicit.
           ...(interestPrep.interests.length > 0 ? { interestGroups: [interestPrep.interests] } : resolvedSnapshot.interestGroups && resolvedSnapshot.interestGroups.length > 0 ? { interestGroups: resolvedSnapshot.interestGroups } : {}),
@@ -2277,7 +3483,7 @@ export async function proposeCopyCampaign(
   // seguro e avisa. Override explícito do usuário sempre vence.
   const sourceIsLifetime = structure.dailyBudgetMinor === undefined && structure.lifetimeBudgetMinor !== undefined;
   const sourceDailyMinor = structure.dailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR;
-  const requested = args.budgetReais ? Math.round(args.budgetReais * MINOR_PER_UNIT) : sourceDailyMinor;
+  const requested = args.budgetReais ? toMinorUnits(args.budgetReais, ac.currency) : sourceDailyMinor;
   const cap = ac.cfg.maxNewDailyBudgetMinor;
   const dailyBudgetMinor = cap != null ? Math.min(requested, cap) : requested;
 
@@ -2295,8 +3501,11 @@ export async function proposeCopyCampaign(
     sourceCampaignId: args.sourceCampaignId,
     budgetMode: structure.budgetMode,
     specialAdCategories: structure.specialAdCategories,
-    // pixel da fonte → o createAdSet monta o promoted_object (conversão não falha). Mensagens não tem.
+    // pixel da fonte → o createAdSet monta o promoted_object (conversão OFFSITE não falha). Mensagens
+    // não usam pixel, mas EXIGEM a Página no promoted_object → threadamos a Página da fonte também
+    // (senão a Meta recusa o conjunto de conversas: "A Página é necessária no objeto promovido…").
     ...(structure.pixelId ? { pixelId: structure.pixelId } : {}),
+    ...(structure.pageId ? { pageId: structure.pageId } : {}),
     name,
   };
   // Piso de alcance (Fatia 8) — igual ao create: autônomo não replica pra público estreito demais.
@@ -2315,9 +3524,10 @@ export async function proposeCopyCampaign(
       : hasAudience
         ? `\n• *Público:* remarketing selecionado${aud.excludeIds.length ? " (com exclusões)" : ""} — ${describeResolvedAudience(structure.targeting)}`
         : `\n• *Público:* o mesmo da campanha-base — ${describeResolvedAudience(structure.targeting)}`;
+  // C1 (fissura #2): linguagem de negócio, NUNCA a sigla crua (era `.toUpperCase()` = "CBO"/"ABO").
   const budgetLine = sourceIsLifetime
-    ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
-    : `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
+    ? `• *Orçamento:* ${budgetModeLabel(structure.budgetMode)} · ${moneyMinor(dailyBudgetMinor, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
+    : `• *Orçamento:* ${budgetModeLabel(structure.budgetMode)} · ${moneyMinor(dailyBudgetMinor, ac.currency)}/dia`;
   // alcance combinado (delivery_estimate ao vivo) só quando o dono trocou o público (senão o
   // targeting é o mesmo da base, alcance já conhecido). Superior ao por-público (`sizeWarnings`).
   const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, structure.pixelId) : null;

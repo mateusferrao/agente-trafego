@@ -9,12 +9,15 @@
 // métrica carregam `asOf` (frescor); a ausência de dado vira um sinal explícito
 // (`hasData:false` + nota) p/ o agente recusar com clareza.
 
-import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { adAccounts, adCreatives, agentMemory, agentRuns, agentToolCalls, agents, campaignDrafts, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentMemory, agentRuns, agentToolCalls, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import type { CreativeVisionResult } from "@trafego/shared";
+import { libraryCreativeContentHash } from "../../workers/creative-analyze.js";
+import { pickCreativeByReference, type LibraryCandidate } from "../../modules/creative/match-library.js";
 import type { Database } from "@trafego/db/client";
-import { confidenceTier, daysAgoInTz, LEARNING_MEMORY_TYPES, rankAdCreatives, renderRessalvas, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
+import { campaignDelivering, confidenceTier, daysAgoInTz, isMessagingGoal, LEARNING_MEMORY_TYPES, rankAdCreatives, renderRessalvas, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
 import { mapStatus } from "@trafego/ads-meta";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import {
@@ -28,10 +31,13 @@ import {
   type FreshKpis,
 } from "../../modules/conversation/fresh-metrics.js";
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
+import { describeExplicitAudience, describeResolvedSnapshot } from "../../modules/conversation/draft-proposal.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
+import { AdsPlatformError } from "@trafego/shared/ports";
+import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, withTimeout } from "@trafego/shared";
 import { ACCOUNT_HEALTH_STATUS_LABELS } from "@trafego/shared";
-import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, MetaAccountHealthStatus, OrgId, PartialReason, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, MetaAccountHealthStatus, OrgId, PageInfo, PartialReason, PixelInfo, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
 import type { DraftApproval } from "@trafego/shared/ports";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -240,6 +246,9 @@ interface PendingActionItem {
 interface PendingActivationItem {
   readonly kind: "activation";
   readonly id: string;
+  /** NOME da campanha criada (pra o agente casar "ativa a campanha X" → approve por referência).
+   *  null quando o rascunho não nomeou (default zero-config). */
+  readonly entityName: string | null;
   /** o que foi criado (PT, ex: "uma campanha de vendas, R$ 50,00/dia") — a ação é ATIVAR isso. */
   readonly reason: string;
   readonly expiresAt: string;
@@ -729,6 +738,13 @@ export async function listPendingData(
     const d = byDraftId.get(draftId);
     return d ? describeCreatedDraft(d.kind, d.spec as CampaignDraftSpec) : fallback;
   };
+  // NOME da campanha do rascunho (Slice 1) — pro agente casar "ativa a campanha X" com a aprovação
+  // de ativação por referência (sem isso, "ativar uma campanha de conversas…" não bate no nome dito).
+  const nameOf = (draftId: string): string | null => {
+    const spec = byDraftId.get(draftId)?.spec as CampaignDraftSpec | undefined;
+    const n = spec?.campaignName?.trim();
+    return n && n.length > 0 ? n : null;
+  };
 
   const draftItems: PendingDraftItem[] = drafts.map((a) => ({
     kind: "draft",
@@ -737,12 +753,18 @@ export async function listPendingData(
     expiresAt: a.expiresAt.toISOString(),
   }));
 
-  const activationItems: PendingActivationItem[] = activations.map((a) => ({
-    kind: "activation",
-    id: a.id,
-    reason: `ativar ${whatOf(a.draftId, "o que foi criado")}`,
-    expiresAt: a.expiresAt.toISOString(),
-  }));
+  const activationItems: PendingActivationItem[] = activations.map((a) => {
+    const name = nameOf(a.draftId);
+    return {
+      kind: "activation" as const,
+      id: a.id,
+      entityName: name,
+      // nomeia o alvo quando houver ("ativar *CaquiAI - conversa* — uma campanha de conversas…"),
+      // senão o texto genérico — pro agente resolver a ativação por nome.
+      reason: name ? `ativar *${name}* — ${whatOf(a.draftId, "o que foi criado")}` : `ativar ${whatOf(a.draftId, "o que foi criado")}`,
+      expiresAt: a.expiresAt.toISOString(),
+    };
+  });
 
   return [...actionItems, ...draftItems, ...activationItems];
 }
@@ -1033,13 +1055,21 @@ export function pickAdIdsToRefresh<T extends RankableCreative & { adId: string }
     .map((r) => r.adId);
 }
 
-/** Descreve o PÚBLICO do rascunho pelo MODO (só 2 hoje), sem jargão Meta nem chamada à
- *  plataforma. O público não é editável por texto livre → o detalhe exato do reuse não
- *  ajudaria (e custaria uma chamada Meta que estoura o turno). §UX. */
+/** Descreve o PÚBLICO do rascunho pelo MODO, sem jargão Meta nem chamada à plataforma. Cada `kind`
+ *  do targeting tem seu texto: `explicit` DESCREVE o público real (geo/idade/gênero — reusa
+ *  `describeExplicitAudience`, fonte única do eco), `reuse_adset` herda, `advantage_plus`/ausente é
+ *  amplo. Antes, tudo que não era `reuse_adset` caía em "público amplo" — mentia num pedido
+ *  explícito ("mulheres 45+ BH" saía como "amplo"), o falso positivo que o Roy narrava. §UX. */
 export function describeDraftAudience(targeting: TargetingSpec | undefined): string {
-  return targeting?.kind === "reuse_adset"
-    ? "herda o público do conjunto do seu anúncio reusado (a mesma segmentação que já converte)"
-    : "público amplo — a Meta escolhe quem tem mais chance de converter";
+  if (targeting?.kind === "explicit") return describeExplicitAudience(targeting);
+  if (targeting?.kind === "reuse_adset") {
+    // C1: o rascunho reuse_adset SEMPRE nasce com o retrato (`resolved`) do público herdado — NOMEIA
+    // (cidades/idade/gênero/interesses/salvos) em vez do genérico "a mesma segmentação que está rodando".
+    return targeting.resolved
+      ? `herda o público que já converte no seu anúncio: ${describeResolvedSnapshot(targeting.resolved)}`
+      : "herda o público do conjunto do seu anúncio reusado (a mesma segmentação que está rodando)";
+  }
+  return "público amplo — a Meta escolhe quem tem mais chance de converter";
 }
 
 /** Rótulo do criativo do rascunho, do nosso DB (nunca inventa). Reuse → nomeia o anúncio real
@@ -1068,14 +1098,23 @@ export function describeDraftCreative(
 /** Detalhe RICO do(s) rascunho(s) pendente(s) da conta — do BANCO (spec + approval de 24h), não
  *  do estado efêmero da conversa (30min). Responde "qual público/criativo" na hora, sem Meta. O
  *  `approvalId` deixa o usuário aprovar/recusar por referência (approve/reject). */
+/** Destino de conversas do rascunho (§7): a Página SEMPRE está definida (a criação bloqueia sem ela)
+ *  — a mensagem nunca diz "sem Página". Nome/número são best-effort (a Meta às vezes não expõe);
+ *  quando faltam, descreve a Página pela PROVENIÊNCIA (o anúncio ativo do dono), não por id cru. PURO. */
+export function describeDraftDestino(page: PageInfo): string {
+  if (page.name && page.whatsappNumber) return `WhatsApp da sua Página *${page.name}* (número +${page.whatsappNumber})`;
+  if (page.name) return `WhatsApp da sua Página *${page.name}* (o número exato eu confirmo depois de criar — a Meta nem sempre mostra antes)`;
+  return "WhatsApp da Página do seu anúncio ativo — a Meta não retornou o nome/número dela agora, mas a Página JÁ está definida no rascunho, então dá pra criar. Se você quer OUTRA Página, me diga o nome ou o número";
+}
+
 async function getPendingDraftData(
-  db: Database,
-  approvalPort: ApprovalPort,
+  deps: WorkerDeps,
   orgId: string,
   agentId: string,
   adAccountId: string,
 ): Promise<NoData | { hasData: true; drafts: readonly unknown[] }> {
-  const pending = (await approvalPort.listPendingByAgent(agentId as AgentId)).filter(
+  const db = deps.db;
+  const pending = (await deps.ports.approval.listPendingByAgent(agentId as AgentId)).filter(
     (a): a is DraftApproval => a.kind === "draft",
   );
   if (pending.length === 0) {
@@ -1113,16 +1152,48 @@ async function getPendingDraftData(
     }
   }
 
+  // DESTINO de conversas (§7 — o bug do "qual página"): pra rascunho de mensagens no WhatsApp, resolve
+  // a Página do rascunho (best-effort) pra o dono saber pra qual WhatsApp o clique leva SEM cair no
+  // account-wide `list_pages` (que pode vir vazio por visibilidade e mentir "sem Página"). O rascunho
+  // SEMPRE tem `pageId` (a criação bloqueia sem). 1 GET por Página distinta (dedupe), só nos de mensagens.
+  const account = await createAnalysisRepo(db).loadAccount(orgId, adAccountId);
+  const ref = account ? { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) } : null;
+  const destinoByPageId = new Map<string, string>();
+  if (ref) {
+    const msgPageIds = [
+      ...new Set(
+        pending
+          .map((a) => byId.get(a.draftId)?.spec as CampaignDraftSpec | undefined)
+          .filter((s): s is CampaignDraftSpec => !!s && isMessagingGoal(s.objective) && !!s.pageId)
+          .map((s) => s.pageId!),
+      ),
+    ];
+    for (const pageId of msgPageIds) {
+      let page: PageInfo = { pageId };
+      try {
+        page = await withTimeout(deps.ports.ads.getPageWhatsappInfo(ref, pageId), deps.conversation.liveFetchTimeoutMs);
+      } catch {
+        /* best-effort: sem nome/número → descrição por proveniência (a Página segue definida) */
+      }
+      destinoByPageId.set(pageId, describeDraftDestino(page));
+    }
+  }
+
   const items = pending.flatMap((a) => {
     const d = byId.get(a.draftId);
     if (!d) return [];
     const spec = d.spec as CampaignDraftSpec;
+    // só anexa `destino` a rascunho de MENSAGENS (o destino WhatsApp) — o predicado casa o que
+    // populou `destinoByPageId`, pra um rascunho de site que compartilhe a mesma pageId não herdar
+    // um rótulo "WhatsApp da Página…" errado.
+    const destino = spec.pageId && isMessagingGoal(spec.objective) ? destinoByPageId.get(spec.pageId) : undefined;
     return [
       {
         approvalId: a.id,
         resumo: describeCreatedDraft(d.kind, spec),
         criativo: describeDraftCreative(d.kind, spec.creative, titleByAdId),
         publico: describeDraftAudience(spec.targeting),
+        ...(destino ? { destino } : {}),
         copies: spec.copyVariants?.map((c) => c.headline) ?? [],
       },
     ];
@@ -1132,12 +1203,180 @@ async function getPendingDraftData(
 
 /** "Qual minha copy campeã": lê `ad_creatives` (copy + desempenho denormalizado),
  *  ranqueia (puro, core) e devolve o top-N curado. Org-scoped. */
-async function getTopCreativesData(
-  db: Database,
-  adAccountUuid: string,
-  orgId: string,
-): Promise<NoData | { hasData: true; creatives: readonly unknown[] }> {
-  const rows = await db
+/** Row de criativo → shape de exibição (só os campos presentes; nunca inventa). */
+function toCreativeView(r: {
+  adId: string;
+  name: string | null;
+  tier: string | null;
+  spend: number | null;
+  cpa: number | null;
+  roas: number | null;
+  body: string | null;
+  title: string | null;
+  callToAction: string | null;
+}): Record<string, unknown> {
+  return {
+    adId: r.adId,
+    // nome do ANÚNCIO no Ads Manager — diferente de `title` (headline da copy).
+    ...(r.name ? { name: r.name } : {}),
+    ...(r.tier ? { tier: r.tier } : {}),
+    ...(r.roas != null ? { roas: r.roas } : {}),
+    ...(r.cpa != null ? { cpa: r.cpa } : {}),
+    ...(r.spend != null ? { spend: r.spend } : {}),
+    ...(r.title ? { title: r.title } : {}),
+    ...(r.body ? { copy: r.body } : {}),
+    ...(r.callToAction ? { cta: r.callToAction } : {}),
+  };
+}
+
+/** View de um anúncio buscado AO VIVO (Fatia 2) — sem tier/desempenho (nunca teve run), mas com o
+ *  STATUS rotulado (o dono precisa saber que é de campanha pausada). Fonte marcada "ao vivo". */
+function liveCreativeView(r: LiveCreativeItem): Record<string, unknown> {
+  return {
+    adId: r.adId,
+    ...(r.name ? { name: r.name } : {}),
+    status: r.status,
+    ...(r.title ? { title: r.title } : {}),
+    ...(r.copy ? { copy: r.copy } : {}),
+    ...(r.cta ? { cta: r.cta } : {}),
+    ...(r.format ? { formato: r.format } : {}),
+    ...liveMetricsView(r),
+    fonte: "ao vivo (não capturado por análise)",
+  };
+}
+
+/** Campos de desempenho BRUTO de um item ao vivo pro chat (só quando a Meta retornou métrica).
+ *  Deixa explícito que é histórico bruto, sem o tier da análise (§7 — nunca declara "campeão"). */
+function liveMetricsView(r: LiveCreativeItem): Record<string, unknown> {
+  if (r.spend === undefined && r.results === undefined) return { desempenho: "sem métrica retornada pela Meta agora" };
+  return {
+    gastoHistorico: r.spend,
+    resultados: r.results,
+    ...(r.cpa !== undefined ? { cpaHistorico: r.cpa } : {}),
+    nota: "desempenho BRUTO do histórico (sem o tier/qualidade da análise)",
+  };
+}
+
+/** Criativos da BIBLIOTECA do site (uploads `ready`, não arquivados) com a descrição de visão
+ *  cacheada — o MESMO conjunto que o picker consegue escolher (inclui vídeo sem capa guardada, cuja
+ *  capa o apply resolve ao vivo — §7 diz×faz: não listar o que não dá pra escolher). Sem nome humano
+ *  na tabela → o rótulo é a descrição (o que o criativo comunica). Dual-hash (chat/biblioteca) como
+ *  no recall, pra não dar falso-vazio. */
+async function loadLibraryForList(deps: WorkerDeps, ctx: ReadToolContext): Promise<Array<{ assetId: string; format: string; description: string }>> {
+  const assets = await deps.db
+    .select({ id: creativeAssets.id, format: creativeAssets.format, visionContentHash: creativeAssets.visionContentHash })
+    .from(creativeAssets)
+    .where(and(eq(creativeAssets.orgId, ctx.orgId), eq(creativeAssets.adAccountId, ctx.adAccountId), eq(creativeAssets.status, "ready"), isNull(creativeAssets.archivedAt)))
+    .orderBy(desc(creativeAssets.createdAt))
+    .limit(RECALL_CANDIDATE_LIMIT);
+  if (assets.length === 0) return [];
+  const hashesOf = (a: (typeof assets)[number]): string[] => {
+    const lib = libraryCreativeContentHash(a.id);
+    return a.visionContentHash && a.visionContentHash !== lib ? [a.visionContentHash, lib] : [lib];
+  };
+  const visions = await deps.db
+    .select({ contentHash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
+    .from(creativeVisionAnalyses)
+    .where(and(inArray(creativeVisionAnalyses.contentHash, [...new Set(assets.flatMap(hashesOf))]), eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion)));
+  const byHash = new Map(visions.map((v) => [v.contentHash, v.result]));
+  const out: Array<{ assetId: string; format: string; description: string }> = [];
+  for (const a of assets) {
+    const v = hashesOf(a).map((h) => byHash.get(h)).find((r): r is CreativeVisionResult => !!r);
+    // sem análise ainda → descrição honesta pelo formato (nunca inventa o conteúdo)
+    out.push({ assetId: a.id, format: a.format, description: v ? recallDescription(v) : `criativo de ${a.format} guardado (ainda sem análise)` });
+  }
+  return out;
+}
+
+/** teto de anúncios a inspecionar ao vivo (fallback quando o banco de veiculando está vazio). */
+const LIVE_CREATIVE_SCAN_LIMIT = 25;
+/** janela das métricas ao vivo: `maximum` = o histórico INTEIRO do anúncio — essencial porque os
+ *  pausados podem ter rodado há mais de 30 dias (o `date_preset` da Meta). */
+const LIVE_METRICS_WINDOW = "maximum";
+
+interface LiveCreativeItem {
+  readonly adId: string;
+  readonly name: string | null;
+  readonly status: string;
+  readonly title?: string;
+  readonly copy?: string;
+  readonly cta?: string;
+  readonly format?: string;
+  /** desempenho BRUTO (histórico) — só nos ao vivo; ausente = a Meta não retornou métrica. */
+  readonly spend?: number;
+  readonly results?: number;
+  readonly cpa?: number;
+}
+
+/** Fallback AO VIVO dos criativos veiculando/pausados (Fatia 2): quando a análise nunca capturou
+ *  (ex.: conta com todas as campanhas pausadas), busca os anúncios direto na Meta (`listEntities`
+ *  SEM filtro de status → inclui PAUSADOS) + os detalhes do criativo (`getCreatives`) + a MÉTRICA
+ *  BRUTA por anúncio (`getAdMetrics`, síncrono — gasto/resultados do histórico, pra o Roy recomendar
+ *  por desempenho, não só por nome). Rankeado (com resultado primeiro; entre eles menor CPA; senão
+ *  maior gasto). Só é chamado quando o banco de veiculando está vazio. Falha/sem conta → null. */
+async function loadLiveServingCreatives(deps: WorkerDeps, ctx: ReadToolContext): Promise<LiveCreativeItem[] | null> {
+  const account = await createAnalysisRepo(deps.db).loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return null;
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  let ads: Awaited<ReturnType<typeof deps.ports.ads.listEntities>>;
+  try {
+    ads = await withTimeout(deps.ports.ads.listEntities(ref, "ad"), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return null;
+  }
+  const usable = ads.filter((a) => a.status !== "deleted" && a.status !== "archived").slice(0, LIVE_CREATIVE_SCAN_LIMIT);
+  if (usable.length === 0) return [];
+  let creatives: Awaited<ReturnType<typeof deps.ports.ads.getCreatives>> = [];
+  try {
+    creatives = await withTimeout(deps.ports.ads.getCreatives(ref, usable.map((a) => a.id)), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    creatives = []; // sem os detalhes → lista só nome+status (honesto)
+  }
+  // MÉTRICA BRUTA por anúncio (best-effort — só nos ao vivo; banco tem tier, biblioteca não tem métrica).
+  let metrics: Awaited<ReturnType<typeof deps.ports.ads.getAdMetrics>> = [];
+  try {
+    metrics = await withTimeout(deps.ports.ads.getAdMetrics(ref, LIVE_METRICS_WINDOW), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    metrics = []; // sem métrica → lista sem desempenho (honesto, não bloqueia)
+  }
+  const byAd = new Map(creatives.map((c) => [c.adId, c]));
+  const metricByAd = new Map(metrics.map((m) => [m.adId, m]));
+  const items: LiveCreativeItem[] = usable.map((a) => {
+    const c = byAd.get(a.id);
+    const m = metricByAd.get(a.id);
+    return {
+      adId: a.id,
+      name: a.name ?? null,
+      status: a.status,
+      ...(c?.title ? { title: c.title } : {}),
+      ...(c?.body ? { copy: c.body } : {}),
+      ...(c?.callToAction ? { cta: c.callToAction } : {}),
+      ...(c?.adFormat ? { format: c.adFormat } : {}),
+      ...(m ? { spend: m.spend, results: m.results, ...(m.results > 0 ? { cpa: m.spend / m.results } : {}) } : {}),
+    };
+  });
+  // ranking por desempenho bruto (com resultado > sem; entre com-resultado menor CPA; senão maior gasto).
+  return items.sort((x, y) => {
+    const xHas = (x.results ?? 0) > 0;
+    const yHas = (y.results ?? 0) > 0;
+    if (xHas !== yHas) return xHas ? -1 : 1;
+    if (xHas && yHas) return (x.cpa ?? Infinity) - (y.cpa ?? Infinity);
+    return (y.spend ?? 0) - (x.spend ?? 0);
+  });
+}
+
+export async function getTopCreativesData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+  query?: string | null,
+): Promise<
+  | NoData
+  | { hasData: true; creatives: readonly unknown[]; escopo: string }
+  | { hasData: true; match: "one"; creative: Record<string, unknown> }
+  | { hasData: true; match: "ambiguous"; options: readonly string[]; note: string }
+  | { hasData: true; match: "none"; note: string }
+> {
+  const rows = await deps.db
     .select({
       adId: adCreatives.adId,
       name: adCreatives.name,
@@ -1150,29 +1389,82 @@ async function getTopCreativesData(
       callToAction: adCreatives.callToAction,
     })
     .from(adCreatives)
-    .where(and(eq(adCreatives.adAccountId, adAccountUuid), eq(adCreatives.orgId, orgId)));
-  if (rows.length === 0) {
+    .where(and(eq(adCreatives.adAccountId, ctx.adAccountId), eq(adCreatives.orgId, ctx.orgId)));
+  // Fatia 2: banco de veiculando vazio (nunca analisou / tudo pausado) → busca AO VIVO (inclui
+  // pausados). Só quando vazio (barato). Complementa a assimetria "criação lê ao vivo, lista não".
+  const live = rows.length === 0 ? await loadLiveServingCreatives(deps, ctx) : null;
+  const liveUsed = (live?.length ?? 0) > 0;
+  // Fatia 1: a lista TAMBÉM mostra a biblioteca do site (uploads), não só os anúncios veiculando.
+  const library = await loadLibraryForList(deps, ctx);
+
+  // C3: lookup de um anúncio ESPECÍFICO por nome ou id. Busca nos CAPTURADOS (todos, sem teto) e —
+  // quando nada foi capturado (tudo pausado) — nos anúncios AO VIVO (inclui pausados). A biblioteca
+  // não tem nome (casa por DESCRIÇÃO via recall_creative) → é apontada na nota. §7: a nota diz ONDE
+  // procurou (nunca finge ter varrido tudo).
+  const q = query?.trim();
+  if (q) {
+    const libHint = library.length > 0 ? ` Se for um criativo da sua biblioteca do site, me descreve o que aparece nele que eu acho por descrição (ou use "o que você achou do criativo ...").` : "";
+    if (rows.length > 0) {
+      const m = resolveNamedMatch(rows, q, { name: (r) => r.name, keys: (r) => [r.adId] });
+      if (m.kind === "ambiguous") {
+        const options = m.rows.map((r) => `${r.name ?? "(sem nome)"} (${r.adId})`);
+        return { hasData: true, match: "ambiguous", options, note: `Achei mais de um anúncio parecido com "${q}" — qual?` };
+      }
+      if (m.kind === "one") return { hasData: true, match: "one", creative: toCreativeView(m.row) };
+      return { hasData: true, match: "none", note: `Não achei um anúncio com "${q}" entre os que já capturei por análise.${libHint}` };
+    }
+    if (live && live.length > 0) {
+      const m = resolveNamedMatch(live, q, { name: (r) => r.name, keys: (r) => [r.adId] });
+      if (m.kind === "ambiguous") {
+        const options = m.rows.map((r) => `${r.name ?? "(sem nome)"} (${r.adId})`);
+        return { hasData: true, match: "ambiguous", options, note: `Achei mais de um anúncio ao vivo parecido com "${q}" — qual?` };
+      }
+      if (m.kind === "one") return { hasData: true, match: "one", creative: liveCreativeView(m.row) };
+      return { hasData: true, match: "none", note: `Não achei um anúncio com "${q}" — procurei ao vivo entre os que a Meta retornou (inclui pausados).${libHint}` };
+    }
+    return { hasData: true, match: "none", note: `Não achei um anúncio com "${q}" — não tenho anúncios capturados nem ao vivo nesta conta agora.${libHint}` };
+  }
+
+  // LISTA (sem query): veiculando (top-N capturados OU ao vivo) + biblioteca do site, por origem.
+  if (rows.length === 0 && !liveUsed && library.length === 0) {
     return {
       hasData: false,
-      note: "Ainda não tenho as copies desta conta — rode uma análise (ou me peça as métricas de hoje) que eu capturo.",
+      note: "Ainda não tenho criativos capturados por análise, não achei anúncios ao vivo, nem uploads na biblioteca desta conta — rode uma análise (ou me manda um criativo) que eu capturo.",
     };
   }
-  const creatives = rankAdCreatives(rows)
-    .slice(0, TOP_CREATIVES_LIMIT)
-    .map((r) => ({
-      adId: r.adId,
-      // nome do ANÚNCIO no Ads Manager — diferente de `title` (headline da copy).
-      // Ausente = a Meta não retornou nome nesse anúncio (não inventar).
-      ...(r.name ? { name: r.name } : {}),
-      ...(r.tier ? { tier: r.tier } : {}),
-      ...(r.roas != null ? { roas: r.roas } : {}),
-      ...(r.cpa != null ? { cpa: r.cpa } : {}),
-      ...(r.spend != null ? { spend: r.spend } : {}),
-      ...(r.title ? { title: r.title } : {}),
-      ...(r.body ? { copy: r.body } : {}),
-      ...(r.callToAction ? { cta: r.callToAction } : {}),
-    }));
-  return { hasData: true, creatives };
+  const serving =
+    rows.length > 0
+      ? rankAdCreatives(rows)
+          .slice(0, TOP_CREATIVES_LIMIT)
+          .map((r) => ({ origem: "veiculando", ...toCreativeView(r) }))
+      : (live ?? []).slice(0, TOP_CREATIVES_LIMIT).map((r) => ({
+          origem: r.status === "active" ? "veiculando (ao vivo)" : `${r.status === "paused" ? "pausado" : r.status} (ao vivo)`,
+          adId: r.adId,
+          ...(r.name ? { name: r.name } : {}),
+          ...(r.title ? { title: r.title } : {}),
+          ...(r.copy ? { copy: r.copy } : {}),
+          ...(r.cta ? { cta: r.cta } : {}),
+          ...(r.format ? { formato: r.format } : {}),
+          ...liveMetricsView(r), // desempenho bruto do histórico (ranqueado, só nos ao vivo)
+        }));
+  // biblioteca do site: uploads que NUNCA veicularam → sem métrica (honesto por natureza).
+  const biblioteca = library.map((l) => ({ origem: "biblioteca do site", id: l.assetId, formato: l.format, descricao: l.description, desempenho: "sem histórico (nunca veiculou)" }));
+  // §7: descreve SÓ as seções que a lista realmente tem, e a fonte da MÉTRICA de cada uma (distinção
+  // banco/Meta/biblioteca que o dono pediu): capturados = tier da análise; ao vivo = bruto do histórico;
+  // biblioteca = sem métrica.
+  const servingScope =
+    rows.length > 0
+      ? `os até ${TOP_CREATIVES_LIMIT} anúncios que já capturei por análise (veiculando, com tier/desempenho da análise)`
+      : liveUsed
+        ? `os anúncios que busquei AO VIVO na Meta (inclui PAUSADAS), até ${TOP_CREATIVES_LIMIT}, ranqueados pelo desempenho BRUTO do histórico (sem o tier da análise)`
+        : null;
+  const cobre = [servingScope, library.length > 0 ? "os criativos da sua biblioteca do site (uploads, SEM métrica — nunca veicularam)" : null].filter(Boolean).join(" + ");
+  return {
+    hasData: true,
+    creatives: [...serving, ...biblioteca],
+    // §7 honestidade de ESCOPO (nunca fingir cobertura total): diga o que a lista cobre e o que pode faltar.
+    escopo: `Esta lista tem ${cobre}. Pode haver mais anúncios na conta além destes — NUNCA diga que são TODOS os criativos da conta; se o dono procura um específico que não aparece, peça o nome/descrição.`,
+  };
 }
 
 /** Saúde da conta Meta pro chat (S5) — persistido pelo sync. Expõe saldo/gasto/teto
@@ -1419,25 +1711,90 @@ export async function listAudiencesData(
 }
 
 /**
- * Campanhas ATIVAS na Meta que ainda NÃO têm nenhuma linha em `entity_analyses` — o gap de
- * sincronização (pivô saúde): uma campanha recém-criada/ativada existe de verdade na Meta mas
- * só entra no cache curado na PRÓXIMA análise. Sem isso, list_campaigns/get_campaign_analysis
- * diriam "não existe"/omitiriam ela, quando na verdade só "ainda não foi medida". Bounded +
- * best-effort (mesmo padrão de `listCampaignsLive`): Meta lenta/indisponível degrada em lista
- * vazia — a resposta principal (do cache) já tinha o que tinha, isto é só um adendo honesto.
+ * Páginas do Facebook que a conta pode usar como DESTINO (W2 — o dono tem N Páginas). Chamada ao vivo
+ * (sem cache — o catálogo de Páginas muda raro e não temos tabela); fonte = páginas do negócio dono
+ * da conta (nome confiável); best-effort: sem negócio/acesso → nota honesta. Em campanha de conversas,
+ * a Página define pra qual WhatsApp o clique leva. O número por Página não vem daqui (só o nome).
  */
-export async function liveActiveCampaignsNotCached(
+export async function listPagesData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+): Promise<{ hasData: true; pages: PageInfo[] } | { hasData: false; note: string }> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return { hasData: false, note: "conta não encontrada" };
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  let pages: PageInfo[];
+  try {
+    pages = await withTimeout(deps.ports.ads.listPages(ref), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return { hasData: false, note: "não consegui buscar suas Páginas agora — tenta de novo em instantes" };
+  }
+  // §7: lista vazia = a Meta NÃO retornou as Páginas com o acesso atual (limite de visibilidade do
+  // token, comum sem `business_management`) — NUNCA prova de que "não há Página ligada". Se há um
+  // rascunho pendente, ele já tem uma Página (a criação bloqueia sem uma). A nota nunca afirma ausência.
+  if (pages.length === 0)
+    return {
+      hasData: false,
+      note: "não consegui listar suas Páginas agora — a Meta às vezes não retorna isso com o acesso do token, e isso NÃO quer dizer que não há Página ligada. A criação usa a Página do seu anúncio ativo; se você quer uma Página específica, me diga o nome dela.",
+    };
+  return { hasData: true, pages };
+}
+
+/**
+ * Pixels de conversão REAIS da conta (id + nome) — pra o dono ESCOLHER qual usar na criação quando há N,
+ * ou só conferir os que tem. Best-effort: falha/timeout → nota honesta; lista vazia = a Meta não retornou
+ * pixels com o acesso do token (NUNCA prova de ausência). PURO de decisão (só IO na leitura).
+ */
+export async function listPixelsData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+): Promise<{ hasData: true; pixels: PixelInfo[] } | { hasData: false; note: string }> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return { hasData: false, note: "conta não encontrada" };
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  let pixels: PixelInfo[];
+  try {
+    pixels = await withTimeout(deps.ports.ads.listPixels(ref), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return { hasData: false, note: "não consegui buscar seus pixels agora — tenta de novo em instantes" };
+  }
+  if (pixels.length === 0)
+    return {
+      hasData: false,
+      note: "não consegui listar seus pixels agora — a Meta às vezes não retorna isso com o acesso do token, e isso NÃO quer dizer que não há pixel. A criação usa o pixel do seu anúncio que já converte; se você quer um pixel específico, me diga o nome dele.",
+    };
+  return { hasData: true, pixels };
+}
+
+/**
+ * Campanhas GERENCIÁVEIS na Meta (ativa OU pausada) que ainda NÃO têm nenhuma linha em
+ * `entity_analyses` — o gap de sincronização (pivô saúde): uma campanha recém-criada/ativada
+ * existe de verdade na Meta mas só entra no cache curado na PRÓXIMA análise. Sem isso,
+ * list_campaigns/get_campaign_analysis diriam "não existe"/omitiriam ela, quando na verdade só
+ * "ainda não foi medida" — e uma campanha PAUSADA (ex: recém-criada) ficaria invisível pra ativar
+ * por nome. Carrega o `status` pro caller reportar honesto. Bounded + best-effort (mesmo padrão de
+ * `listCampaignsLive`): Meta lenta/indisponível degrada em lista vazia — a resposta principal (do
+ * cache) já tinha o que tinha, isto é só um adendo honesto.
+ */
+export async function liveCampaignsNotCached(
   deps: WorkerDeps,
   ctx: ReadToolContext,
   cachedIds: ReadonlySet<string>,
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<Array<{ id: string; name: string; status: string }>> {
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return [];
   const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
   try {
     const entities = await withTimeout(deps.ports.ads.listEntities(ref, "campaign"), deps.conversation.liveFetchTimeoutMs);
-    return entities.filter((e) => e.status === "active" && !cachedIds.has(e.id)).map((e) => ({ id: e.id, name: e.name }));
+    // GERENCIÁVEIS (ativa OU pausada) — não só ativas: uma campanha PAUSADA nunca-analisada (ex:
+    // recém-criada) precisa ser referenciável por nome pra o dono ATIVAR. Terminais (archived/
+    // deleted) ficam de fora. Carrega o `status` pro caller reportar honesto (nunca "ativa" a pausada).
+    return entities
+      .filter((e) => (e.status === "active" || e.status === "paused") && !cachedIds.has(e.id))
+      .map((e) => ({ id: e.id, name: e.name, status: e.status }));
   } catch {
     return [];
   }
@@ -1477,7 +1834,7 @@ export async function campaignStatusData(
   deps: WorkerDeps,
   ctx: ReadToolContext,
   input: { campaignId?: string; name?: string },
-): Promise<{ hasData: true; campaigns: Array<{ id: string; name: string | null; status: string }>; source: "live" } | NoData> {
+): Promise<{ hasData: true; campaigns: Array<{ id: string; name: string | null; status: string; delivering?: boolean; deliveryReason?: string }>; source: "live" } | NoData> {
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return { hasData: false, note: "conta não encontrada" };
@@ -1504,16 +1861,42 @@ export async function campaignStatusData(
 
   // STATUS FRESCO de cada alvo (readEntityState não passa pelo cache → reflete reativação/pausa
   // externa AGORA). Bounded (resolveNamedMatch já capa a lista). Falha numa → pula só ela.
-  const campaigns: Array<{ id: string; name: string | null; status: string }> = [];
+  const campaigns: Array<{ id: string; name: string | null; status: string; delivering?: boolean; deliveryReason?: string }> = [];
+  let tokenInvalid = false; // distingue token (recolar) de transiente (tenta de novo) na falha total
   for (const t of targets) {
     try {
       const raw = await withTimeout(deps.ports.ads.readEntityState(ref, t.id), deps.conversation.liveFetchTimeoutMs);
-      campaigns.push({ id: t.id, name: t.name, status: mapStatus(raw["effective_status"] as string | undefined, raw["status"] as string | undefined) });
-    } catch {
+      const status = mapStatus(raw["effective_status"] as string | undefined, raw["status"] as string | undefined);
+      // ENTREGA EFETIVA (a Meta não cascateia status): campanha pausada não entrega; ativa só entrega
+      // se tiver anúncio ativo (1 leitura escopada da árvore). Falha na árvore → omite (não afirma).
+      const entry: { id: string; name: string | null; status: string; delivering?: boolean; deliveryReason?: string } = { id: t.id, name: t.name, status };
+      if (status !== "active") {
+        entry.delivering = false;
+        entry.deliveryReason = status === "paused" ? "campanha pausada" : `campanha ${status}`;
+      } else {
+        try {
+          const tree = await withTimeout(deps.ports.ads.readActivationTree(ref, "campaign", t.id), deps.conversation.liveFetchTimeoutMs);
+          const d = campaignDelivering(tree);
+          entry.delivering = d.delivering;
+          if (d.reason) entry.deliveryReason = d.reason;
+        } catch {
+          /* árvore indisponível → deixa 'delivering' indefinido (status ativo, entrega desconhecida) */
+        }
+      }
+      campaigns.push(entry);
+    } catch (err) {
+      // token inválido (190) NÃO é transiente — retry não resolve, recolar sim. Distingue a mensagem final.
+      if (err instanceof AdsPlatformError && err.kind === "invalid_credential") tokenInvalid = true;
       /* pula essa — best-effort */
     }
   }
-  if (campaigns.length === 0) return { hasData: false, note: "não consegui confirmar o status ao vivo agora — tenta de novo em instantes" };
+  if (campaigns.length === 0) {
+    if (tokenInvalid) {
+      await markConnectionTokenInvalid(deps.db, ctx.orgId, ctx.adAccountId).catch(() => undefined);
+      return { hasData: false, note: "a conexão com a Meta caiu (token inválido) — reconecte a conta no site pra eu voltar a ler o status." };
+    }
+    return { hasData: false, note: "não consegui confirmar o status ao vivo agora — tenta de novo em instantes" };
+  }
   return { hasData: true, campaigns, source: "live" };
 }
 
@@ -1568,6 +1951,104 @@ export async function getLearningsData(db: WorkerDeps["db"], orgId: string, agen
       confirmed: r.confirmedByHuman,
       hasProposal: r.proposedThresholdPatch != null,
     })),
+  };
+}
+
+/** Quantos criativos recentes da conta entram como candidatos da busca por descrição (custo ∝ N). */
+const RECALL_CANDIDATE_LIMIT = 30;
+
+/** Descrição curta do criativo p/ o matcher casar a referência do usuário. */
+function recallDescription(v: CreativeVisionResult): string {
+  return [v.summary, v.hook ? `gancho: ${v.hook}` : "", v.angle ? `ângulo: ${v.angle}` : "", v.format ? `formato: ${v.format}` : ""].filter(Boolean).join(" · ");
+}
+
+/**
+ * Recuperação de um criativo já analisado (Slice 3) — por DESCRIÇÃO ("o vídeo da praia") ou, sem
+ * referência, o mais RECENTE. Junta `creative_assets` da conta com a decomposição cacheada em
+ * `creative_vision_analyses` (chave = `vision_content_hash` do asset, ou a derivada do id p/ os
+ * antigos) e devolve o que o modelo viu (gancho/ângulo/corpo/prova/forças/fraquezas).
+ */
+export async function recallCreativeData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+  reference: string | null,
+): Promise<NoData | { hasData: true; match: "none"; note: string } | { hasData: true; creative: Record<string, unknown> }> {
+  const assets = await deps.db
+    .select({ id: creativeAssets.id, format: creativeAssets.format, visionContentHash: creativeAssets.visionContentHash })
+    .from(creativeAssets)
+    .where(and(eq(creativeAssets.orgId, ctx.orgId), eq(creativeAssets.adAccountId, ctx.adAccountId), isNull(creativeAssets.archivedAt)))
+    .orderBy(desc(creativeAssets.createdAt))
+    .limit(RECALL_CANDIDATE_LIMIT);
+  if (assets.length === 0) return { hasData: false, note: "Você ainda não tem criativos guardados nessa conta — me manda um que eu analiso e guardo." };
+
+  // A decomposição pode ter sido gravada por QUALQUER dos dois workers, em chaves diferentes: a
+  // análise de chat (vídeo completo dos nossos bytes) sob `vision_content_hash`; a de biblioteca
+  // (frames da Meta, quando o vídeo/imagem fica `ready`) sob `libraryCreativeContentHash(id)`. Se o
+  // chat degradou (vídeo grande/sem bytes/falha) mas a biblioteca analisou, a análise existe só na
+  // 2ª chave — então buscamos AS DUAS por asset e usamos a que existir (preferindo a de chat, mais
+  // rica: movimento/áudio). Sem isto, o recall daria falso-negativo justamente nos casos de degradação.
+  const candidateHashes = (a: (typeof assets)[number]): string[] => {
+    const lib = libraryCreativeContentHash(a.id);
+    return a.visionContentHash && a.visionContentHash !== lib ? [a.visionContentHash, lib] : [lib];
+  };
+  const allHashes = [...new Set(assets.flatMap(candidateHashes))];
+  const visions = await deps.db
+    .select({ contentHash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
+    .from(creativeVisionAnalyses)
+    .where(and(inArray(creativeVisionAnalyses.contentHash, allHashes), eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion)));
+  const byHash = new Map(visions.map((v) => [v.contentHash, v.result]));
+  const visionFor = (a: (typeof assets)[number]): CreativeVisionResult | undefined => {
+    for (const h of candidateHashes(a)) {
+      const v = byHash.get(h);
+      if (v) return v;
+    }
+    return undefined;
+  };
+
+  // candidatos = assets COM análise (ordem = recência), carregando o resultado p/ o retorno.
+  const enriched = assets
+    .map((a) => {
+      const v = visionFor(a);
+      return v ? { asset: a, vision: v } : null;
+    })
+    .filter((x): x is { asset: (typeof assets)[number]; vision: CreativeVisionResult } => x !== null);
+  if (enriched.length === 0) {
+    return { hasData: true, match: "none", note: "Ainda não tenho a análise de nenhum criativo dessa conta — me manda o criativo que eu analiso." };
+  }
+
+  let pickedId: string | null;
+  if (reference && reference.trim().length > 0) {
+    const candidates: LibraryCandidate[] = enriched.map(({ asset, vision }) => ({
+      assetId: asset.id,
+      description: recallDescription(vision),
+      ...(vision.proofStrength ? { proofStrength: vision.proofStrength } : {}),
+      ...(typeof vision.persuasionSignals === "number" ? { persuasionSignals: vision.persuasionSignals } : {}),
+      ...(vision.weaknesses.length > 0 ? { weaknesses: vision.weaknesses } : {}),
+    }));
+    pickedId = await pickCreativeByReference(deps.ports.llm, deps.analysis.messageModel, reference.trim(), candidates, { orgId: ctx.orgId, type: "message" });
+  } else {
+    pickedId = enriched[0]!.asset.id; // recência (o último que mandou)
+  }
+  if (!pickedId) {
+    return { hasData: true, match: "none", note: "Não achei um criativo que bata com isso — descreve melhor (o que aparece nele) ou me manda de novo?" };
+  }
+  const picked = enriched.find((e) => e.asset.id === pickedId)!;
+  const v = picked.vision;
+  return {
+    hasData: true,
+    creative: {
+      format: picked.asset.format,
+      summary: v.summary,
+      ...(v.hook ? { hook: v.hook } : {}),
+      ...(v.angle ? { angle: v.angle } : {}),
+      ...(v.body ? { body: v.body } : {}),
+      ...(v.cta ? { cta: v.cta } : {}),
+      ...(v.proofStrength ? { proofStrength: v.proofStrength } : {}),
+      ...(typeof v.persuasionSignals === "number" ? { persuasionSignals: v.persuasionSignals } : {}),
+      strengths: v.strengths,
+      weaknesses: v.weaknesses,
+      ...(typeof v.score === "number" ? { score: v.score } : {}),
+    },
   };
 }
 
@@ -1680,15 +2161,19 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       // existe em NoData/AmbiguousCampaign (CampaignAnalysis não tem o campo) — combinado com
       // "sem ambiguous" isola exatamente o caso NoData (várias casando já é tratado à parte).
       if ("hasData" in result && !("ambiguous" in result)) {
-        const gaps = await liveActiveCampaignsNotCached(deps, ctx, new Set());
+        const gaps = await liveCampaignsNotCached(deps, ctx, new Set());
         const match = resolveNamedMatch(gaps, name, { name: (g) => g.name, keys: (g) => [g.id] });
         if (match.kind === "one") {
+          const paused = match.row.status === "paused";
           return asString({
             hasData: true,
             id: match.row.id,
             name: match.row.name,
+            status: match.row.status,
             noDataYet: true,
-            note: "Essa campanha existe e está ATIVA na Meta agora, mas ainda não tem NENHUMA análise — nenhum tier/orçamento/métrica disponível. Diga que ela existe/está ativa e ofereça rodar uma análise; nunca invente um número pra ela.",
+            note: paused
+              ? "Essa campanha existe e está PAUSADA na Meta agora, mas ainda não tem NENHUMA análise — nenhum tier/orçamento/métrica disponível. Diga que ela existe e está pausada e ofereça ATIVAR (ou rodar uma análise); nunca invente um número pra ela, nem diga que está ativa."
+              : "Essa campanha existe e está ATIVA na Meta agora, mas ainda não tem NENHUMA análise — nenhum tier/orçamento/métrica disponível. Diga que ela existe/está ativa e ofereça rodar uma análise; nunca invente um número pra ela.",
           });
         }
       }
@@ -1697,7 +2182,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_analysis",
       description:
-        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise. Sem nenhuma análise casando o nome, verifica AO VIVO se a campanha existe ATIVA na Meta (noDataYet:true) antes de dizer que não existe. 'deactivatedSince' presente = a Meta não lista mais essa campanha como ativa desde essa data — o resto do curado (tier/métricas) é da ÚLTIMA vez que ela esteve ativa, NÃO é o estado atual; avise isso sempre que citar dado dela, nunca apresente como se estivesse rodando agora.",
+        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise. Sem nenhuma análise casando o nome, verifica AO VIVO se a campanha existe na Meta — ATIVA ou PAUSADA (campo 'status'; noDataYet:true) — antes de dizer que não existe; uma pausada nunca-analisada aparece aqui e pode ser ATIVADA por nome. 'deactivatedSince' presente = a Meta não lista mais essa campanha como ativa desde essa data — o resto do curado (tier/métricas) é da ÚLTIMA vez que ela esteve ativa, NÃO é o estado atual; avise isso sempre que citar dado dela, nunca apresente como se estivesse rodando agora.",
       schema: z.object({ name: z.string() }),
     },
   );
@@ -1711,7 +2196,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_status",
       description:
-        "Status AO VIVO (ativa/pausada) direto da Meta AGORA — por id ou nome. Devolve uma LISTA de campanhas que casaram (com o status de cada): nome único → 1; nome ambíguo → TODAS as parecidas com o status — MOSTRE a lista pro usuário (não peça o id de volta). É a ÚNICA fonte confiável de ativa/pausada: NUNCA deduza por gasto (0 gasto ≠ pausada). Use SEMPRE antes de recomendar reativar/pausar/substituir (a análise pode ter horas) e quando o usuário afirmar que uma campanha está ativa/pausada (confirme ao vivo, não só concorde).",
+        "Status AO VIVO (ativa/pausada) direto da Meta AGORA — por id ou nome. Devolve uma LISTA de campanhas que casaram (com o status de cada): nome único → 1; nome ambíguo → TODAS as parecidas com o status — MOSTRE a lista pro usuário (não peça o id de volta). É a ÚNICA fonte confiável de ativa/pausada: NUNCA deduza por gasto (0 gasto ≠ pausada). Use SEMPRE antes de recomendar reativar/pausar/substituir (a análise pode ter horas) e quando o usuário afirmar que uma campanha está ativa/pausada (confirme ao vivo, não só concorde). Cada campanha traz `delivering` (ENTREGA EFETIVA: a Meta não cascateia status, então campanha ATIVA com conjuntos/anúncios pausados NÃO veicula) + `deliveryReason` — se `delivering:false`, DIGA que ela não está entregando e o motivo, não diga só 'ativa'; ofereça ligar a cadeia. `delivering` ausente = não deu pra confirmar a entrega (não afirme).",
       schema: z.object({
         campaignId: z.string().nullable().optional().describe("id da campanha (preferido; use get_campaign_analysis/list_campaigns pra achar)"),
         name: z.string().nullable().optional().describe("nome (ou trecho) da campanha — usado se não tiver o id; ambíguo → peço o id"),
@@ -1750,15 +2235,16 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
         // gap de sincronização (pivô saúde): campanha ATIVA na Meta sem NENHUMA análise ainda —
         // nunca omitir, nunca inventar número; entra na lista marcada "sem dado ainda".
         const knownIds = new Set(analyzed.campaigns.map((c) => c.id));
-        const gaps = await liveActiveCampaignsNotCached(deps, ctx, knownIds);
+        const gaps = await liveCampaignsNotCached(deps, ctx, knownIds);
         if (gaps.length > 0) {
+          const gapLabel = (g: { name: string; status: string }) => `${g.name} (${g.status === "paused" ? "pausada" : "ativa"})`;
           return asString({
             ...analyzed,
             campaigns: [
               ...analyzed.campaigns,
-              ...gaps.map((g) => ({ id: g.id, name: g.name, spend: null, conversions: null, cpa: null, roas: null, revenue: null, ...curatedViewOf(null), noDataYet: true })),
+              ...gaps.map((g) => ({ id: g.id, name: g.name, status: g.status, spend: null, conversions: null, cpa: null, roas: null, revenue: null, ...curatedViewOf(null), noDataYet: true })),
             ],
-            syncNote: `${gaps.length} campanha(s) ativa(s) na Meta (${gaps.map((g) => g.name).join(", ")}) ainda NÃO têm nenhuma análise — os campos delas vêm vazios (noDataYet:true) até rodar uma análise nova; cite explicitamente que elas existem e estão ativas, sem inventar número.`,
+            syncNote: `${gaps.length} campanha(s) na Meta (${gaps.map(gapLabel).join(", ")}) ainda NÃO têm nenhuma análise — os campos delas vêm vazios (noDataYet:true) até rodar uma análise nova; cite explicitamente que elas existem, com o status de cada (ativa/pausada — nunca chame uma pausada de ativa), sem inventar número. Uma pausada pode ser ATIVADA por nome.`,
           });
         }
         return asString(analyzed);
@@ -1768,7 +2254,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "list_campaigns",
       description:
-        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). Também verifica AO VIVO se existe campanha ATIVA na Meta ainda sem nenhuma análise — vem marcada noDataYet:true + 'syncNote'; cite que ela existe/está ativa, nunca invente número pra ela. Uma campanha com 'deactivatedSince' preenchido saiu do conjunto ativo desde essa data — mencione isso, nunca trate o tier/métricas dela como situação atual. COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
+        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). Também verifica AO VIVO se existe campanha na Meta (ATIVA ou PAUSADA) ainda sem nenhuma análise — vem marcada noDataYet:true + 'status' + 'syncNote'; cite que ela existe com o status de cada (nunca chame pausada de ativa), nunca invente número pra ela; pausada pode ser ativada por nome. Uma campanha com 'deactivatedSince' preenchido saiu do conjunto ativo desde essa data — mencione isso, nunca trate o tier/métricas dela como situação atual. COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
       schema: z.object({
         periodDays: z.number().int().positive().nullable().optional(),
         sinceDaysAgo: z.number().int().min(0).nullable().optional(),
@@ -1816,7 +2302,8 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
     {
       name: "list_pending",
-      description: "Ações aguardando aprovação na organização (todas as contas).",
+      description:
+        "Ações aguardando aprovação na organização (todas as contas), incl. ativações de campanhas recém-criadas (kind:'activation', com o NOME da campanha em entityName). Pra ATIVAR uma campanha que você acabou de criar (nasce pausada), é AQUI que ela está — case o nome pedido ('ativa a campanha X') com o entityName e aprove por id; não precisa do id da Meta.",
       schema: z.object({}),
     },
   );
@@ -1891,9 +2378,9 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   );
 
   const getTopCreatives = tool(
-    async ({ fresh }: { fresh?: boolean | null }) => {
+    async ({ fresh, query }: { fresh?: boolean | null; query?: string | null }) => {
       if (noFocus()) return NEEDS_FOCUS;
-      logger.debug({ agentId: ctx.agentId, fresh: Boolean(fresh) }, "tool:get_top_creatives");
+      logger.debug({ agentId: ctx.agentId, fresh: Boolean(fresh), query: query ?? null }, "tool:get_top_creatives");
       // fresh = puxa a copy ATUAL da Meta antes de responder (preserva a perf do run). Sob teto
       // de tempo próprio (< turnTimeout): Meta lenta → degrada pro persistido em vez de estourar
       // o turno inteiro (a causa do fallback genérico quando o refresh levava minutos).
@@ -1902,13 +2389,27 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
           logger.warn({ err: String(err) }, "get_top_creatives:refresh live degradou (usa persistido)"),
         );
       }
-      return asString(await getTopCreativesData(db, ctx.adAccountId, ctx.orgId));
+      return asString(await getTopCreativesData(deps, ctx, query));
     },
     {
       name: "get_top_creatives",
       description:
-        "Os melhores criativos da conta (copy: texto principal, título, CTA) ranqueados por desempenho. Use para 'qual minha copy campeã' ou para embasar direção de criativo. Passe fresh=true para buscar as copies ATUAIS na Meta em tempo real; senão usa as do último run. SEM receita/conversão por anúncio — pra 'quais anúncios trouxeram essa receita'/'separar por criativo' (financeiro), use get_ads_breakdown.",
-      schema: z.object({ fresh: z.boolean().nullable() }),
+        "Criativos da conta pra LISTAR/escolher: os anúncios VEICULANDO capturados por análise (copy + tier/desempenho) MAIS os criativos da BIBLIOTECA do site (uploads, mostrados pela descrição do que aparece neles). SEM query = a lista ('quais criativos eu tenho', 'qual minha copy campeã'). COM query (nome OU id do anúncio) = LOOKUP de um anúncio ESPECÍFICO entre os capturados — e, quando NADA foi capturado (ex. tudo pausado), busca também AO VIVO na Meta (inclui pausados); nome ambíguo → opções numeradas; um criativo da BIBLIOTECA casa por DESCRIÇÃO via recall_creative, não aqui. O resultado (lista ou 'não achei') diz ONDE procurou (campo `escopo`/nota) — repasse a limitação com honestidade: NUNCA diga que são TODOS os criativos da conta, nem que procurou em todos quando a nota diz o contrário. fresh=true busca as copies ATUAIS na Meta. SEM receita/conversão por anúncio — pra isso use get_ads_breakdown.",
+      schema: z.object({ fresh: z.boolean().nullable(), query: z.string().nullable() }),
+    },
+  );
+
+  const recallCreative = tool(
+    async ({ reference }: { reference?: string | null }) => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId, reference: reference ?? null }, "tool:recall_creative");
+      return asString(await recallCreativeData(deps, ctx, reference ?? null));
+    },
+    {
+      name: "recall_creative",
+      description:
+        "Traz a ANÁLISE de um criativo (imagem/vídeo) que o dono já mandou/analisou — pra responder 'o que você achou daquele vídeo?'. Passe `reference` com a DESCRIÇÃO/conteúdo que ele citou ('o vídeo da praia', 'o do 50% off', 'o depoimento') e eu acho pela descrição. SEM reference = o ÚLTIMO criativo que ele mandou. Devolve o que o modelo viu (gancho/ângulo/corpo/CTA/prova/forças/fraquezas). Diferente de get_top_creatives (que é copy + desempenho de anúncios veiculando).",
+      schema: z.object({ reference: z.string().nullable() }),
     },
   );
 
@@ -1941,6 +2442,34 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       name: "list_audiences",
       description:
         "Lista os públicos (custom audiences) REAIS da conta — id, nome, tamanho aproximado e se é lookalike. Use pra propor remarketing/exclusões com base nos públicos que EXISTEM (nunca invente público). Necessário antes de segmentar uma campanha por público.",
+      schema: z.object({}),
+    },
+  );
+
+  const listPages = tool(
+    async () => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId }, "tool:list_pages");
+      return asString(await listPagesData(deps, ctx));
+    },
+    {
+      name: "list_pages",
+      description:
+        "Lista as PÁGINAS do Facebook que a conta pode usar como DESTINO — nome + número de WhatsApp conectado (quando a Meta expõe). Use quando o dono perguntar 'quais páginas/números eu tenho' ou quando houver VÁRIAS e ele precisar escolher qual usar na criação (a Página define pra qual WhatsApp uma campanha de conversas leva). Nunca invente uma Página — use as que aparecem aqui.",
+      schema: z.object({}),
+    },
+  );
+
+  const listPixels = tool(
+    async () => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId }, "tool:list_pixels");
+      return asString(await listPixelsData(deps, ctx));
+    },
+    {
+      name: "list_pixels",
+      description:
+        "Lista os PIXELS de conversão da conta — id + nome. Use quando o dono perguntar 'quais pixels eu tenho' ou quando houver VÁRIOS e ele precisar escolher qual usar na criação. Por padrão a criação já usa o pixel que converte (do melhor anúncio); isto é pra ESCOLHER outro. Nunca invente um pixel — use os que aparecem aqui.",
       schema: z.object({}),
     },
   );
@@ -1991,12 +2520,12 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async () => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId }, "tool:get_pending_draft");
-      return asString(await getPendingDraftData(db, ports.approval, ctx.orgId, ctx.agentId, ctx.adAccountId));
+      return asString(await getPendingDraftData(deps, ctx.orgId, ctx.agentId, ctx.adAccountId));
     },
     {
       name: "get_pending_draft",
       description:
-        "Detalhe do RASCUNHO de campanha aguardando sua aprovação (do banco, sempre atual — não expira em 30min como o eco): QUAL criativo (anúncio real), QUAL público, e as copies, com o id pra aprovar/recusar. Use quando o usuário perguntar sobre a campanha que você propôs ('qual público', 'qual criativo', 'o que você vai criar', 'recusa/aprova o rascunho'). Responde na hora, sem chamar a Meta.",
+        "Detalhe do RASCUNHO de campanha aguardando sua aprovação (do banco, sempre atual — não expira em 30min como o eco): QUAL criativo (anúncio real), QUAL público, as copies e — em campanha de conversas — o DESTINO (a Página/WhatsApp pra onde o clique leva), com o id pra aprovar/recusar. Use quando o usuário perguntar sobre a campanha que você propôs ('qual público', 'qual criativo', 'QUAL PÁGINA', 'pra qual WhatsApp/número vai', 'o que você vai criar', 'recusa/aprova o rascunho'). O rascunho SEMPRE tem uma Página definida (senão nem teria sido criado) — o campo `destino` responde 'qual página', NÃO use list_pages pra isso.",
       schema: z.object({}),
     },
   );
@@ -2019,8 +2548,11 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getAgentConfig,
     explainRecommendation,
     getTopCreatives,
+    recallCreative,
     getAccountHealth,
     getAdsBreakdown,
     listAudiences,
+    listPages,
+    listPixels,
   ];
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HealthSignal } from "@trafego/shared";
-import { firstFatigueSignal, isFatigued } from "./index.js";
+import { firstFatigueSignal, hasHardFatigue, isAging, isFatigued } from "./index.js";
 
 // Fonte única de "fadiga de criativo" — reconcilia o guard de escala (que já usava
 // creative_fatigue + weak_hook_retention) com o detector de oportunidade de criação
@@ -26,9 +26,36 @@ describe("isFatigued (sinal DURO de fadiga de criativo)", () => {
     expect(isFatigued(["weak_creative"])).toBe(false);
   });
 
+  it("creative_aging → true (desgaste ainda trava escala/duplicação; só a direção da rec muda)", () => {
+    expect(isFatigued(["creative_aging"])).toBe(true);
+  });
+
   it("undefined/vazio → false", () => {
     expect(isFatigued(undefined)).toBe(false);
     expect(isFatigued([])).toBe(false);
+  });
+});
+
+describe("isAging (desgaste que AINDA entrega — distingue a direção da rec)", () => {
+  it("creative_aging → true", () => expect(isAging(["creative_aging"])).toBe(true));
+  it("creative_fatigue (já não entrega) → false", () => expect(isAging(["creative_fatigue"])).toBe(false));
+  it("weak_hook_retention → false", () => expect(isAging(["weak_hook_retention"])).toBe(false));
+  it("undefined/vazio → false", () => {
+    expect(isAging(undefined)).toBe(false);
+    expect(isAging([])).toBe(false);
+  });
+});
+
+describe("hasHardFatigue (desgaste DURO que não é só aging — 'a dura vence')", () => {
+  it("creative_fatigue → true", () => expect(hasHardFatigue(["creative_fatigue"])).toBe(true));
+  it("weak_hook_retention → true", () => expect(hasHardFatigue(["weak_hook_retention"])).toBe(true));
+  it("só creative_aging → false (aging benigno, ainda entrega)", () => expect(hasHardFatigue(["creative_aging"])).toBe(false));
+  it("O CASO REAL: creative_aging + weak_hook_retention JUNTOS → true (a dura não é mascarada pelo aging)", () => {
+    expect(hasHardFatigue(["creative_aging", "weak_hook_retention"])).toBe(true);
+  });
+  it("sem fadiga → false", () => {
+    expect(hasHardFatigue(["low_volume"])).toBe(false);
+    expect(hasHardFatigue(undefined)).toBe(false);
   });
 });
 

@@ -195,6 +195,60 @@ const DEFAULT_IMAGE_MIME = "image/jpeg";
 /** Mime default de vídeo quando o payload não traz o mimetype. */
 const DEFAULT_VIDEO_MIME = "video/mp4";
 
+/**
+ * Nós que ENVELOPAM a mensagem real: ver-uma-vez (foto/vídeo), mensagem temporária,
+ * documento-com-legenda e mensagem editada entregam o conteúdo aninhado em `.message`.
+ * Sem desembrulhar, `message.videoMessage` some e o vídeo cai em `null` → silêncio
+ * (bug confirmado em prod). Recursivo com cap de profundidade (anti-loop em payload patológico).
+ */
+const WRAPPER_NODES = [
+  "ephemeralMessage",
+  "viewOnceMessage",
+  "viewOnceMessageV2",
+  "viewOnceMessageV2Extension",
+  "documentWithCaptionMessage",
+  "editedMessage",
+] as const;
+const UNWRAP_MAX_DEPTH = 6;
+
+function unwrapMessage(message: Record<string, unknown> | null, depth = 0): Record<string, unknown> | null {
+  if (!message || depth >= UNWRAP_MAX_DEPTH) return message;
+  for (const node of WRAPPER_NODES) {
+    const inner = asRecord(asRecord(message[node])?.["message"]);
+    if (inner) return unwrapMessage(inner, depth + 1);
+  }
+  return message;
+}
+
+/** Prefixos de mimetype que promovem um `documentMessage` a mídia de 1ª classe. */
+const DOC_MEDIA_PREFIX = { video: "video/", image: "image/" } as const;
+
+/**
+ * `documentMessage` com mimetype de vídeo/imagem = mídia mandada "como documento" por alguns
+ * clientes — hoje viraria `unsupported` (aviso) e nunca entraria na biblioteca. Promove a
+ * vídeo/imagem; outros documentos (pdf/zip) seguem `unsupported`. Retorna o discriminante ou null.
+ */
+function extractDocumentMedia(
+  message: Record<string, unknown> | null,
+  data: Record<string, unknown>,
+):
+  | { kind: "video"; mimetype: string; caption: string | null; fileLength?: number }
+  | { kind: "image"; base64: string; mimetype: string; caption: string | null }
+  | null {
+  const doc = asRecord(message?.["documentMessage"]);
+  const mime = typeof doc?.["mimetype"] === "string" ? (doc["mimetype"] as string) : "";
+  if (!doc || mime.length === 0) return null;
+  if (mime.startsWith(DOC_MEDIA_PREFIX.video)) {
+    const fileLength = parseFileLength(doc["fileLength"]);
+    return { kind: "video", mimetype: mime, caption: captionOf(doc), ...(fileLength !== undefined ? { fileLength } : {}) };
+  }
+  if (mime.startsWith(DOC_MEDIA_PREFIX.image)) {
+    const base64 = firstBase64(message?.["base64"], data["base64"], doc["base64"]);
+    return { kind: "image", base64, mimetype: mime, caption: captionOf(doc) };
+  }
+  return null;
+}
+
 /** Primeiro base64 não-vazio entre os candidatos (ou "" se nenhum). */
 function firstBase64(...candidates: readonly unknown[]): string {
   for (const c of candidates) {
@@ -208,8 +262,10 @@ function firstBase64(...candidates: readonly unknown[]): string {
  * exato do base64 varia por versão da Evolution → procura em candidatos; ausente
  * → base64 vazio (o worker trata como falha amigável, nunca crash).
  */
-function extractAudio(data: Record<string, unknown>): { base64: string; mimetype: string } | null {
-  const message = asRecord(data["message"]);
+function extractAudio(
+  message: Record<string, unknown> | null,
+  data: Record<string, unknown>,
+): { base64: string; mimetype: string } | null {
   const audio = asRecord(message?.["audioMessage"]);
   if (!audio) return null;
   const rawMime = audio["mimetype"];
@@ -223,16 +279,22 @@ function extractAudio(data: Record<string, unknown>): { base64: string; mimetype
  * áudio: o caminho do base64 varia por versão → procura em candidatos; ausente →
  * base64 vazio (o worker de intake busca por `fetchMediaBase64`, nunca crash).
  */
-function extractImage(data: Record<string, unknown>): { base64: string; mimetype: string; caption: string | null } | null {
-  const message = asRecord(data["message"]);
+function extractImage(
+  message: Record<string, unknown> | null,
+  data: Record<string, unknown>,
+): { base64: string; mimetype: string; caption: string | null } | null {
   const image = asRecord(message?.["imageMessage"]);
   if (!image) return null;
   const rawMime = image["mimetype"];
   const mimetype = typeof rawMime === "string" && rawMime.length > 0 ? rawMime : DEFAULT_IMAGE_MIME;
   const base64 = firstBase64(message?.["base64"], data["base64"], image["base64"]);
-  const rawCaption = image["caption"];
-  const caption = typeof rawCaption === "string" && rawCaption.trim().length > 0 ? rawCaption.trim() : null;
-  return { base64, mimetype, caption };
+  return { base64, mimetype, caption: captionOf(image) };
+}
+
+/** Legenda de um nó de mídia (`caption`), normalizada — vazia/ausente → null. */
+function captionOf(node: Record<string, unknown>): string | null {
+  const raw = node["caption"];
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
 }
 
 /**
@@ -243,17 +305,15 @@ function extractImage(data: Record<string, unknown>): { base64: string; mimetype
  * (HTTP HEAD é inviável: a Evolution só entrega mídia por base64, nunca por URL).
  */
 function extractVideo(
-  data: Record<string, unknown>,
+  message: Record<string, unknown> | null,
 ): { mimetype: string; caption: string | null; fileLength?: number } | null {
-  const message = asRecord(data["message"]);
-  const video = asRecord(message?.["videoMessage"]);
+  // `ptvMessage` = nota de vídeo redonda (nó SEPARADO de `videoMessage` no Baileys/Evolution).
+  const video = asRecord(message?.["videoMessage"]) ?? asRecord(message?.["ptvMessage"]);
   if (!video) return null;
   const rawMime = video["mimetype"];
   const mimetype = typeof rawMime === "string" && rawMime.length > 0 ? rawMime : DEFAULT_VIDEO_MIME;
-  const rawCaption = video["caption"];
-  const caption = typeof rawCaption === "string" && rawCaption.trim().length > 0 ? rawCaption.trim() : null;
   const fileLength = parseFileLength(video["fileLength"]);
-  return { mimetype, caption, ...(fileLength !== undefined ? { fileLength } : {}) };
+  return { mimetype, caption: captionOf(video), ...(fileLength !== undefined ? { fileLength } : {}) };
 }
 
 /** `fileLength` chega como string decimal (protobuf int64) na maioria das versões da Evolution;
@@ -277,6 +337,19 @@ function detectMediaType(message: Record<string, unknown> | null): string | null
   return null;
 }
 
+/**
+ * Diagnóstico (observabilidade) de um payload que `parseInbound` ignorou: os NOMES das chaves
+ * de `data.message` (+ `messageType`) — sem conteúdo. Deixa visível no log um tipo de mídia novo
+ * (ex: `ptvMessage`, wrapper) antes de virar silêncio. Vocabulário da Evolution fica só aqui.
+ */
+export function inboundMessageShape(payload: unknown): { messageKeys: string[]; messageType?: string } | null {
+  const data = asRecord(asRecord(payload)?.["data"]);
+  if (!data) return null;
+  const message = asRecord(data["message"]);
+  const messageType = typeof data["messageType"] === "string" ? (data["messageType"] as string) : undefined;
+  return { messageKeys: message ? Object.keys(message) : [], ...(messageType ? { messageType } : {}) };
+}
+
 /** Extrai a mensagem inbound normalizada (união por `kind`), ou null se ignorar. */
 export function parseInbound(payload: unknown): InboundMessage | null {
   const root = asRecord(payload);
@@ -289,7 +362,8 @@ export function parseInbound(payload: unknown): InboundMessage | null {
   if (key["fromMe"] === true) return null; // nossa própria mensagem
 
   const remoteJid = typeof key["remoteJid"] === "string" ? (key["remoteJid"] as string) : "";
-  const message = asRecord(data["message"]);
+  // Desembrulha wrappers (ver-uma-vez / temporária / doc-com-legenda / editada) → o nó real.
+  const message = unwrapMessage(asRecord(data["message"]));
 
   // Grupo (@g.us): o remetente é o `participant`, não o `remoteJid` (que é o grupo).
   // Em grupo migrado pra LID (`addressingMode: "lid"`), `participant` vem como
@@ -334,22 +408,43 @@ export function parseInbound(payload: unknown): InboundMessage | null {
     };
   };
 
-  const audio = extractAudio(data);
+  const audio = extractAudio(message, data);
   if (audio) return { ...base, kind: "audio", audio, messageKey: buildMediaKey() };
 
-  const image = extractImage(data);
+  const image = extractImage(message, data);
   if (image) {
     const { caption, ...bytes } = image;
     return { ...base, kind: "image", image: bytes, caption, messageKey: buildMediaKey() };
   }
 
-  const video = extractVideo(data);
+  const video = extractVideo(message);
   if (video) {
     return {
       ...base,
       kind: "video",
       video: { mimetype: video.mimetype, ...(video.fileLength !== undefined ? { fileLength: video.fileLength } : {}) },
       caption: video.caption,
+      messageKey: buildMediaKey(),
+    };
+  }
+
+  // Vídeo/imagem mandados COMO DOCUMENTO (mimetype de mídia) → 1ª classe, não "unsupported".
+  const docMedia = extractDocumentMedia(message, data);
+  if (docMedia?.kind === "video") {
+    return {
+      ...base,
+      kind: "video",
+      video: { mimetype: docMedia.mimetype, ...(docMedia.fileLength !== undefined ? { fileLength: docMedia.fileLength } : {}) },
+      caption: docMedia.caption,
+      messageKey: buildMediaKey(),
+    };
+  }
+  if (docMedia?.kind === "image") {
+    return {
+      ...base,
+      kind: "image",
+      image: { base64: docMedia.base64, mimetype: docMedia.mimetype },
+      caption: docMedia.caption,
       messageKey: buildMediaKey(),
     };
   }

@@ -6,7 +6,7 @@
 
 import { GATEABLE_TOOL_KEYS, isCreationToolKey, type ToolBindingMode } from "@trafego/shared";
 
-/** Resolve as tool-keys HABILITADAS (as 6) a partir dos bindings + fallback.
+/** Resolve as tool-keys HABILITADAS (as 7) a partir dos bindings + fallback.
  *  - binding presente → habilitado sse `mode !== "disabled"` (`enabled`/`shadow` contam);
  *  - binding ausente → fallback: criação = habilitada (default-on); ação = está em `allowedActions`. */
 export function resolveEnabledTools(

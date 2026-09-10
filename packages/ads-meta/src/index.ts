@@ -10,3 +10,4 @@ export * from "./behavior-catalog.js";
 export * from "./custom-conversions.js";
 export * from "./meta-conversion-map.js";
 export * from "./meta-funnel-map.js";
+export * from "./targeting-canonical.js";

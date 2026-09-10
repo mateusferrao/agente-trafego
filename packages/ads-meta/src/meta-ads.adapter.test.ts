@@ -399,3 +399,49 @@ describe("MetaAdsAdapter.listEntities (cache de catálogo)", () => {
     expect(calls().length).toBe(2);
   });
 });
+
+describe("readActivationTree (ativação em cadeia + entrega efetiva)", () => {
+  const ref = { adAccountId: "1", accessToken: "tok" };
+
+  it("campanha → status PRÓPRIO + EFETIVO (own active sob adset pausado = own active / eff paused)", async () => {
+    const { adapter } = makeAdapterWithGov();
+    stubFetchSequence([
+      { body: { data: [
+        { id: "a1", name: "Ad 1", status: "ACTIVE", effective_status: "ACTIVE", adset_id: "s1" },
+        { id: "a2", name: "Ad 2", status: "ACTIVE", effective_status: "ADSET_PAUSED", adset_id: "s2" },
+      ] } },
+      { body: { data: [
+        { id: "s1", name: "Set 1", status: "ACTIVE", effective_status: "ACTIVE" },
+        { id: "s2", name: "Set 2", status: "PAUSED", effective_status: "PAUSED" },
+      ] } },
+    ]);
+    const tree = await adapter.readActivationTree(ref, "campaign", "c1");
+    expect(tree.ads).toEqual([
+      { id: "a1", name: "Ad 1", status: "active", effectiveStatus: "active", adsetId: "s1" },
+      { id: "a2", name: "Ad 2", status: "active", effectiveStatus: "paused", adsetId: "s2" },
+    ]);
+    expect(tree.adsets).toEqual([
+      { id: "s1", name: "Set 1", status: "active", effectiveStatus: "active" },
+      { id: "s2", name: "Set 2", status: "paused", effectiveStatus: "paused" },
+    ]);
+    expect(tree.truncated).toBe(false);
+  });
+
+  it("conjunto → só anúncios (sem sub-conjunto, sem 2ª chamada)", async () => {
+    const { adapter } = makeAdapterWithGov();
+    const { calls } = stubFetchSequence([
+      { body: { data: [{ id: "a1", name: "Ad 1", status: "PAUSED", effective_status: "PAUSED", adset_id: "s1" }] } },
+    ]);
+    const tree = await adapter.readActivationTree(ref, "adset", "s1");
+    expect(tree.adsets).toEqual([]);
+    expect(tree.ads).toEqual([{ id: "a1", name: "Ad 1", status: "paused", effectiveStatus: "paused", adsetId: "s1" }]);
+    expect(calls().length).toBe(1); // só /ads
+  });
+
+  it("página com `paging.next` → truncated:true (não sub-ativa em silêncio)", async () => {
+    const { adapter } = makeAdapterWithGov();
+    stubFetchSequence([{ body: { data: [{ id: "a1", name: "Ad 1", status: "PAUSED", effective_status: "PAUSED", adset_id: "s1" }], paging: { next: "https://next" } } }]);
+    const tree = await adapter.readActivationTree(ref, "adset", "s1");
+    expect(tree.truncated).toBe(true);
+  });
+});

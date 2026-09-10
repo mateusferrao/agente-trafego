@@ -303,16 +303,26 @@ export interface AgentVoiceInput {
  * personalização aditiva (contexto/orientações). NÃO inclui a POSTURA (bloco à parte,
  * anexado por quem FALA) nem as regras de canal. PURO.
  */
-export function composeAgentVoice(v: AgentVoiceInput): string {
-  const methodologyBase = v.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(v.archetype));
+/** Opções da composição da voz. `includeMethodology` (default true = analista) inclui a
+ *  METODOLOGIA (prioridade analítica + regras de evidência/ação/anti-padrões). As superfícies
+ *  que FALAM com o dono (chat/redator/pulso) passam `false` — CLAUDE.md §10: a metodologia/stance
+ *  é só do analista; no chat ela engessa a voz (V2). Identidade/persona/tom/contexto/orientações
+ *  seguem em ambas (valem em toda superfície). */
+export interface AgentVoiceOptions {
+  readonly includeMethodology?: boolean;
+}
+
+export function composeAgentVoice(v: AgentVoiceInput, opts: AgentVoiceOptions = {}): string {
+  const includeMethodology = opts.includeMethodology ?? true;
+  const methodologyBase = includeMethodology ? (v.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(v.archetype))) : null;
   // Nome de marca FIXO — precede metodologia/persona (identidade, não tom). O dono
   // customiza COMO o agente fala (persona/tom), nunca QUEM ele é.
   const name = `Você é ${AGENT_NAME}, o agente de tráfego desta conta. Esse é o seu nome fixo; a persona e o tom abaixo definem só como você se comunica.`;
   const identity = [v.persona ? `Persona: ${v.persona}` : "", v.tone ? `Tom da comunicação: ${v.tone}` : ""]
     .filter((s) => s.length > 0)
     .join("\n");
-  const core = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
-  const base = `${name}\n\n${core}`;
+  const core = [methodologyBase, identity.length > 0 ? identity : null].filter((s): s is string => Boolean(s)).join("\n\n");
+  const base = core.length > 0 ? `${name}\n\n${core}` : name;
   return composeAgentPrompt(base, {
     ...(v.businessContext ? { businessContext: v.businessContext } : {}),
     ...(v.guidance ? { guidance: v.guidance } : {}),

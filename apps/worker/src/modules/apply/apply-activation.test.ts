@@ -17,6 +17,22 @@ describe("entitiesToActivate (ativa a árvore inteira — a Meta não cascateia 
     ]);
   });
 
+  it("C2 multi-conjunto → campanha + TODOS os N conjuntos + TODOS os N×M anúncios (adsetIds/adIdsByAdset)", () => {
+    expect(
+      entitiesToActivate({
+        kind: "from_scratch",
+        createdIds: { campaignId: "C1", adsetIds: ["AS1", "AS2"], adIdsByAdset: [["AD1"], ["AD2"]] },
+        sourceRef: null,
+      }),
+    ).toEqual([
+      { level: "campaign", id: "C1" },
+      { level: "adset", id: "AS1" },
+      { level: "adset", id: "AS2" },
+      { level: "ad", id: "AD1" },
+      { level: "ad", id: "AD2" },
+    ]);
+  });
+
   it("duplicate de ADSET → a cópia (adset) + os ads copiados (campanha-mãe já ativa)", () => {
     expect(
       entitiesToActivate({

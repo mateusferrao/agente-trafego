@@ -3,7 +3,8 @@
 // (visão feita no upload) qual criativo MELHOR CASA — não é ranking genérico/aleatório. Texto
 // only (usa o cache, não re-analisa visão) → barato. Falha/sem descrição → cai na recência.
 
-import type { LLMProviderPort, LLMMessage } from "@trafego/shared/ports";
+import type { AudienceStage } from "@trafego/shared";
+import type { LLMProviderPort, LLMMessage, LLMCallMeta } from "@trafego/shared/ports";
 import { LLMProviderError } from "@trafego/shared/ports";
 
 export interface LibraryCandidate {
@@ -22,7 +23,23 @@ export interface MatchContext {
   readonly goal: string;
   readonly businessContext?: string | null;
   readonly guidance?: string | null;
+  /** estágio do público da campanha NOVA (S3) — a mensagem que casa com frio ≠ a que casa com quente.
+   *  Neutro (o adapter derivou do targeting); `unknown`/ausente = não pontua estágio no prompt. */
+  readonly campaignStage?: AudienceStage;
+  /** copy do anúncio VENCEDOR da conta (S3) — dá o TEMA/OFERTA de referência pro matcher alinhar a
+   *  mensagem do criativo escolhido; nunca é ordem de copiar, só contexto de encaixe. */
+  readonly winnerCopy?: string | null;
+  /** ÂNGULO que o dono pediu destacar (S4) — ex: "preço/oferta", "prova social", "benefício",
+   *  "novidade", "urgência", ou livre. Prioriza criativos que comunicam ISSO (fit continua liderando). */
+  readonly angle?: string | null;
 }
+
+/** Rótulo PT do estágio pro prompt (o LLM lê linguagem de negócio, não a taxonomia). */
+const STAGE_PROMPT_LABEL: Readonly<Record<AudienceStage, string>> = {
+  prospecting: "prospecção (público frio, ainda não conhece o negócio)",
+  remarketing: "remarketing (público quente, já interagiu/conhece)",
+  unknown: "",
+};
 
 const MATCH_TEMPERATURE = 0.2;
 const MATCH_MAX_TOKENS = 200;
@@ -46,10 +63,14 @@ function buildMessages(ctx: MatchContext, candidates: readonly LibraryCandidate[
     "sinal extra, não critério sozinho: só desempatam entre candidatos de fit equivalente — nunca vencem " +
     "um encaixe melhor. Responda só o índice (0-based) do melhor.";
   const list = candidates.map((c, i) => `[${i}] ${describeCandidateForPrompt(c)}`).join("\n");
+  const stageLabel = ctx.campaignStage ? STAGE_PROMPT_LABEL[ctx.campaignStage] : "";
   const parts = [
     `Objetivo da campanha: ${ctx.goal}.`,
+    stageLabel ? `Estágio do público: ${stageLabel}.` : "",
     ctx.businessContext ? `Contexto do negócio: ${ctx.businessContext}` : "",
     ctx.guidance ? `Orientações: ${ctx.guidance}` : "",
+    ctx.angle ? `Ângulo que o dono quer destacar: ${ctx.angle} — priorize criativos que comunicam isso.` : "",
+    ctx.winnerCopy ? `Tema/oferta de referência (do anúncio que mais converte): ${ctx.winnerCopy}` : "",
     "",
     "Criativos disponíveis (índice + descrição):",
     list,
@@ -102,5 +123,52 @@ export async function pickLibraryCreativeByContext(
   } catch (err) {
     if (!(err instanceof LLMProviderError)) throw err;
     return candidates[0]!.assetId; // fallback: recência (1º da lista)
+  }
+}
+
+/** Mensagens p/ casar a REFERÊNCIA do usuário ("o vídeo da praia") com a descrição de cada criativo. */
+function buildReferenceMessages(reference: string, candidates: readonly LibraryCandidate[]): LLMMessage[] {
+  const system =
+    "O usuário está se referindo a UM criativo que já mandou/tem, pelo CONTEÚDO ('o vídeo da praia', " +
+    "'o do 50% off', 'o depoimento'). Escolha, pela descrição de cada um, qual criativo ele quer dizer. " +
+    "Se NENHUM casar de forma razoável com a referência, responda index -1 (não force um encaixe ruim). " +
+    "Responda só o índice (0-based), ou -1.";
+  const list = candidates.map((c, i) => `[${i}] ${describeCandidateForPrompt(c)}`).join("\n");
+  return [
+    { role: "system", content: system },
+    { role: "user", content: `Referência do usuário: "${reference}"\n\nCriativos (índice + descrição):\n${list}\n\nResponda SOMENTE JSON: { "index": <n | -1>, "why": "<motivo curto>" }` },
+  ];
+}
+
+/**
+ * Escolhe o criativo que o usuário está referindo POR DESCRIÇÃO (Slice 3). 0 candidatos → null; 1 →
+ * ele mesmo; ≥2 → LLM casa a referência × descrições. Diferente de `pickLibraryCreativeByContext`
+ * (que casa com o contexto de uma NOVA campanha), aqui o alvo é a fala do usuário sobre um criativo
+ * existente — e admite "nenhum" (index -1) pra não trazer o errado. Erro de LLM → null (não chuta).
+ */
+export async function pickCreativeByReference(
+  llm: Pick<LLMProviderPort, "completeStructured">,
+  model: string,
+  reference: string,
+  candidates: readonly LibraryCandidate[],
+  meta?: LLMCallMeta,
+): Promise<string | null> {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!.assetId;
+  try {
+    const completion = await llm.completeStructured<{ index?: number }>({
+      model,
+      messages: buildReferenceMessages(reference, candidates),
+      responseSchema: MATCH_SCHEMA,
+      responseSchemaName: "creative_reference_match",
+      temperature: MATCH_TEMPERATURE,
+      maxTokens: MATCH_MAX_TOKENS,
+      ...(meta ? { meta } : {}),
+    });
+    const i = completion.output?.index;
+    return typeof i === "number" && Number.isInteger(i) && i >= 0 && i < candidates.length ? candidates[i]!.assetId : null;
+  } catch (err) {
+    if (!(err instanceof LLMProviderError)) throw err;
+    return null; // ambíguo demais / erro → não chuta um criativo errado
   }
 }

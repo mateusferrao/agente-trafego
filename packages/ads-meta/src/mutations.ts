@@ -8,7 +8,7 @@ import {
   BUDGET_MODE_DECREASE,
   BUDGET_MODE_SET,
 } from "@trafego/shared";
-import type { MetaGraphClient } from "./client.js";
+import type { GraphResponse, MetaGraphClient } from "./client.js";
 import { explicitTargetingToRaw } from "./targeting-map.js";
 
 /**
@@ -26,8 +26,9 @@ import { explicitTargetingToRaw } from "./targeting-map.js";
 
 const STATUS_ACTIVE = "ACTIVE";
 const STATUS_PAUSED = "PAUSED";
-/** Piso de segurança de budget (unidade mínima) — Meta rejeita valores muito baixos. */
-const MIN_BUDGET_MINOR = 100;
+/** Piso de segurança de budget (unidade mínima) — Meta rejeita valores muito baixos. Exportado p/
+ *  a casca (ex: pré-clamp da realocação) respeitar o MESMO piso e o eco não divergir do aplicado. */
+export const MIN_BUDGET_MINOR = 100;
 /** Campo cru do público no adset (before-image + escrita de adjust_audience). */
 const TARGETING_FIELD = "targeting";
 
@@ -95,6 +96,21 @@ export class MetaMutationsService {
    *  omite os campos de budget (que não existem no anúncio) — evita o erro Meta #100. */
   async readEntityState(account: AdAccountRef, entityId: string, level?: EntityLevel): Promise<EntityState> {
     return this.readEntityStateFields(account, entityId, stateFieldsFor(level));
+  }
+
+  /** Igual ao `readEntityState`, mas devolve a `GraphResponse` CRUA (com header de uso) — p/ a casca
+   *  embrulhar em `callWithGovernor` e ganhar retry de transiente/rate-limit no re-check de status. */
+  readEntityStateResponse(account: AdAccountRef, entityId: string, level?: EntityLevel): Promise<GraphResponse<EntityState>> {
+    return this.client.request<EntityState>({ method: "GET", path: entityId, accessToken: account.accessToken, params: { fields: stateFieldsFor(level) } });
+  }
+
+  /** Lê SÓ o `targeting` cru atual de um adset (drift fino do revert de `adjust_audience`, D4).
+   *  Separado de `readEntityState` (status+budget) p/ isolar o payload pesado e não regredir o
+   *  revert de budget. `null` quando a Meta não devolve `targeting` (entidade sem público lível). */
+  async readAdSetTargeting(account: AdAccountRef, adsetId: string): Promise<Record<string, unknown> | null> {
+    const res = await this.readEntityStateFields(account, adsetId, TARGETING_FIELD);
+    const t = (res as Record<string, unknown>)[TARGETING_FIELD];
+    return t !== null && typeof t === "object" ? (t as Record<string, unknown>) : null;
   }
 
   /** GET cru de campos arbitrários da entidade (base de `readEntityState` + before de targeting). */

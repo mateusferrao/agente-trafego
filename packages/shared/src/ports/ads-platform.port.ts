@@ -2,7 +2,9 @@ import type {
   AccessibleAccount,
   AccountHealth,
   Action,
+  ActivationTree,
   AdEntity,
+  AdMetric,
   AudienceProfile,
   BreakdownDimension,
   BreakdownSegment,
@@ -17,6 +19,8 @@ import type {
   InterestSearchResult,
   TargetingSpec,
   WhatsappDestination,
+  PageInfo,
+  PixelInfo,
 } from "../types/index.js";
 
 /** Referência opaca a uma conta já resolvida (token + accountId internos ao adapter). */
@@ -159,11 +163,18 @@ export interface CreateAdSetInput {
    *  sem ela a Meta recusa anexar o anúncio: "conjunto sem objeto pra promover"). */
   readonly pageId?: string;
   readonly targeting: TargetingSpec;
+  /** Advantage+ audience (C3): true = deixa a Meta EXPANDIR além do público escolhido; ausente/false
+   *  = público fixo (comportamento pré-C3 no `explicit`). Só afeta o público EXPLÍCITO — `advantage_plus`
+   *  já é amplo e `reuse_adset` herda a expansão da fonte. */
+  readonly advantageAudience?: boolean;
   readonly status: "active" | "paused";
 }
 export interface CreateAdCreativeInput {
   readonly name: string;
   readonly pageId: string;
+  /** objetivo da campanha — o criativo muda por ele: conversas no WhatsApp (messaging_started) exige
+   *  CTA de WhatsApp + link genérico (não um CTA/link de site), senão a Meta recusa o criativo. */
+  readonly goal: ConversionGoal;
   readonly imageHash?: string;
   readonly videoId?: string;
   readonly linkUrl?: string;
@@ -173,6 +184,10 @@ export interface CreateAdCreativeInput {
     readonly description?: string;
     readonly cta?: string;
   };
+  /** Advantage+ creative enhancements (C3): true = a Meta pode AJUSTAR AUTOMATICAMENTE imagem/texto
+   *  do anúncio pra performar melhor (opt-in por feature; a Meta remove as inelegíveis). Ausente/false
+   *  = criativo exatamente como aprovado. O eco AVISA quando ON (o entregue pode diferir do aprovado). */
+  readonly advantageCreative?: boolean;
 }
 export interface CreateAdInput {
   readonly adsetId: string;
@@ -265,7 +280,7 @@ export interface AdsPlatformPort {
    * histórico pausado/arquivado (achado real: conta com 139 campanhas cacheadas, só ~13
    * ativas — paginar tudo pra descartar depois é o que estoura o rate-limit no meio do
    * caminho e vira análise parcial). Sem `opts` = catálogo COMPLETO (todo status) — o chat
-   * (get_campaign_status/list_campaigns/liveActiveCampaignsNotCached) PRECISA disso pra
+   * (get_campaign_status/list_campaigns/liveCampaignsNotCached) PRECISA disso pra
    * resolver nome→id de campanha PAUSADA (ex: "reativa a campanha X"); nunca filtrar esse
    * caminho. Filtrado NÃO usa o cache de catálogo (`MetaEntityCache`) — o catálogo completo
    * já é a fonte cacheada; um 2º resultado (menor) sob a MESMA chave (conta,nível)
@@ -277,19 +292,42 @@ export interface AdsPlatformPort {
    *  agrupados. Cadência própria (mais lenta que `getInsights`), chamado pela casca. */
   getBreakdownInsights(query: BreakdownInsightsQuery): Promise<EntityBreakdownRow[]>;
   getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]>;
+  /** Métrica CRUA por anúncio (gasto + resultados de negócio), SÍNCRONA (1 GET com `insights`
+   *  inline, não o report job) — pra enriquecer a busca AO VIVO de criativos (ex: recomendar o
+   *  melhor entre pausados, cujo histórico existe). `window` = `date_preset` da Meta ("maximum",
+   *  "last_30d", …). Best-effort: falha → vazio. É desempenho BRUTO — sem o tier/qualidade do run. */
+  getAdMetrics(account: AdAccountRef, window: string): Promise<AdMetric[]>;
   /** Frames HD (URLs) de um vídeo por `video_id` — p/ a visão de criativo da biblioteca. */
   getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]>;
+  /** URL da imagem de um criativo a partir do seu `image_hash` — `GET /act_<id>/adimages?
+   *  hashes=[hash]&fields=url`. Anúncios de imagem montados com `object_story_spec.link_data.
+   *  image_hash` NÃO expõem `creative.image_url`; o hash é a fonte ESTÁVEL da miniatura (card do
+   *  rascunho / picker "anúncios da conta"). Best-effort: hash inacessível/indisponível → null. */
+  getImageUrlByHash(account: AdAccountRef, imageHash: string): Promise<string | null>;
   /**
    * Resolve o número de WhatsApp de DESTINO de uma campanha (Fatia 7), escopado à campanha:
    * CTA do criativo (`meta_cta`) → Página conectada (`meta_page`) → nome da campanha
    * (`campaign_name`) → `none`. Sempre rotula a origem; nunca atribui de outra entidade.
    */
   getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination>;
+  /** Info de UMA Página pelo id (nome + WhatsApp conectado) — pra mostrar/confirmar o DESTINO de uma
+   *  campanha de conversas NO RASCUNHO. O NOME vem do nó da Página e, se o token não tem a Página como
+   *  ativo (403), das PÁGINAS DO NEGÓCIO (fallback confiável via `listPages`). `number` é best-effort:
+   *  a Meta raramente expõe o `whatsapp_number` da Página (o número real mora no conjunto pós-criação). */
+  getPageWhatsappInfo(account: AdAccountRef, pageId: string): Promise<PageInfo>;
+  /** Páginas que a conta pode usar como destino (id + nome) — pra o dono ESCOLHER quando há N e pra
+   *  resolver o nome de uma Página. Fonte: páginas do NEGÓCIO dono da conta (owned + client_pages),
+   *  confiável. Sem negócio/acesso → lista vazia (honesto). `number` não vem daqui (best-effort só no nó). */
+  listPages(account: AdAccountRef): Promise<PageInfo[]>;
+  /** Pixels de rastreamento de conversões da conta (id + nome) — pra o dono ESCOLHER qual usar quando
+   *  há N e pra nomear o inferido. Best-effort: sem acesso/pixel → lista vazia (honesto, o caller cai no
+   *  pixel inferido/padrão). Fonte: `{account}/adspixels`. */
+  listPixels(account: AdAccountRef): Promise<PixelInfo[]>;
   /** Lista os custom/saved audiences da conta (Fatia 7) — remarketing/exclusões reais. */
   listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;
   /** Busca geo (país/região/cidade) por texto — Fase 1 (subfatia 3), targeting explícito por
    *  primitivos. Query vazia ou sem match → array vazio (o caller decide pergunta/honesto). */
-  searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city")[]): Promise<GeoSearchResult[]>;
+  searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city" | "neighborhood")[]): Promise<GeoSearchResult[]>;
   /** Busca interesse por texto (Fase 2, subfatia 4) — `/search?type=adinterest`, busca livre no
    *  servidor. Query vazia → array vazio. */
   searchInterests(account: AdAccountRef, query: string): Promise<InterestSearchResult[]>;
@@ -307,6 +345,10 @@ export interface AdsPlatformPort {
   getDeliveryEstimateForAdSet(account: AdAccountRef, adsetId: string): Promise<DeliveryEstimate>;
   /** Lê a estrutura NEUTRA de uma campanha existente p/ cópia fiel (Fatia 7) — escopado. */
   readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure>;
+  /** Lê os descendentes VIVOS + status EFETIVO de uma campanha (`level:"campaign"` → conjuntos+anúncios)
+   *  ou conjunto (`level:"adset"` → anúncios) — base da ativação em cadeia (religar os pausados) e da
+   *  entrega efetiva (existe anúncio ativo?). Escopado (nunca account-wide), status fresco. */
+  readActivationTree(account: AdAccountRef, level: "campaign" | "adset", id: string): Promise<ActivationTree>;
   /** Lê o perfil de público de UM adset isolado (público/idade/expansão) — usado no PROPOSE pra
    *  resolver+ecoar o público real de reuse_adset ANTES da confirmação (P0.2/P1), sem esperar o
    *  fluxo de cópia completa. `null` quando o adset não existe/não é lível (o caller decide: bloquear
@@ -326,6 +368,11 @@ export interface AdsPlatformPort {
   ): Promise<RestoreResult>;
   /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). */
   readEntityState(account: AdAccountRef, entityId: string): Promise<Record<string, unknown>>;
+  /** Lê SÓ o `targeting` cru atual de um adset — drift FINO do revert de `adjust_audience` (D4):
+   *  detecta uma edição CONCORRENTE de público entre o apply e o revert. Separado de
+   *  `readEntityState` (status+budget) p/ não pesar as leituras comuns nem regredir o revert de
+   *  budget. `null` quando não há targeting lível. */
+  readAdSetTargeting(account: AdAccountRef, adsetId: string): Promise<Record<string, unknown> | null>;
   /**
    * Duplica uma entidade (escala/clone) via `/copies` (Fatia 7). Opcionalmente ajusta o
    * budget da cópia (escala) e nasce ACTIVE/PAUSED. Retorna a cópia + filhos p/ retomada.
@@ -339,6 +386,10 @@ export interface AdsPlatformPort {
   getCampaignBudgetLayout(account: AdAccountRef, campaignId: string): Promise<CampaignBudgetLayout>;
   /** Saga de criação do zero — granular (a casca persiste ids parciais p/ retomada idempotente). */
   createCampaign(account: AdAccountRef, input: CreateCampaignInput): Promise<{ campaignId: string }>;
+  /** DELETE best-effort de uma campanha — limpa a órfã do-zero quando a criação falha DETERMINÍSTICA
+   *  (a saga do-zero não é atômica). `true` = apagou; `false` = a limpeza falhou (a órfã segue lá).
+   *  NUNCA lança (a limpeza não pode mascarar o erro original). */
+  deleteCampaign(account: AdAccountRef, campaignId: string): Promise<boolean>;
   /** `targetingFallback: true` = um `reuse_adset` foi pedido mas a fonte não estava disponível
    *  (caiu em Advantage+ amplo) — o caller usa isso pra avisar o dono, não fica silencioso. */
   createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string; targetingFallback: boolean }>;

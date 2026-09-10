@@ -4,3 +4,5 @@ export * from "./opportunity.js";
 export * from "./budget-ceiling.js";
 export * from "./refine.js";
 export * from "./creative-source.js";
+export * from "./creative-fit.js";
+export * from "./creative-critique.js";

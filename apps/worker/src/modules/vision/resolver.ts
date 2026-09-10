@@ -20,6 +20,8 @@ export interface VisionResolverDeps {
   readonly db: Database;
   readonly llm: LLMProviderPort;
   readonly model: string;
+  /** Modelo video-capable p/ input `videoUrl` (vídeo completo). Ausente → cai no `model`. */
+  readonly videoModel?: string;
   readonly analyzerVersion: number;
   readonly logger: Logger;
   /** metering (atribuição do custo da chamada de visão). */
@@ -83,8 +85,9 @@ export function servingVisionKey(creativeId: string, videoId: string | undefined
   return creativeContentHash(`${creativeId}:${videoId ?? ""}`, copy);
 }
 
-/** Os 7 gatilhos de persuasão de Cialdini — contados em `persuasionSignals`. */
-const CIALDINI_TRIGGERS =
+/** Os 7 gatilhos de persuasão de Cialdini — contados em `persuasionSignals`. Fonte única
+ *  (reusado pela decomposição de visão E pela geração de copy, que se apoia nos mesmos gatilhos). */
+export const CIALDINI_TRIGGERS =
   "reciprocidade (oferece algo antes de pedir), compromisso/coerência (pequeno passo que leva ao " +
   "maior), prova social (outros já fizeram/aprovam), autoridade (credencial/especialista), afinidade " +
   "(semelhança/simpatia com quem assiste), escassez (limitado/urgente) e unidade (faz parte do mesmo " +
@@ -92,7 +95,8 @@ const CIALDINI_TRIGGERS =
 
 function buildVisionMessages(input: CreativeVisionInput): LLMMessage[] {
   const system =
-    "Você analisa criativos de anúncio (imagem/vídeo + copy) para tráfego pago. Quando houver vários " +
+    "Você analisa criativos de anúncio (imagem/vídeo + copy) para tráfego pago. Se receber o VÍDEO " +
+    "completo, considere movimento, ritmo e ÁUDIO/voz (não só o visual). Quando receber vários " +
     "frames, eles são do MESMO vídeo em ordem (abertura → fim) — analise como uma peça só. Decomponha " +
     "o criativo: o que comunica (summary), o gancho dos primeiros segundos (hook), o ângulo/apelo " +
     "central (angle), o formato (format: antes-depois/depoimento/UGC/talking-head/oferta), o corpo/" +
@@ -102,10 +106,13 @@ function buildVisionMessages(input: CreativeVisionInput): LLMMessage[] {
     `Cialdini estão presentes no criativo — ${CIALDINI_TRIGGERS}; conte só o que está CLARAMENTE presente, ` +
     "não force), pontos fortes/fracos e uma nota 0-10 (score). Baseie-se SÓ no que vê e no texto dado; " +
     "não invente métricas.";
-  const frames = input.imageUrls.map((url) => ({ type: "image_url" as const, imageUrl: url }));
+  // vídeo completo (video_url) quando disponível — movimento/áudio/gancho; senão frames (imagem/fallback).
+  const media = input.videoUrl
+    ? [{ type: "video_url" as const, videoUrl: input.videoUrl }]
+    : input.imageUrls.map((url) => ({ type: "image_url" as const, imageUrl: url }));
   const parts = [
     { type: "text" as const, text: input.copy ? `Copy do anúncio:\n${input.copy}` : "Sem copy." },
-    ...frames,
+    ...media,
     {
       type: "text" as const,
       text: 'Responda SOMENTE JSON: { "summary": "...", "hook": "...", "angle": "...", "format": "...", "body": "...", "cta": "...", "proofStrength": "weak|medium|strong", "persuasionSignals": 0, "strengths": ["..."], "weaknesses": ["..."], "score": 0 }',
@@ -158,13 +165,15 @@ export function createVisionResolver(deps: VisionResolverDeps): CreativeVisionPo
       let result: CreativeVisionResult;
       try {
         const completion = await deps.llm.completeStructured<RawVision>({
-          model: deps.model,
+          // vídeo completo → modelo video-capable; frames/imagem → modelo de visão padrão.
+          model: input.videoUrl ? (deps.videoModel ?? deps.model) : deps.model,
           messages: buildVisionMessages(input),
           responseSchema: VISION_JSON_SCHEMA,
           responseSchemaName: "creative_vision",
           temperature: VISION_TEMPERATURE,
           maxTokens: VISION_MAX_TOKENS,
-          ...(deps.meta ? { meta: { ...deps.meta, type: "vision" } } : {}),
+          // meta POR-CHAMADA (input) tem precedência sobre o de construção — o orgId varia por job.
+          ...((input.meta ?? deps.meta) ? { meta: { ...deps.meta, ...input.meta, type: "vision" } } : {}),
         });
         result = toResult(completion.output);
       } catch (err) {

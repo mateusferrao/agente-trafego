@@ -7,7 +7,7 @@
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { agentToolCalls, approvals, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { applyCreationGuardrails, buildDuplicateInput, goalNounPt, planScaledBudget, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyCreationGuardrails, buildDuplicateInput, goalNounPt, OBJECTIVE_REQUIRES_PAGE_REASON, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaledBudget, promotedObjectGap, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
 import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
 import type { AgentId, ApprovalId, DraftId, RunId } from "@trafego/shared";
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
@@ -15,6 +15,7 @@ import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
 import { applyActivation } from "./apply-activation.js";
+import { permanentMetaReason } from "../../lib/meta-failure.js";
 
 const ACTOR_AGENT = "agent";
 const USAGE_TYPE_CAMPAIGN_CREATED = "campaign_created";
@@ -30,6 +31,27 @@ const CREATION_DAY_MS = 24 * 60 * 60 * 1000;
 const NOT_DUPLICABLE_REASON =
   "esse vencedor usa um recurso que a Meta descontinuou para cópia, então não consigo cloná-lo fielmente. " +
   "Posso subir o orçamento dele agora, ou você recria o criativo no Gerenciador de Anúncios que eu duplico";
+
+/** Plano PURO de limpeza da órfã do-zero no catch (B2). from_scratch + campanha já criada + erro
+ *  DETERMINÍSTICO → `delete` (a casca apaga best-effort + zera a saga); TRANSIENTE → `keep` (mantém,
+ *  retomável, nomeia o órfão pro dono); duplicação (atômica) OU nada criado → `none`. Testável sem IO. */
+export type OrphanCleanupPlan =
+  | { readonly action: "delete"; readonly campaignId: string }
+  | { readonly action: "keep"; readonly campaignId: string }
+  | { readonly action: "none" };
+
+export function planOrphanCleanup(
+  error: unknown,
+  kind: CampaignDraft["kind"],
+  createdCampaignId: string | undefined,
+): OrphanCleanupPlan {
+  // Duplicação reverte sozinha (DELETE cascata no adapter antes de lançar) → nunca tem órfã aqui.
+  const orphanCampaignId = kind !== "duplicate" ? createdCampaignId : undefined;
+  if (!orphanCampaignId) return { action: "none" };
+  return permanentMetaReason(error) !== null
+    ? { action: "delete", campaignId: orphanCampaignId }
+    : { action: "keep", campaignId: orphanCampaignId };
+}
 
 /**
  * Conta as campanhas novas dentro do cap/dia (P0.4 — fix): apply-time REAL via `agent_tool_calls`
@@ -81,8 +103,8 @@ export type DraftApplyOutcome =
       /** true quando nasceu ativa (creationActivation="active" e a ativação foi aplicada). */
       readonly activated: boolean;
     }
-  | { readonly kind: "blocked"; readonly reason: string }
-  | { readonly kind: "failed"; readonly error: unknown }
+  | { readonly kind: "blocked"; readonly reason: string; readonly partialCampaign?: string }
+  | { readonly kind: "failed"; readonly error: unknown; readonly partialCampaign?: string }
   | { readonly kind: "unsupported"; readonly reason: string }
   // teto de guardrail (campanhas novas/dia, killswitch) — CORRIGÍVEL por config. NÃO falha o
   // rascunho (fica `proposed`): o card continua reaprovável após o usuário ajustar o limite.
@@ -173,6 +195,28 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     if (!hasRefs && (!allowed.spec.pageId || !allowed.spec.creative)) {
       return { kind: "blocked", reason: "faltou a Página ou o criativo pra criar a campanha" };
     }
+    // G1 (rede): o `promoted_object` do objetivo (pixel OU Página, ciente do mecanismo) faltando → a Meta
+    // recusaria o `createAdSet` no meio da saga (deixando campanha órfã). O propose já bloqueia, mas um spec
+    // proativo/legado/site pode escapar — re-checa aqui com a MESMA verdade (`promotedObjectGap`) e barra
+    // ANTES de criar. `reusesCreatives` = cópia fiel (creative_id traz o formulário de lead sem pixel).
+    if (allowed.spec.objective) {
+      const gap = promotedObjectGap(allowed.spec.objective, {
+        reusesCreatives: hasRefs,
+        hasPixel: !!allowed.spec.pixelId,
+        hasPage: !!allowed.spec.pageId,
+      });
+      if (gap === "pixel") return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
+      if (gap === "page") return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PAGE_REASON };
+    }
+    // B4 (rede): idade dura com piso>25 (ou teto>25) + otimização automática = a Meta recusa o
+    // createAdSet ("Invalid parameter") no meio da saga. O propose já pergunta ao dono, mas um spec do
+    // site/proativo/legado pode escapar — barra ANTES de criar (sem tentativa falha nem órfã) e devolve
+    // a MESMA pergunta (§8: o dono decide travar a idade OU tirar a faixa). Cobre `explicit` (single +
+    // conjuntos); `reuse_adset`/snapshot NÃO é lido aqui (fast-follow — o rollback do B2 evita a órfã se
+    // um snapshot conflitante escapar).
+    if (advantageAgeConflict(allowed.spec, allowed.spec.advantageAudience ?? false)) {
+      return { kind: "blocked", reason: ADVANTAGE_AGE_CONFLICT_REASON };
+    }
   }
 
   // P0.1: a criação SEMPRE nasce PAUSADA na saga (fecha o risco de órfão em crash — um crash na
@@ -255,6 +299,12 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
       await runFromScratchSaga(ports.ads, pausedDraft, ref, createdIds, persist);
     }
   } catch (error) {
+    // DIAGNÓSTICO: o texto CRU da Meta (error_user_msg via userMessage) + kind + msg técnica — INTERNO,
+    // nunca vai pro usuário (que recebe a versão traduzida do B3). Pareado com o log do payload de
+    // createAdSet, fecha o caso idade×Advantage (o que saiu × o que a Meta respondeu de verdade).
+    if (error instanceof AdsPlatformError) {
+      logger.warn({ draftId: row.id, kind: error.kind, metaUserMessageCru: error.userMessage, tech: error.message }, "apply-draft:meta recusou (cru)");
+    }
     // createdIds já foi persistido incrementalmente → o retry retoma daqui.
     await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
     // vencedor legado (criativo descontinuado): falha HONESTA + 2 saídas, não erro genérico.
@@ -263,7 +313,26 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     if (error instanceof AdsPlatformError && error.kind === "not_duplicable") {
       return { kind: "blocked", reason: NOT_DUPLICABLE_REASON };
     }
-    return { kind: "failed", error };
+    // G3: a saga do-zero NÃO é atômica (ao contrário da duplicação) — se parou depois de criar a
+    // campanha, sobrou uma campanha pausada e vazia na conta. TRANSIENTE = retomável (o retry retoma dos
+    // ids parciais) → nomeia o órfão. DETERMINÍSTICO (B2) = o retry do mesmo spec sempre falha e a
+    // recriação duplicaria → ROLLBACK best-effort da campanha órfã (a saga do-zero fica atômica também
+    // nesse caso). Só nomeia o órfão se a limpeza falhar (a campanha segue lá).
+    const plan = planOrphanCleanup(error, pausedDraft.kind, createdIds["campaignId"] as string | undefined);
+    let orphanRemains = plan.action !== "none";
+    if (plan.action === "delete") {
+      const deleted = await ports.ads.deleteCampaign(ref, plan.campaignId);
+      logger.info({ draftId: row.id, orphanCampaignId: plan.campaignId, deleted }, "apply-draft:rollback_orfã_determinística");
+      if (deleted) {
+        orphanRemains = false;
+        // A campanha sumiu da Meta → zera o estado da saga persistido, senão um resume futuro
+        // (claim permite failed→creating) retomaria de um `campaignId` morto e criaria conjunto
+        // contra pai deletado. Com createdIds vazio a saga recomeça limpa (do zero).
+        await db.update(campaignDrafts).set({ createdIds: {} }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
+      }
+    }
+    const partialCampaign = orphanRemains ? (pausedDraft.spec.campaignName ?? "a campanha nova") : undefined;
+    return { kind: "failed", error, ...(partialCampaign ? { partialCampaign } : {}) };
   }
 
   // `target` = raiz criada na Meta (campanha do zero, ou a entidade copiada na escala). Grava no
@@ -402,7 +471,7 @@ export async function autoApplyProactiveDraft(
  * existe (sem duplicar gasto). Pareamento por índice de variação: um criativo órfão (ad
  * falhou) é reusado na retomada, não recriado. `state` = createdIds mutável (lido + escrito).
  */
-async function runFromScratchSaga(
+export async function runFromScratchSaga(
   ads: WorkerDeps["ports"]["ads"],
   draft: CampaignDraft,
   ref: AdAccountRef,
@@ -429,6 +498,107 @@ async function runFromScratchSaga(
     });
     await persist({ campaignId });
   }
+  // Constrói o input de criativo de uma variação (fonte única — reusada pelo single- e pelo
+  // multi-conjunto). Criativo POR ANÚNCIO (Fatia 7): o do próprio anúncio vence; ausente → o
+  // padrão do rascunho. C3: melhorias automáticas quando o dono ligou.
+  const buildCreativeInput = (v: NonNullable<CampaignDraft["spec"]["copyVariants"]>[number], i: number) => {
+    const creative = v.creative ?? spec.creative;
+    return {
+      name: `${name} — criativo ${i + 1}`,
+      pageId: spec.pageId!,
+      goal,
+      ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
+      ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
+      ...(spec.linkUrl ? { linkUrl: spec.linkUrl } : {}),
+      copy: {
+        primaryText: v.primaryText,
+        headline: v.headline,
+        ...(v.description ? { description: v.description } : {}),
+        ...(v.cta ? { cta: v.cta } : {}),
+      },
+      ...(spec.advantageCreative !== undefined ? { advantageCreative: spec.advantageCreative } : {}),
+    };
+  };
+
+  const refs = spec.creativeRefs ?? [];
+
+  // MULTI-CONJUNTO (C2, teste de público `1-N-M`): N conjuntos (cada um seu público), CRIATIVO
+  // COMPARTILHADO (criado UMA vez, referenciado nos anúncios de TODOS os conjuntos — criativo é
+  // account-level; N×M criativos seria errado e caro). Só no from-scratch (sem creativeRefs) e com
+  // ≥2 conjuntos; senão cai no caminho single-conjunto abaixo (retrocompat total). Retomável por
+  // (conjunto, anúncio).
+  const multiAdsets = refs.length === 0 && spec.adsets && spec.adsets.length > 1 ? spec.adsets : null;
+  if (multiAdsets) {
+    const sharedVariants = spec.copyVariants ?? [];
+    // criativos compartilhados (do spec) — criados sob demanda UMA vez, indexados por variação.
+    const sharedCreativeIds = [...((state["sharedCreativeIds"] as string[] | undefined) ?? [])];
+    const ensureSharedCreative = async (i: number): Promise<string> => {
+      if (sharedCreativeIds[i]) return sharedCreativeIds[i]!;
+      const { creativeId } = await ads.createAdCreative(ref, buildCreativeInput(sharedVariants[i]!, i));
+      sharedCreativeIds[i] = creativeId;
+      await persist({ sharedCreativeIds: [...sharedCreativeIds] });
+      return creativeId;
+    };
+    // retrocompat defensiva: se um `state.adsetId` single legado existisse (não ocorre hoje — o
+    // rascunho multi sobe atômico, nenhum single o antecede), ele vira o 1º conjunto. Barato e à prova.
+    const legacyAdsetId = state["adsetId"] as string | undefined;
+    const adsetIds = [...((state["adsetIds"] as string[] | undefined) ?? (legacyAdsetId ? [legacyAdsetId] : []))];
+    const adIdsByAdset = [...((state["adIdsByAdset"] as string[][] | undefined) ?? [])];
+    for (let a = 0; a < multiAdsets.length; a++) {
+      const ac = multiAdsets[a]!;
+      if (!adsetIds[a]) {
+        const { adsetId, targetingFallback } = await ads.createAdSet(ref, {
+          campaignId: state["campaignId"] as string,
+          name: ac.name ?? `${name} — conjunto ${a + 1}`,
+          // ABO leva budget no conjunto (o próprio, senão o do spec); CBO não (verba na campanha).
+          ...(isCbo ? {} : { dailyBudgetMinor: ac.dailyBudgetMinor ?? spec.dailyBudgetMinor }),
+          goal,
+          ...(spec.pixelId ? { pixelId: spec.pixelId } : {}),
+          ...(spec.pageId ? { pageId: spec.pageId } : {}),
+          targeting: ac.targeting ?? spec.targeting ?? { kind: "advantage_plus" },
+          ...(spec.advantageAudience !== undefined ? { advantageAudience: spec.advantageAudience } : {}),
+          status,
+        });
+        adsetIds[a] = adsetId;
+        await persist({ adsetIds: [...adsetIds], ...(targetingFallback ? { targetingFallback: true } : {}) });
+      }
+      // Criativo POR CONJUNTO (site/U1): `ac.creative` = mesma copy compartilhada, criativo diferente
+      // (mapeia a copy do rascunho com o criativo do conjunto); `ac.copyVariants` = override completo
+      // (avançado). Qualquer um → criativo EXCLUSIVO do conjunto (não reusa o compartilhado). Sem
+      // override → criativo COMPARTILHADO (o default do teste de público). Retomável por índice.
+      const acCreative = ac.creative;
+      const overrideVariants = ac.copyVariants ?? (acCreative ? sharedVariants.map((v) => ({ ...v, creative: acCreative })) : undefined);
+      const variantsA = overrideVariants ?? sharedVariants;
+      const adRow = [...(adIdsByAdset[a] ?? [])];
+      for (let i = 0; i < variantsA.length; i++) {
+        if (adRow[i]) continue;
+        let creativeId: string;
+        if (overrideVariants) {
+          // criativo EXCLUSIVO do conjunto (não compartilhado) — cria por (conjunto, variação).
+          const perAdsetCreativeIds = [...((state[`creativeIds_${a}`] as string[] | undefined) ?? [])];
+          if (!perAdsetCreativeIds[i]) {
+            const { creativeId: cid } = await ads.createAdCreative(ref, buildCreativeInput(overrideVariants[i]!, i));
+            perAdsetCreativeIds[i] = cid;
+            await persist({ [`creativeIds_${a}`]: [...perAdsetCreativeIds] });
+          }
+          creativeId = perAdsetCreativeIds[i]!;
+        } else {
+          creativeId = await ensureSharedCreative(i);
+        }
+        const { adId } = await ads.createAd(ref, {
+          adsetId: adsetIds[a]!,
+          creativeId,
+          name: variantsA[i]!.adName ?? `${name} — conjunto ${a + 1} anúncio ${i + 1}`,
+          status,
+        });
+        adRow[i] = adId;
+        adIdsByAdset[a] = adRow;
+        await persist({ adIdsByAdset: [...adIdsByAdset] });
+      }
+    }
+    return;
+  }
+
   if (!state["adsetId"]) {
     const { adsetId, targetingFallback } = await ads.createAdSet(ref, {
       campaignId: state["campaignId"] as string,
@@ -441,6 +611,8 @@ async function runFromScratchSaga(
       // Meta recusa anexar o anúncio). Reusa a mesma Page do criativo (validada em apply-draft:173).
       ...(spec.pageId ? { pageId: spec.pageId } : {}),
       targeting: spec.targeting ?? { kind: "advantage_plus" },
+      // C3: expansão de público (Advantage+ audience) quando o dono ligou — só afeta o `explicit`.
+      ...(spec.advantageAudience !== undefined ? { advantageAudience: spec.advantageAudience } : {}),
       status,
     });
     // targetingFallback: o `reuse_adset` pedido não pôde ser resolvido (fonte indisponível) e
@@ -450,7 +622,6 @@ async function runFromScratchSaga(
 
   // CÓPIA FIEL (Fatia 7): reusa os criativos da fonte por REFERÊNCIA (creative_id) — 1 anúncio
   // por ref, preservando object_story_spec/destino WhatsApp sem rebuild. Retomável por índice.
-  const refs = spec.creativeRefs ?? [];
   if (refs.length > 0) {
     const copyAdIds = [...((state["adIds"] as string[] | undefined) ?? [])];
     for (let i = 0; i < refs.length; i++) {
@@ -473,29 +644,15 @@ async function runFromScratchSaga(
   for (let i = 0; i < variants.length; i++) {
     if (adIds[i]) continue; // variação já completa (retomada)
     const v = variants[i]!;
-    // criativo POR ANÚNCIO (Fatia 7): o do próprio anúncio vence; ausente → o padrão do rascunho.
-    const creative = v.creative ?? spec.creative;
     if (!creativeIds[i]) {
-      const { creativeId } = await ads.createAdCreative(ref, {
-        name: `${derived} — criativo ${i + 1}`,
-        pageId: spec.pageId!,
-        ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
-        ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
-        ...(spec.linkUrl ? { linkUrl: spec.linkUrl } : {}),
-        copy: {
-          primaryText: v.primaryText,
-          headline: v.headline,
-          ...(v.description ? { description: v.description } : {}),
-          ...(v.cta ? { cta: v.cta } : {}),
-        },
-      });
+      const { creativeId } = await ads.createAdCreative(ref, buildCreativeInput(v, i));
       creativeIds[i] = creativeId;
       await persist({ creativeIds: [...creativeIds] });
     }
     const { adId } = await ads.createAd(ref, {
       adsetId: state["adsetId"] as string,
       creativeId: creativeIds[i]!,
-      name: v.adName ?? `${derived} — anúncio ${i + 1}`,
+      name: v.adName ?? `${name} — anúncio ${i + 1}`,
       status,
     });
     adIds[i] = adId;

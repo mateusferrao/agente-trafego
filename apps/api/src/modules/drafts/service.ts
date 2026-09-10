@@ -7,13 +7,14 @@ import {
   agentToolBindings,
   campaignDrafts,
   creativeAssets,
+  entityAnalyses,
   guardrailConfigs,
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, isMessagingGoal, normalizeLinkUrl, planScaleMove, ressalvasFromSnapshot, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
-import type { ToolBindingMode } from "@trafego/shared";
+import { toMinorUnits, minorToMajor, resolveCreationActivation, type CreationActivation, type ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -26,7 +27,7 @@ import {
   toGuardrailConfig,
   type CampaignDraftSpec,
 } from "@trafego/shared";
-import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId, TargetingSpec } from "@trafego/shared/types";
+import type { Action, AgentId, CopyVariant, CreativeAssetRef, DraftId, OrgId, TargetingSpec } from "@trafego/shared/types";
 import type { AdAccountRef, ApprovalPort, CredentialVaultPort, SchedulerPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
@@ -54,9 +55,6 @@ export function isAllowedCreativeType(contentType: string): boolean {
   return ALLOWED_IMAGE_TYPES.has(contentType) || ALLOWED_VIDEO_TYPES.has(contentType);
 }
 
-// unidade menor → maior. Assume moeda de 2 casas (BRL/USD/EUR); moedas sem centavos
-// (JPY/CLP) = fast-follow (derivar a subunidade da moeda). Beta é BRL.
-const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = APPROVAL_TTL_HOURS * 60 * 60 * 1000;
 /** Teto de tempo e tamanho do fetch da miniatura (fbcdn) — não pendura o handler da API nem
  *  materializa payload gigante em memória (a thumb da Meta é pequena; isto é a rede de segurança). */
@@ -68,6 +66,8 @@ const SERVING_PICKER_CAP = 200;
 
 const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
 const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
+const LINK_ON_MESSAGING_MSG = "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino.";
+const LINK_INVALID_MSG = "esse link não parece uma URL válida — use o endereço completo, tipo https://sualoja.com/promo.";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -129,6 +129,9 @@ interface ScaleContext {
   readonly cfg: ReturnType<typeof toGuardrailConfig>;
   /** Preferência do passo agressivo (autonomy_policy) — default "ask". */
   readonly scaleAggressivePreference: ScaleAggressivePreference;
+  /** Ativação da criação/escala (autonomy_policy) — default "paused" (2ª aprovação de ativação).
+   *  MESMA fonte do chat (§7): o site não pode furar a barreira ativando direto. */
+  readonly creationActivation: CreationActivation;
   /** Tool-keys habilitadas (bindings, mesma fonte do chat/apply) — gate da escala. */
   readonly enabled: ReadonlySet<string>;
 }
@@ -173,6 +176,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       currency: row.currency ?? DEFAULT_CURRENCY,
       cfg,
       scaleAggressivePreference: row.autonomyPolicy?.scaleAggressivePreference ?? "ask",
+      creationActivation: resolveCreationActivation(row.autonomyPolicy ?? undefined),
       enabled,
     };
   }
@@ -181,12 +185,19 @@ export function createDraftsService(deps: DraftsServiceDeps) {
    *  frame HD (`getVideoFrames`), fallback thumbnail do anúncio; imagem → imagem do anúncio. Fonte
    *  ÚNICA do reuse (miniatura de rascunho + de anúncio da conta). A URL do fbcdn expira → o caller
    *  baixa os bytes na hora (`fetchThumbImage`) e nunca a manda crua pro browser. */
-  async function resolveLiveThumbUrl(ref: AdAccountRef, adId: string, videoId: string | null): Promise<string | undefined> {
+  async function resolveLiveThumbUrl(ref: AdAccountRef, adId: string, videoId: string | null, imageHash?: string | null): Promise<string | undefined> {
     if (videoId) {
       const frame = (await deps.adsPlatform.getVideoFrames(ref, videoId))[0];
       if (frame) return frame;
       const [c] = await deps.adsPlatform.getCreatives(ref, [adId]);
       return c?.thumbnailUrl ?? c?.imageUrl;
+    }
+    // IMAGEM: o `image_url` no topo do criativo do anúncio costuma vir VAZIO em criativos hash-based
+    // (`object_story_spec.link_data.image_hash`) → resolve pelo `image_hash` (fonte estável) PRIMEIRO;
+    // fallback pro `getCreatives(adId).imageUrl` (anúncio sem hash à mão). Era a causa do "sem prévia".
+    if (imageHash) {
+      const byHash = await deps.adsPlatform.getImageUrlByHash(ref, imageHash);
+      if (byHash) return byHash;
     }
     const [c] = await deps.adsPlatform.getCreatives(ref, [adId]);
     return c?.imageUrl ?? c?.thumbnailUrl;
@@ -237,6 +248,46 @@ export function createDraftsService(deps: DraftsServiceDeps) {
   }
 
   /**
+   * Aplica edições por-anúncio (copy + criativo) SOBRE uma base de variações, resolvendo o criativo de
+   * cada edição (biblioteca/ao-vivo → CreativeAssetRef; falha → mensagem amigável §13). Fonte ÚNICA do
+   * copyEdits do rascunho: usada pela edição dos anúncios COMPARTILHADOS (campanha) E pelo override POR
+   * CONJUNTO (F2). Índice fora da base é ignorado (não quebra o lote).
+   */
+  async function resolveCopyEdits(
+    orgId: OrgId,
+    accountId: string,
+    base: readonly CopyVariant[],
+    edits: readonly NonNullable<UpdateDraftInput["copyEdits"]>[number][],
+  ): Promise<{ ok: true; variants: CopyVariant[] } | { ok: false; message: string }> {
+    const variants = [...base];
+    for (const e of edits) {
+      const current = variants[e.index];
+      if (!current) continue;
+      // criativo PRÓPRIO do anúncio (Fatia 7): resolve biblioteca/ao-vivo → CreativeAssetRef; ausente
+      // = mantém o atual (não quebra a edição de copy). Só site (o chat não mexe em criativo).
+      let ownCreative = current.creative;
+      if (e.creative) {
+        const resolved =
+          e.creative.kind === "asset"
+            ? await resolveLibraryCreative(orgId, accountId, e.creative.assetId)
+            : await resolveServingCreative(orgId, accountId, e.creative.adId);
+        if (!resolved) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
+        ownCreative = resolved;
+      }
+      variants[e.index] = {
+        ...current,
+        ...(e.primaryText !== undefined ? { primaryText: e.primaryText } : {}),
+        ...(e.headline !== undefined ? { headline: e.headline } : {}),
+        ...(e.description !== undefined ? { description: e.description } : {}),
+        ...(e.cta !== undefined ? { cta: e.cta } : {}),
+        ...(e.adName !== undefined ? { adName: e.adName } : {}),
+        ...(ownCreative ? { creative: ownCreative } : {}),
+      };
+    }
+    return { ok: true, variants };
+  }
+
+  /**
    * Edição CONSOLIDADA de um rascunho (painel "Editar rascunho", Slice 7). Resolve os fragmentos
    * de IO (público→targeting, asset/serving→creative) na CASCA, monta o `DraftEdit` neutro, aplica
    * o núcleo puro `applyDraftEdit` (clamp/guards/merge) e persiste com UPDATE guardado por status.
@@ -275,17 +326,36 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     if (input.campaignName != null) edit.campaignName = input.campaignName;
     if (input.adsetName != null) edit.adsetName = input.adsetName;
     if (input.suffixLabel != null) edit.suffixLabel = input.suffixLabel;
+    // F1a: Advantage editável no rascunho pendente (bundle único: audience + criativo andam juntos).
+    // from_scratch-only garantido pelo núcleo (`applyDraftEdit` rejeita em duplicate).
+    if (input.advantage != null) {
+      edit.advantageAudience = input.advantage;
+      edit.advantageCreative = input.advantage;
+    }
+    // F1b: onde a verba mora (CBO/ABO) — o núcleo move a verba de nível se for um flip multi-conjunto.
+    if (input.budgetMode != null) edit.budgetMode = input.budgetMode;
 
     let budgetCapMinor: number | null = null;
     if (input.budgetReais != null) {
       const ctx = await getCtx();
       if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
-      edit.budgetMinor = Math.round(input.budgetReais * MINOR_PER_UNIT);
+      edit.budgetMinor = toMinorUnits(input.budgetReais, ctx.currency);
       budgetCapMinor = ctx.cfg.maxNewDailyBudgetMinor ?? null;
     }
 
     // Objetivo (só from_scratch): re-resolve o pixel DA CONTA (não de spec.pixelId). O guard do
     // núcleo bloqueia objetivo-que-exige-pixel sem pixel; quando há, grava o pixel no spec.
+    // DESTINO (link, só from_scratch): objetivo de conversas no WhatsApp não leva pra site → bloqueia
+    // honesto. from_scratch-only é garantido pelo núcleo (applyDraftEdit rejeita em duplicate).
+    if (input.linkUrl != null) {
+      if (isMessagingGoal(input.objective ?? spec.objective)) return { ok: false, message: LINK_ON_MESSAGING_MSG };
+      // fonte única (§13): mesma normalização do chat — só http/https absoluto (bloqueia
+      // javascript:/data:, que o z.string().url() da borda deixaria passar).
+      const link = normalizeLinkUrl(input.linkUrl);
+      if (!link) return { ok: false, message: LINK_INVALID_MSG };
+      edit.linkUrl = link;
+    }
+
     let hasPixel = true;
     if (input.objective) {
       const defaults = await getDefaults();
@@ -317,6 +387,66 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     // vence os diffs abaixo (que são o caminho antigo de edição incremental).
     if (input.explicitAudience) {
       edit.targeting = buildExplicitFromInput(input.explicitAudience);
+    }
+
+    // C2: conjuntos do teste multi-conjunto — SUBSTITUIÇÃO TOTAL (público explícito OU amplo +
+    // orçamento ABO por conjunto). Criativo compartilhado (vem do rascunho). Lista vazia = volta a
+    // single-conjunto (applyDraftEdit limpa `spec.adsets`).
+    if (input.adsets) {
+      const ctx = await getCtx();
+      if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
+      const builtAdsets: NonNullable<DraftEdit["adsets"]>[number][] = [];
+      for (const as of input.adsets) {
+        // criativo PRÓPRIO do conjunto (U1): resolve biblioteca/ao-vivo → CreativeAssetRef; ausente =
+        // usa o compartilhado do rascunho no apply. Mesma resolução do criativo por-anúncio.
+        // `keepCreativeIndex` PRESERVA o criativo próprio que o conjunto já tinha (round-trip sem
+        // perda): a substituição é TOTAL e o output não devolve id re-enviável, então o editor manda o
+        // índice de ORIGEM (em `spec.adsets`) e o backend copia o `creative` já resolvido de lá. Um pick
+        // novo (`as.creative`) vence.
+        let conjCreative: CreativeAssetRef | undefined;
+        if (as.creative) {
+          const resolved =
+            as.creative.kind === "asset"
+              ? await resolveLibraryCreative(orgId, accountId, as.creative.assetId)
+              : await resolveServingCreative(orgId, accountId, as.creative.adId);
+          if (!resolved) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
+          conjCreative = resolved;
+        } else if (as.keepCreativeIndex != null) {
+          conjCreative = spec.adsets?.[as.keepCreativeIndex]?.creative;
+        }
+        // ANÚNCIOS PRÓPRIOS do conjunto (F2 — override por conjunto): copyEdits aplicados sobre a base
+        // (override existente via keepCopyVariantsIndex, senão os anúncios COMPARTILHADOS do rascunho).
+        // Sem copyEdits + keepCopyVariantsIndex → preserva o override intacto (round-trip). Nada → usa
+        // os compartilhados (a saga cai em `sharedVariants` quando `copyVariants` ausente).
+        let conjCopyVariants: CopyVariant[] | undefined;
+        const keptCopy = as.keepCopyVariantsIndex != null ? spec.adsets?.[as.keepCopyVariantsIndex]?.copyVariants : undefined;
+        if (as.copyEdits && as.copyEdits.length > 0) {
+          const applied = await resolveCopyEdits(orgId, accountId, keptCopy ?? spec.copyVariants ?? [], as.copyEdits);
+          if (!applied.ok) return { ok: false, message: applied.message };
+          conjCopyVariants = applied.variants;
+        } else if (keptCopy) {
+          conjCopyVariants = [...keptCopy];
+        }
+        builtAdsets.push({
+          ...(as.name != null ? { name: as.name } : {}),
+          targeting: as.explicitAudience ? buildExplicitFromInput(as.explicitAudience) : ({ kind: "advantage_plus" } as const),
+          ...(as.budgetReais != null ? { dailyBudgetMinor: toMinorUnits(as.budgetReais, ctx.currency) } : {}),
+          ...(conjCreative ? { creative: conjCreative } : {}),
+          ...(conjCopyVariants ? { copyVariants: conjCopyVariants } : {}),
+        });
+      }
+      // Colapso p/ ≤1 conjunto: um teste multi só entrega com ≥2 (o apply ignora `adsets` de 1, o que
+      // DERRUBARIA o público desse conjunto em silêncio). Espelha o colapso do chat (refineDraft):
+      // volta a single-conjunto levando o público/nome do único restante. `edit.adsets=[]` limpa a
+      // lista no core (`applyDraftEdit`).
+      if (builtAdsets.length >= 2) {
+        edit.adsets = builtAdsets;
+      } else {
+        edit.adsets = [];
+        const only = builtAdsets[0];
+        if (only?.targeting) edit.targeting = only.targeting;
+        if (only?.name != null) edit.adsetName = only.name;
+      }
     }
 
     // público EXPLÍCITO (Fase 1, subfatia 3b) — remove/adiciona geo(s) já resolvido pelo
@@ -359,31 +489,9 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     }
 
     if (input.copyEdits || input.removeAdIndex != null || input.addAd) {
-      let variants = [...(spec.copyVariants ?? [])];
-      for (const e of input.copyEdits ?? []) {
-        const current = variants[e.index];
-        if (!current) continue;
-        // criativo PRÓPRIO do anúncio (Fatia 7): resolve biblioteca/ao-vivo → CreativeAssetRef; falha
-        // = mantém o atual (não quebra a edição de copy). Só site (o chat não mexe em criativo).
-        let ownCreative = current.creative;
-        if (e.creative) {
-          const resolved =
-            e.creative.kind === "asset"
-              ? await resolveLibraryCreative(orgId, accountId, e.creative.assetId)
-              : await resolveServingCreative(orgId, accountId, e.creative.adId);
-          if (!resolved) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
-          ownCreative = resolved;
-        }
-        variants[e.index] = {
-          ...current,
-          ...(e.primaryText !== undefined ? { primaryText: e.primaryText } : {}),
-          ...(e.headline !== undefined ? { headline: e.headline } : {}),
-          ...(e.description !== undefined ? { description: e.description } : {}),
-          ...(e.cta !== undefined ? { cta: e.cta } : {}),
-          ...(e.adName !== undefined ? { adName: e.adName } : {}),
-          ...(ownCreative ? { creative: ownCreative } : {}),
-        };
-      }
+      const applied = await resolveCopyEdits(orgId, accountId, spec.copyVariants ?? [], input.copyEdits ?? []);
+      if (!applied.ok) return { ok: false, message: applied.message };
+      let variants = applied.variants;
       if (input.removeAdIndex != null) variants = variants.filter((_, i) => i !== input.removeAdIndex);
       // adiciona 1 anúncio DUPLICANDO o último (copy + criativo próprio) — preserva os existentes;
       // o dono edita a partir dele. Cap de anúncios/rascunho (rede contra explosão de custo/UI).
@@ -483,10 +591,10 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           kind: d.kind,
           origin: d.origin,
           objective: spec.objective ?? null,
-          dailyBudgetMajor: spec.dailyBudgetMinor / MINOR_PER_UNIT,
+          dailyBudgetMajor: minorToMajor(spec.dailyBudgetMinor, spec.currency),
           clampedFromMajor:
             spec.requestedDailyBudgetMinor && spec.requestedDailyBudgetMinor > spec.dailyBudgetMinor
-              ? spec.requestedDailyBudgetMinor / MINOR_PER_UNIT
+              ? minorToMajor(spec.requestedDailyBudgetMinor, spec.currency)
               : null,
           currency: spec.currency,
           activation: spec.activation,
@@ -494,6 +602,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           sourceName: d.sourceRef?.name ?? null,
           pageId: spec.pageId ?? null,
           pixelId: spec.pixelId ?? null,
+          linkUrl: spec.linkUrl ?? null,
           campaignName: spec.campaignName ?? null,
           adsetName: spec.adsetName ?? null,
           suffixLabel: spec.suffixLabel ?? null,
@@ -530,6 +639,31 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 ? { geo: [], ageMin: null, ageMax: null }
                 : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
+          budgetMode: spec.budgetMode ?? null,
+          advantageAudience: spec.advantageAudience ?? null,
+          advantageCreative: spec.advantageCreative ?? null,
+          // C2: conjuntos do teste multi-conjunto — cada um com seu público + orçamento (ABO) +
+          // anúncios. Ausente/1 = single-conjunto (o card usa os campos singulares acima).
+          adsets:
+            spec.adsets && spec.adsets.length > 0
+              ? spec.adsets.map((as) => ({
+                  name: as.name ?? null,
+                  audience: as.targeting?.kind === "reuse_adset" ? "reuse" : as.targeting?.kind === "advantage_plus" ? "broad" : null,
+                  explicitAudience: as.targeting?.kind === "explicit" ? serializeExplicitAudience(as.targeting) : null,
+                  dailyBudgetMajor: as.dailyBudgetMinor != null ? minorToMajor(as.dailyBudgetMinor, spec.currency) : null,
+                  creative: as.creative ? { format: as.creative.format, origin: as.creative.origin } : null,
+                  copyVariants: as.copyVariants
+                    ? as.copyVariants.map((c) => ({
+                        primaryText: c.primaryText,
+                        headline: c.headline,
+                        description: c.description ?? null,
+                        cta: c.cta ?? null,
+                        adName: c.adName ?? null,
+                        creative: c.creative ? { format: c.creative.format, origin: c.creative.origin } : null,
+                      }))
+                    : null,
+                }))
+              : null,
         });
       }
       return out;
@@ -586,7 +720,15 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (move.move === "duplicate" && !canDuplicate) return null;
 
       if (move.move === "raise_budget") {
-        const action: Action = {
+        // G6 (on-demand): ressalvas de escala do snapshot persistido do vencedor (fadiga/significância)
+        // — o card do site as mostra (a.action.ressalvas) e o auto-apply fica travado. Mesma verdade
+        // do proativo; antes o card pedido pelo humano vinha sem o aviso honesto.
+        const [snap] = await deps.db
+          .select({ curated: entityAnalyses.curatedJson })
+          .from(entityAnalyses)
+          .where(and(eq(entityAnalyses.agentId, ctx.agentId), eq(entityAnalyses.entityId, input.entityId)))
+          .limit(1);
+        const baseAction: Action = {
           id: `scale:${input.entityId}`,
           type: "adjust_budget",
           target: { level: input.entityLevel, id: input.entityId },
@@ -595,6 +737,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           riskLevel: "medium",
           reason: `escalar o vencedor: +${move.pct}% de budget`,
         };
+        const ressalvas = ressalvasFromSnapshot(baseAction, snap?.curated ?? null);
+        const action: Action = ressalvas.length > 0 ? { ...baseAction, ressalvas } : baseAction;
         const appr = await deps.approvals.upsertPending({
           orgId,
           agentId: ctx.agentId as AgentId,
@@ -615,7 +759,9 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         currency: ctx.currency,
         dailyBudgetMinor: newDailyBudgetMinor,
         ...(newDailyBudgetMinor < requestedMinor ? { requestedDailyBudgetMinor: requestedMinor } : {}),
-        activation: "active",
+        // G4: respeita a política do agente (default "paused" → 2ª aprovação de ativação), igual ao
+        // chat. Antes hardcodava "active" → a escala pelo site ia ao ar com 1 OK, furando o §7.
+        activation: ctx.creationActivation,
       };
       const [draftRow] = await deps.db
         .insert(campaignDrafts)
@@ -724,7 +870,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     async searchGeo(orgId: OrgId, accountId: string, query: string): Promise<GeoSearchResultOutput[]> {
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return [];
-      const results = await deps.adsPlatform.searchGeo(ctx.ref, query, ["country", "region", "city"]);
+      const results = await deps.adsPlatform.searchGeo(ctx.ref, query, ["country", "region", "city", "neighborhood"]);
       return results.map((r) => ({ key: r.key, name: r.name, kind: r.kind, countryCode: r.countryCode ?? null }));
     },
 
@@ -889,7 +1035,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
 
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return null;
-      const url = await resolveLiveThumbUrl(ctx.ref, adId, row.videoId ?? null);
+      const url = await resolveLiveThumbUrl(ctx.ref, adId, row.videoId ?? null, row.imageHash);
       if (!url) return null;
       const img = await fetchThumbImage(url);
       return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;
@@ -947,7 +1093,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       // frames HD do vídeo — MAS o System User token pode não ter permissão pro endpoint
       // `/{video_id}?fields=thumbnails` (erro Meta #10). Sem frames, cai no thumbnail do ANÚNCIO
       // (getCreatives), que é acessível — o card é 64px, então o selo já basta. (helper compartilhado)
-      const url = await resolveLiveThumbUrl(ctx.ref, creative.assetId, creative.format === "video" ? creative.metaVideoId ?? null : null);
+      const url = await resolveLiveThumbUrl(ctx.ref, creative.assetId, creative.format === "video" ? creative.metaVideoId ?? null : null, creative.metaImageHash);
       if (!url) return null;
       const img = await fetchThumbImage(url);
       return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;

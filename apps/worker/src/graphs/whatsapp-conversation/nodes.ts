@@ -17,31 +17,43 @@ import {
   buildWriteEcho,
   checkPhoneAttribution,
   collectGroundedNumbers,
+  CREATIVE_CRITIQUE_KNOWLEDGE,
   describeActionOutcome,
   describePlaybookRule,
   entityKeyOf,
   flagUngroundedNumbers,
   resolveAgentConfigChange,
+  resolveDisambiguationChoice,
+  riskForAction,
+  CAMPAIGN_INTENTS,
+  CREATIVE_INTENTS,
+  type CampaignIntent,
+  type CreativeIntent,
   type EchoItem,
+  type GuardrailContext,
   type RevertEchoItem,
   type UngroundedNumber,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
-import { sleep, phoneTokensInText, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
-import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
-import { CONVERSION_GOALS } from "@trafego/shared/types";
+import { sleep, phoneTokensInText, buildApprovalApplyJob, ACTION_PARAM_TARGETING, ACTION_PARAM_MODE, ACTION_PARAM_AMOUNT_MINOR, BUDGET_MODE_SET, formatMoneyMinor, toMinorUnits } from "@trafego/shared";
+import type { Action, ApprovalId, BudgetMode, ConversionGoal, OrgId } from "@trafego/shared/types";
+import { BUDGET_MODES, CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
+import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
 import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { describeLlmError } from "./llm-error.js";
+import { capWarningNote, expandChainActivation } from "../../modules/apply/chain-activation.js";
 import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
-import { sanitizeToolPairs, windowMessages } from "./window.js";
+import { sanitizeToolPairs, stripHistoricalImages, windowMessages } from "./window.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
   CONTROL_WRITE_TOOL_NAMES,
   CREATE_TOOL_NAMES,
+  EDIT_AUDIENCE_TOOL_NAME,
+  REALLOCATE_TOOL_NAME,
   REFINE_TOOL_NAMES,
   PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
@@ -50,6 +62,7 @@ import {
   RESEED_TOOL_NAME,
   WRITE_TOOL_NAMES,
   actionFromToolCall,
+  resolveBudgetMinor,
   buildCapabilitiesText,
   isConfirmableConfigTool,
   makeConversationTools,
@@ -62,14 +75,17 @@ import {
 import { latestAnalysisAsOf, renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
-import { buildRefineEcho, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type MediaPreference, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
-import { loadWriteContext } from "../../modules/apply/write-context.js";
+import { runReallocationSaga } from "../../modules/apply/reallocation-saga.js";
+import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft, type RefineDraftPatch, type SegmentPublicoInput } from "../../modules/conversation/draft-proposal.js";
+import { loadWriteContext, reallocKindPeriod, type BudgetPeriodKind } from "../../modules/apply/write-context.js";
+import { adHasNoBudgetMessage, resolveMisplacedBudgetMessage } from "./budget-location.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
 import { createNotifyRepo } from "../../modules/notify/repo.js";
 import { applyPlaybookOp } from "../../modules/conversation/config-writes.js";
 import type {
   PendingConfigChange,
+  PendingDisambiguation,
   PendingDraft,
   PendingRevert,
   PendingWrite,
@@ -79,6 +95,27 @@ import type {
 
 const CONVERSATION_TEMPERATURE = 0.3;
 
+/** B3: seção injetada quando o usuário mandou um criativo perguntando (imagem anexada ao turno).
+ *  O modelo JÁ vê a imagem (conteúdo multimodal); isto aterra a leitura no método do squad e pede
+ *  resposta natural (não um formulário). Só entra quando há mídia — não infla o prompt normal. */
+const MEDIA_QUESTION_SECTION = [
+  "O usuário te mandou um criativo (imagem) junto da mensagem — você está VENDO essa imagem agora.",
+  "Responda à pergunta dele sobre a imagem de forma direta e natural, como um gestor falando.",
+  "Se for uma crítica/avaliação de criativo, use o método abaixo (gancho, ângulo, prova, fadiga) —",
+  "sem soletrar um formulário; teça no texto. Se a imagem não for um criativo (ex: um print), responda",
+  "ao que ele perguntou sem forçar decomposição.",
+  "",
+  "IMPORTANTE — guardar: toda imagem que ele te manda JÁ É GUARDADA automaticamente na biblioteca de",
+  "criativos da conta em contexto (o upload roda em segundo plano; ela fica disponível pra usar num",
+  "rascunho de campanha depois). Então isso NÃO é algo que você 'não consegue fazer': se ele pedir pra",
+  "guardar ('guarda aí'), confirme com naturalidade que já está indo pra biblioteca — NUNCA diga que",
+  "não consegue salvar na biblioteca (é falso). Só peça a conta se você AINDA não sabe de qual conta é",
+  "(nenhuma conta em contexto). Se a imagem tiver marca d'água/logo de banco de imagens, aí sim vale",
+  "avisar que é bom trocar por uma versão limpa antes de anunciar.",
+  "",
+  CREATIVE_CRITIQUE_KNOWLEDGE,
+].join("\n");
+
 /** Guard: `v` é um ConversionGoal da taxonomia neutra (o LLM manda goal como texto livre). */
 function isConversionGoal(v: unknown): v is ConversionGoal {
   return typeof v === "string" && (CONVERSION_GOALS as readonly string[]).includes(v);
@@ -87,6 +124,21 @@ function isConversionGoal(v: unknown): v is ConversionGoal {
 /** Guard: `v` é uma preferência de mídia válida (video/image/mixed). */
 function isMediaPreference(v: unknown): v is MediaPreference {
   return typeof v === "string" && (MEDIA_PREFERENCES as readonly string[]).includes(v);
+}
+
+/** Guard: `v` é uma intenção de estrutura válida (C1) — o LLM manda texto livre. */
+function isCampaignIntent(v: unknown): v is CampaignIntent {
+  return typeof v === "string" && (CAMPAIGN_INTENTS as readonly string[]).includes(v);
+}
+
+/** Guard: `v` é um modo de orçamento válido (C1) — cbo/abo. */
+function isBudgetMode(v: unknown): v is BudgetMode {
+  return typeof v === "string" && (BUDGET_MODES as readonly string[]).includes(v);
+}
+
+/** Guard: `v` é uma intenção de criativo válida (S4) — reuse/test. */
+function isCreativeIntent(v: unknown): v is CreativeIntent {
+  return typeof v === "string" && (CREATIVE_INTENTS as readonly string[]).includes(v);
 }
 
 /** Normaliza os copyEdits vindos do LLM (índice + campos de texto), filtrando entradas inválidas. */
@@ -103,6 +155,72 @@ function parseCopyEdits(v: unknown): { index: number; headline?: string; primary
       ...(typeof o["description"] === "string" ? { description: o["description"] } : {}),
       ...(typeof o["adName"] === "string" && o["adName"] ? { adName: o["adName"] } : {}),
     });
+  }
+  return out;
+}
+
+/** Normaliza os segmentos do teste de público (C2/P7 producer) vindos do LLM — cada um vira 1 conjunto
+ *  com o público COMPLETO. Filtra strings vazias; descarta segmentos sem NENHUMA dimensão de público
+ *  (idade/gênero/geo/interesse/comportamento/público salvo/raio) — ruído do LLM. */
+export function parseSegments(v: unknown): SegmentPublicoInput[] {
+  if (!Array.isArray(v)) return [];
+  const strs = (x: unknown): string[] =>
+    Array.isArray(x) ? x.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
+  const num = (x: unknown): number | undefined => (typeof x === "number" && Number.isFinite(x) ? x : undefined);
+  const gender = (x: unknown): "all" | "men" | "women" | undefined => (x === "all" || x === "men" || x === "women" ? x : undefined);
+  const areas = (x: unknown): { address: string; radiusKm: number }[] =>
+    Array.isArray(x)
+      ? x
+          .filter((a): a is { address: string; radiusKm: number } => Boolean(a) && typeof (a as { address?: unknown }).address === "string" && typeof (a as { radiusKm?: unknown }).radiusKm === "number")
+          .map((a) => ({ address: a.address, radiusKm: a.radiusKm }))
+      : [];
+  const out: SegmentPublicoInput[] = [];
+  for (const e of v) {
+    if (!e || typeof e !== "object") continue;
+    const o = e as Record<string, unknown>;
+    const label = typeof o["label"] === "string" && o["label"].trim() ? o["label"].trim() : undefined;
+    const geo = strs(o["geo"]);
+    const interests = strs(o["interests"]);
+    const behaviors = strs(o["behaviors"]);
+    const includeAudiences = strs(o["includeAudiences"]);
+    const excludeAudiences = strs(o["excludeAudiences"]);
+    const addressAreas = areas(o["addressAreas"]);
+    const ageMin = num(o["ageMin"]);
+    const ageMax = num(o["ageMax"]);
+    const g = gender(o["gender"]);
+    const radiusKm = num(o["radiusKm"]);
+    // P7: um segmento pode ser SÓ demográfico (idade/gênero/geo, sem interesse) — mantém se tiver
+    // QUALQUER dimensão de público (não só interesse/público salvo, como antes).
+    const hasPublico =
+      geo.length > 0 || interests.length > 0 || behaviors.length > 0 || includeAudiences.length > 0 || excludeAudiences.length > 0 ||
+      addressAreas.length > 0 || ageMin !== undefined || ageMax !== undefined || g !== undefined || radiusKm !== undefined;
+    if (!hasPublico) continue; // segmento sem nenhum público → descarta (ruído do LLM)
+    out.push({
+      ...(label ? { label } : {}),
+      ...(geo.length > 0 ? { geo } : {}),
+      ...(ageMin !== undefined ? { ageMin } : {}),
+      ...(ageMax !== undefined ? { ageMax } : {}),
+      ...(g !== undefined ? { gender: g } : {}),
+      ...(interests.length > 0 ? { interests } : {}),
+      ...(behaviors.length > 0 ? { behaviors } : {}),
+      ...(includeAudiences.length > 0 ? { includeAudiences } : {}),
+      ...(excludeAudiences.length > 0 ? { excludeAudiences } : {}),
+      ...(radiusKm !== undefined ? { radiusKm } : {}),
+      ...(addressAreas.length > 0 ? { addressAreas } : {}),
+    });
+  }
+  return out;
+}
+
+/** Normaliza os setAdCreative vindos do LLM (índice + nome do criativo), filtrando entradas inválidas. */
+function parseSetAdCreative(v: unknown): { index: number; creative: string }[] {
+  if (!Array.isArray(v)) return [];
+  const out: { index: number; creative: string }[] = [];
+  for (const e of v) {
+    if (!e || !Number.isInteger((e as { index?: unknown }).index)) continue;
+    const o = e as Record<string, unknown>;
+    if (typeof o["creative"] !== "string" || !o["creative"].trim()) continue;
+    out.push({ index: o["index"] as number, creative: o["creative"].trim() });
   }
   return out;
 }
@@ -238,6 +356,34 @@ function activePendingConfig(pc: PendingConfigChange | null): PendingConfigChang
   return pc && Date.parse(pc.expiresAt) > Date.now() ? pc : null;
 }
 
+/** pendingDisambiguation ainda válido (não expirado)? (D1) */
+function activePendingDisambiguation(pd: PendingDisambiguation | null): PendingDisambiguation | null {
+  return pd && Date.parse(pd.expiresAt) > Date.now() ? pd : null;
+}
+
+/** Texto da última mensagem do usuário (a resposta à desambiguação). */
+function lastHumanText(messages: readonly BaseMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m instanceof HumanMessage && typeof m.content === "string") return m.content;
+  }
+  return "";
+}
+
+/** Campo desambiguado → patch de refino com o NOME exato escolhido (re-roda o refine, casa 1:1). */
+function refinePatchForDisambiguation(field: PendingDisambiguation["field"], name: string): RefineDraftPatch {
+  switch (field) {
+    case "addInterests":
+      return { addInterests: [name] };
+    case "geo":
+      return { addGeo: [name] };
+    case "audience":
+      return { addAudiences: [name] };
+    case "page":
+      return { setPage: name };
+  }
+}
+
 /** Oferta de rodar a análise após uma mudança relevante (NÃO dispara sozinho — §8). */
 const RUN_ANALYSIS_OFFER = "Quer que eu rode uma análise agora com a nova config?";
 
@@ -266,6 +412,15 @@ function outcomeLine(action: Action, outcome: ApplyResult): string {
       return describeActionOutcome(action, { kind: "failed", ...(metaMessage !== undefined ? { metaMessage } : {}) });
     }
   }
+}
+
+/** Motivo curto de um desfecho que NÃO aplicou (blocked/failed) — p/ a mensagem da saga (A4). */
+function reallocFailReason(outcome: ApplyResult): string {
+  if (outcome.kind === "blocked") return outcome.reason;
+  if (outcome.kind === "failed" && outcome.error instanceof AdsPlatformError && outcome.error.userMessage) {
+    return outcome.error.userMessage.trim();
+  }
+  return "não consegui aplicar agora";
 }
 
 /** Extrai tokens/custo da resposta do ChatOpenAI (OpenRouter com usage.include). */
@@ -520,6 +675,33 @@ export function makeConversationNodes(
   /** Nó ReAct: LLM (OpenRouter) com as tools da allowlist + voz do agente. */
   async function agent(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
     logger.debug({ actor: actorLabel(ctx.ref) }, "conversation:agent");
+
+    // D1: desambiguação numerada congelada — resolve DETERMINÍSTICO antes do LLM. O "1"/nome
+    // aplica o id direto (re-roda o refine com o nome exato → casa 1:1), sem o LLM reconstruir a
+    // intenção e escorregar pra regra mais saliente (o bug do "1" virar link). Ambíguo/fora → cai
+    // pro LLM normal (a pendência é single-shot: não fica renumerando).
+    const disamb = activePendingDisambiguation(state.pendingDisambiguation);
+    if (disamb) {
+      const choice = resolveDisambiguationChoice(disamb.options, lastHumanText(state.messages));
+      if (choice.kind === "resolved") {
+        const dctxRefine = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+        const active = activePendingDraft(state.pendingDraft) ?? (disamb.draftId ? await recoverOrNull(deps, dctxRefine) : null);
+        if (active) {
+          const res = await refineDraft(deps, dctxRefine, active.draftId, refinePatchForDisambiguation(disamb.field, choice.option.name));
+          if (res.kind === "ok") {
+            return {
+              messages: [new AIMessage(res.echo)],
+              pendingDisambiguation: null,
+              pendingDraft: { ...active, echo: res.echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString() },
+            };
+          }
+          // re-bloqueou (raro): manda a razão e limpa (evita renumerar em loop).
+          return { messages: [new AIMessage(res.reason)], pendingDisambiguation: null };
+        }
+      }
+      // não resolveu / rascunho sumiu → segue pro LLM; a pendência é limpa no fim (single-shot).
+    }
+
     const { systemPrompt, model } = await loadConversationConfig(
       deps.db,
       ctx.orgId,
@@ -527,6 +709,7 @@ export function makeConversationNodes(
       deps.conversation.model,
       ctx.configViaChat ?? false,
       ctx.chatAdsWrites ?? false,
+      ctx.chatCreativePicker ?? false,
     );
 
     // eco+confirma (5c): se há ação/reversão pendente válida, oriente o LLM a só
@@ -546,7 +729,9 @@ export function makeConversationNodes(
     const freshness = [currentDateTimeLine(ctx.timezone), lastAnalysisLine(asOf, ctx.timezone)]
       .filter((l) => l.length > 0)
       .join("\n\n");
-    const sys = assembleSystemPrompt(`${freshness}\n\n${systemPrompt}`, await groupSection(), echo);
+    // B3: mídia anexada → injeta o kernel de criativo (aterra a leitura); só quando há imagem.
+    const baseSys = `${freshness}\n\n${systemPrompt}${ctx.attachedMedia ? `\n\n${MEDIA_QUESTION_SECTION}` : ""}`;
+    const sys = assembleSystemPrompt(baseSys, await groupSection(), echo);
 
     const windowed = windowMessages(state.messages, {
       maxTurns: deps.conversation.historyTurns,
@@ -555,7 +740,7 @@ export function makeConversationNodes(
     // Sanitiza pares tool_call/result: um turno anterior que QUEBROU entre o AI(tool_calls) e as
     // respostas das tools deixa um órfão no checkpoint → a API rejeita (400 "No tool output found")
     // e o thread fica envenenado (todo turno reenvia o órfão). Remover o órfão CURA o thread.
-    const msgs = [new SystemMessage(sys), ...sanitizeToolPairs(windowed)];
+    const msgs = [new SystemMessage(sys), ...stripHistoricalImages(sanitizeToolPairs(windowed))];
     // Primário com retry/backoff (ChatOpenAI.maxRetries); se ESGOTAR, tenta o RESERVA
     // (também com retry/backoff). Loga cada ponto de falha. Provider diverso = resiliência a blip.
     const fallback = deps.conversation.fallbackModel;
@@ -606,6 +791,9 @@ export function makeConversationNodes(
     if (state.pendingWrite && !pending) update.pendingWrite = null;
     if (state.pendingRevert && !pendingRevert) update.pendingRevert = null;
     if (state.pendingConfigChange && !pendingConfig) update.pendingConfigChange = null;
+    // D1: se chegamos ao LLM com uma desambiguação em aberto, a resposta não a resolveu
+    // (ou expirou) — limpa (single-shot: não fica renumerando as opções turno após turno).
+    if (state.pendingDisambiguation) update.pendingDisambiguation = null;
     return update;
   }
 
@@ -623,6 +811,10 @@ export function makeConversationNodes(
   async function confirmWriteGate(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
     const last = state.messages.at(-1) as AIMessage | undefined;
     const allCalls = last?.tool_calls ?? [];
+    // rótulo "(conta)" no eco — só em org multi-conta (evita ruído em org de 1 conta). Fonte única
+    // da decisão E do texto: `showAccount` gateia, `acctLbl` é o texto derivado.
+    const showAccount = Boolean(ctx.multiAccount && ctx.accountName);
+    const acctLbl = showAccount ? ` (${ctx.accountName})` : "";
 
     // DESCRIBE_CAPABILITIES: emite o texto HONESTO VERBATIM (o LLM parafraseava e dropava
     // linhas de limitação, ex: "config é pelo site"). É informativo puro — não coexiste com escrita.
@@ -681,9 +873,12 @@ export function makeConversationNodes(
               ...(a["activation"] === "active" || a["activation"] === "paused" ? { activation: a["activation"] as "active" | "paused" } : {}),
               ...(typeof a["variantsCount"] === "number" ? { variantsCount: a["variantsCount"] as number } : {}),
               ...(a["audience"] === "reuse" || a["audience"] === "broad" ? { audience: a["audience"] as "reuse" | "broad" } : {}),
+              ...(typeof a["link"] === "string" && a["link"].trim().length > 0 ? { link: a["link"].trim() } : {}),
               ...(isConversionGoal(a["objective"]) ? { objective: a["objective"] } : {}),
               ...(typeof a["campaignName"] === "string" && a["campaignName"] ? { campaignName: a["campaignName"] as string } : {}),
               ...(typeof a["adsetName"] === "string" && a["adsetName"] ? { adsetName: a["adsetName"] as string } : {}),
+              ...(typeof a["setPage"] === "string" && a["setPage"].trim().length > 0 ? { setPage: a["setPage"].trim() } : {}),
+              ...(typeof a["setPixel"] === "string" && a["setPixel"].trim().length > 0 ? { setPixel: a["setPixel"].trim() } : {}),
               ...(Array.isArray(a["removeGeo"]) ? { removeGeo: a["removeGeo"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["addGeo"]) ? { addGeo: a["addGeo"].filter((x): x is string => typeof x === "string") } : {}),
               ...(typeof a["ageMin"] === "number" ? { ageMin: a["ageMin"] as number } : {}),
@@ -706,10 +901,33 @@ export function makeConversationNodes(
                 const edits = parseCopyEdits(a["copyEdits"]);
                 return edits.length > 0 ? { copyEdits: edits } : {};
               })(),
+              // troca de criativo por-anúncio gated (v1 default OFF): OFF → ignora; o prompt aponta
+              // o site pra trocar criativo. Fast-follow = ligar o picker de novo.
+              ...((): { setAdCreative?: ReturnType<typeof parseSetAdCreative> } => {
+                if (!ctx.chatCreativePicker) return {};
+                const sets = parseSetAdCreative(a["setAdCreative"]);
+                return sets.length > 0 ? { setAdCreative: sets } : {};
+              })(),
+              // P2: adicionar/remover CONJUNTO do teste de público (reusa parseSegments do create).
+              ...((): { addSegment?: ReturnType<typeof parseSegments> } => {
+                const segs = parseSegments(a["addSegment"]);
+                return segs.length > 0 ? { addSegment: segs } : {};
+              })(),
+              ...(Array.isArray(a["removeSegment"]) ? { removeSegment: a["removeSegment"].filter((x): x is number => typeof x === "number" && Number.isInteger(x) && x >= 0) } : {}),
+              // F1a: LIGAR/DESLIGAR Advantage por chat (bundle único — o refino seta os 2 flags).
+              ...(typeof a["advantage"] === "boolean" ? { advantage: a["advantage"] } : {}),
+              // F1b: trocar CBO/ABO (onde a verba mora) — o core move a verba de nível se for um flip.
+              ...(isBudgetMode(a["budgetMode"]) ? { budgetMode: a["budgetMode"] } : {}),
             };
       const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
       if (res.kind === "blocked") {
-        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(res.reason)] };
+        const out: WhatsappConversationUpdate = { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(res.reason)] };
+        // D1: ambiguidade de público/interesse/geo → CONGELA as opções resolvidas p/ o próximo
+        // turno resolver o "1"/nome determinístico (sem o LLM reconstruir a intenção).
+        if (res.disambiguation) {
+          out.pendingDisambiguation = { ...res.disambiguation, draftId: active.draftId, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString() };
+        }
+        return out;
       }
       return {
         messages: [...answerToolCalls(allCalls, "ajustado — aguardando confirmação"), new AIMessage(res.echo)],
@@ -776,7 +994,13 @@ export function makeConversationNodes(
               const interests = strList(args["interests"]);
               const behaviors = strList(args["behaviors"]);
               const addressAreas = areaList(args["addressAreas"]);
+              // picker de criativo por chat gated (v1 default OFF): OFF → ignora os criativos
+              // escolhidos/fill; o AGENTE escolhe (Meta qualquer status + biblioteca). O prompt já
+              // orienta o Roy a não oferecer escolher + apontar o site pra trocar (fast-follow = ligar).
+              const creatives = ctx.chatCreativePicker ? strList(args["creatives"]) : undefined;
+              const fill = ctx.chatCreativePicker ? args["fillRemaining"] : undefined;
               return proposeCreateCampaign(deps, dctx, {
+                ...(typeof args["name"] === "string" && args["name"].trim().length > 0 ? { name: args["name"].trim() } : {}),
                 // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
                 // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
                 // o objetivo REAL. Sem isso, um goal fora do enum viraria DEFAULT_OBJECTIVE no
@@ -796,6 +1020,27 @@ export function makeConversationNodes(
                 ...(typeof args["adCount"] === "number" ? { adCount: args["adCount"] as number } : {}),
                 ...(typeof args["distinctCreatives"] === "number" ? { distinctCreatives: args["distinctCreatives"] as number } : {}),
                 ...(isMediaPreference(args["mediaPreference"]) ? { mediaPreference: args["mediaPreference"] } : {}),
+                ...(creatives && creatives.length > 0 ? { creatives } : {}),
+                ...(fill === "agent" || fill === "only_picked" ? { fillRemaining: fill } : {}),
+                ...(typeof args["link"] === "string" && args["link"].trim().length > 0 ? { link: args["link"].trim() } : {}),
+                ...(typeof args["page"] === "string" && args["page"].trim().length > 0 ? { page: args["page"].trim() } : {}),
+                ...(typeof args["pixel"] === "string" && args["pixel"].trim().length > 0 ? { pixel: args["pixel"].trim() } : {}),
+                // C1: intent (sinal de estrutura) + override de budgetMode — o core decide a estrutura.
+                ...(isCampaignIntent(args["intent"]) ? { intent: args["intent"] } : {}),
+                ...(isBudgetMode(args["budgetMode"]) ? { budgetMode: args["budgetMode"] } : {}),
+                // S4: FOCO de criativo declarado pelo dono — ângulo (o que destacar) + intenção
+                // (reusar o que converte × testar algo novo). Só steia quando o dono declara; ausente
+                // = a estratégia configurada do agente + escolha por contexto.
+                ...(typeof args["creativeAngle"] === "string" && args["creativeAngle"].trim().length > 0 ? { creativeAngle: args["creativeAngle"].trim() } : {}),
+                ...(isCreativeIntent(args["creativeIntent"]) ? { creativeIntent: args["creativeIntent"] } : {}),
+                // C3: Advantage (override explícito) + sinal de negócio local (inferência).
+                ...(typeof args["advantage"] === "boolean" ? { advantage: args["advantage"] } : {}),
+                ...(typeof args["localBusiness"] === "boolean" ? { localBusiness: args["localBusiness"] } : {}),
+                // C2 producer: segmentos do teste de público multi-conjunto.
+                ...(() => {
+                  const segs = parseSegments(args["segments"]);
+                  return segs.length >= 2 ? { segments: segs } : {};
+                })(),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
@@ -875,7 +1120,17 @@ export function makeConversationNodes(
       }
       // config + escrita Meta no MESMO turno: não engula a escrita em silêncio — peça
       // uma coisa de cada vez (o gate trata 1 pendência por turno). §UX: nunca sumir com o pedido.
-      const alsoMetaWrite = allCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME);
+      // Cobre TODA escrita/criação/edição especial (não só WRITE_TOOL_NAMES) — senão "muda a meta
+      // e edita o público" ecoaria só a config e sumiria com a edição.
+      const alsoMetaWrite = allCalls.some(
+        (c) =>
+          WRITE_TOOL_NAMES.has(c.name) ||
+          CREATE_TOOL_NAMES.has(c.name) ||
+          REFINE_TOOL_NAMES.has(c.name) ||
+          c.name === EDIT_AUDIENCE_TOOL_NAME ||
+          c.name === REALLOCATE_TOOL_NAME ||
+          c.name === REVERT_TOOL_NAME,
+      );
       if (alsoMetaWrite) {
         return {
           messages: answerToolCalls(
@@ -1004,6 +1259,231 @@ export function makeConversationNodes(
       }
     }
 
+    // EDITAR PÚBLICO de adset vivo (A1): resolve o público por NOMES (nome→id via search; dono
+    // presente → ambíguo PERGUNTA), monta a Action adjust_audience, guardrail (drop honesto se a
+    // ação não estiver liberada) + dry-run, e ecoa o novo público com o aviso de reset de aprendizado.
+    const editCall = allCalls.find((c) => c.name === EDIT_AUDIENCE_TOOL_NAME);
+    if (editCall) {
+      const a = (editCall.args ?? {}) as Record<string, unknown>;
+      const adsetId = typeof a["adsetId"] === "string" ? a["adsetId"].trim() : "";
+      const adsetName = typeof a["adsetName"] === "string" && a["adsetName"] ? (a["adsetName"] as string) : adsetId;
+      if (!adsetId) {
+        return { messages: answerToolCalls(allCalls, "Me diz qual conjunto de anúncios (o nome que eu identifico) que eu ajusto o público.") };
+      }
+      const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, [{ level: "adset", id: adsetId, name: adsetName }]);
+      if (!wctx) {
+        return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
+      }
+      const strList = (v: unknown): string[] | undefined => {
+        if (!Array.isArray(v)) return undefined;
+        const out = v.filter((x): x is string => typeof x === "string");
+        return out.length > 0 ? out : undefined;
+      };
+      const isGender = (v: unknown): v is "all" | "men" | "women" => v === "all" || v === "men" || v === "women";
+      const geo = strList(a["geo"]);
+      const interests = strList(a["interests"]);
+      const behaviors = strList(a["behaviors"]);
+      const includeAudiences = strList(a["includeAudiences"]);
+      const excludeAudiences = strList(a["excludeAudiences"]);
+      const input: ProposedExplicitInput = {
+        ...(geo ? { geo } : {}),
+        ...(typeof a["ageMin"] === "number" ? { ageMin: a["ageMin"] } : {}),
+        ...(typeof a["ageMax"] === "number" ? { ageMax: a["ageMax"] } : {}),
+        ...(isGender(a["gender"]) ? { gender: a["gender"] } : {}),
+        ...(interests ? { interests } : {}),
+        ...(behaviors ? { behaviors } : {}),
+        ...(includeAudiences ? { includeAudiences } : {}),
+        ...(excludeAudiences ? { excludeAudiences } : {}),
+        ...(typeof a["radiusKm"] === "number" ? { radiusKm: a["radiusKm"] } : {}),
+      };
+      const dctxEdit: DraftProposalContext = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+      const res = await resolveProposedExplicitTargeting(deps, dctxEdit, wctx.account, input, { autonomous: false });
+      if (res.kind === "blocked") {
+        return { messages: [...answerToolCalls(allCalls, "preciso esclarecer"), new AIMessage(res.reason)] };
+      }
+      if (res.kind === "empty") {
+        return {
+          messages: [
+            ...answerToolCalls(allCalls, "sem público"),
+            new AIMessage('Não entendi qual público você quer no conjunto. Me diz o essencial (ex: "BH e região, 25-45, interesse em corrida").'),
+          ],
+        };
+      }
+      const action: Action = {
+        id: editCall.id ?? EDIT_AUDIENCE_TOOL_NAME,
+        type: "adjust_audience",
+        target: { level: "adset", id: adsetId, name: adsetName },
+        params: { [ACTION_PARAM_TARGETING]: res.targeting },
+        source: "llm",
+        riskLevel: riskForAction("adjust_audience"),
+        reason: "edição de público pedida no chat",
+      };
+      const check = applyGuardrails([action], wctx.cfg, wctx.ctx);
+      if (check.allowed.length === 0) {
+        const reason = check.dropped[0]?.reason ?? "editar público está desligado para este agente";
+        return { messages: [...answerToolCalls(allCalls, "não consigo"), new AIMessage(`Não consigo editar o público: ${reason}`)] };
+      }
+      const clamped = check.allowed[0]!;
+      try {
+        await deps.ports.ads.mutate(wctx.account, clamped, { dryRun: true });
+      } catch (err) {
+        logger.warn({ err, adsetId }, "conversation:dry-run do edit_audience falhou");
+        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage("Não consegui simular essa edição de público agora — tenta de novo em instantes.")] };
+      }
+      const drops = res.droppedNames.length > 0 ? `\n(não achei: ${res.droppedNames.join(", ")})` : "";
+      const sim = wctx.cfg.dryRun ? "Modo simulação (não aplico de verdade): " : "";
+      const echo = `${sim}Vou trocar o público do conjunto *${adsetName}*${acctLbl} para: ${describeExplicitAudience(res.targeting)}.${drops}\n\n⚠️ Editar o público reinicia o aprendizado da Meta desse conjunto.\n\nConfirma?`;
+      return {
+        messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+        pendingWrite: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), actions: [clamped] },
+        pendingRevert: null,
+      };
+    }
+
+    // REALOCAR ORÇAMENTO A→B (A4): move um valor/dia da origem pro destino. Lê os dois budgets
+    // FRESCOS, pré-clampa ao teto de blast-radius (o MAIOR movível respeitando os DOIS lados) p/
+    // as pernas ficarem balanceadas, e monta 2 adjust_budget set-absoluto marcadas como SAGA
+    // (aplica sequencial com compensação no apply). Guardrail nas duas pernas; nunca auto-aplica.
+    const reallocCall = allCalls.find((c) => c.name === REALLOCATE_TOOL_NAME);
+    if (reallocCall) {
+      const a = (reallocCall.args ?? {}) as Record<string, unknown>;
+      // origem e destino têm NÍVEL próprio (Gap 6): dá pra mover de uma campanha CBO pra um conjunto
+      // ABO, não só entre pares do mesmo nível. A saga é level-agnóstica (2 Actions independentes).
+      const fromLevel = a["fromLevel"] === "adset" ? "adset" : "campaign";
+      const toLevel = a["toLevel"] === "adset" ? "adset" : "campaign";
+      const fromId = typeof a["fromEntityId"] === "string" ? a["fromEntityId"].trim() : "";
+      const toId = typeof a["toEntityId"] === "string" ? a["toEntityId"].trim() : "";
+      const fromName = typeof a["fromEntityName"] === "string" && a["fromEntityName"] ? (a["fromEntityName"] as string) : fromId;
+      const toName = typeof a["toEntityName"] === "string" && a["toEntityName"] ? (a["toEntityName"] as string) : toId;
+      const amountReais = typeof a["amountReais"] === "number" ? a["amountReais"] : NaN;
+      if (!fromId || !toId || !(amountReais > 0)) {
+        return { messages: answerToolCalls(allCalls, "Me diz de qual entidade tirar, pra qual pôr e quanto por dia (ex: 'R$ 50/dia da campanha A pra B').") };
+      }
+      const fromTarget: Action["target"] = { level: fromLevel, id: fromId, name: fromName };
+      const toTarget: Action["target"] = { level: toLevel, id: toId, name: toName };
+      if (entityKeyOf(fromTarget) === entityKeyOf(toTarget)) {
+        return { messages: answerToolCalls(allCalls, "A origem e o destino são a mesma entidade — me diz duas diferentes.") };
+      }
+      const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, [fromTarget, toTarget]);
+      if (!wctx) {
+        return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
+      }
+      const fromKey = entityKeyOf(fromTarget);
+      const toKey = entityKeyOf(toTarget);
+      const fromCur = wctx.ctx.budgetAmountByEntity?.get(fromKey);
+      const toCur = wctx.ctx.budgetAmountByEntity?.get(toKey);
+      if (fromCur === undefined || toCur === undefined) {
+        // a perna sem orçamento pode estar em outro nível (CBO/ABO) → oferta honesta por-perna
+        // (reusa a resolução da Fatia 2), senão mensagem genérica (falha transiente).
+        const leg = fromCur === undefined ? fromTarget : toTarget;
+        if (wctx.ctx.budgetByEntity?.get(entityKeyOf(leg)) === false) {
+          try {
+            const msg = await resolveMisplacedBudgetMessage(deps.ports.ads, wctx.account, leg.level as "campaign" | "adset", leg.id, leg.name ?? leg.id, acctLbl);
+            if (msg) return { messages: [...answerToolCalls(allCalls, "orçamento em outro nível"), new AIMessage(msg)] };
+          } catch (err) {
+            logger.warn({ err, entityId: leg.id }, "conversation:resolução de nível na realocação falhou");
+          }
+        }
+        return { messages: [...answerToolCalls(allCalls, "sem budget"), new AIMessage(`Não consegui ler o orçamento de *${leg.name ?? leg.id}* — pode ser que o orçamento esteja em outro nível (ex: na campanha, não no conjunto). Dá uma olhada no site.`)] };
+      }
+      // tipo do orçamento (diário/vitalício) por perna: rotula o eco certo e barra misturar tipos —
+      // mover "X/dia" de um diário pra um vitalício (ou vice-versa) não é coerente (um é por dia, o
+      // outro é o total do período).
+      const fromKind = wctx.budgetKindByEntity.get(fromKey) ?? "daily";
+      const toKind = wctx.budgetKindByEntity.get(toKey) ?? "daily";
+      const kindCheck = reallocKindPeriod(fromKind, toKind);
+      if (!kindCheck.ok) {
+        const describeKind = (k: BudgetPeriodKind) => (k === "lifetime" ? "vitalício (total)" : "diário (por dia)");
+        return { messages: [...answerToolCalls(allCalls, "tipos diferentes"), new AIMessage(`*${fromName}* usa orçamento ${describeKind(fromKind)} e *${toName}* usa ${describeKind(toKind)} — não dá pra realocar entre tipos de orçamento diferentes. Ajusto cada um separado, ou você faz no site.`)] };
+      }
+      const period = kindCheck.period;
+      const requestedMinor = toMinorUnits(amountReais, wctx.currency);
+      if (requestedMinor >= fromCur) {
+        return { messages: [...answerToolCalls(allCalls, "valor alto demais"), new AIMessage(`Esse valor esvaziaria *${fromName}* (orçamento atual ${formatMoneyMinor(fromCur, wctx.currency)}${period}). Me diz um valor menor pra mover.`)] };
+      }
+      // pré-clamp: o maior movível respeitando o teto de % nos DOIS lados (origem −%, destino +%).
+      const maxMovableMinor = Math.floor((wctx.cfg.maxBudgetChangePct / 100) * Math.min(fromCur, toCur));
+      // ...E respeitando o PISO da plataforma na origem: se `fromCur - move` cair abaixo de
+      // MIN_BUDGET_MINOR, o executor arredondaria a origem PRA CIMA (pro piso) e o aplicado
+      // divergiria do eco (origem não cai o prometido, destino sobe tudo → gasto total sobe sem
+      // aviso). Limita o move pra a origem parar EXATAMENTE no piso, não abaixo.
+      const maxMovableByFloor = fromCur - MIN_BUDGET_MINOR;
+      const moveMinor = Math.min(requestedMinor, maxMovableMinor, Math.max(0, maxMovableByFloor));
+      if (moveMinor <= 0) {
+        // origem já no piso → não dá pra tirar sem furar o mínimo; senão foi o teto de %.
+        const atFloor = maxMovableByFloor <= 0;
+        const msg = atFloor
+          ? `*${fromName}* já está no orçamento mínimo (${formatMoneyMinor(MIN_BUDGET_MINOR, wctx.currency)}${period}) — não dá pra tirar mais dela sem parar a campanha. Pausa no site se for isso que você quer.`
+          : `Com o seu limite de segurança de ${wctx.cfg.maxBudgetChangePct}% por mudança, não consigo mover nada de uma vez entre essas duas. Dá pra afrouxar o teto na config, ou mover no site.`;
+        return { messages: [...answerToolCalls(allCalls, "não movo"), new AIMessage(msg)] };
+      }
+      // nota honesta do porquê reduziu: distingue o PISO (origem pararia abaixo do mínimo) do TETO de
+      // % — antes atribuía tudo ao teto mesmo quando foi o piso que cortou (eco enganoso).
+      const clampedNote =
+        moveMinor >= requestedMinor
+          ? ""
+          : maxMovableByFloor <= maxMovableMinor
+            ? `\n(movo ${formatMoneyMinor(moveMinor, wctx.currency)}${period} — mais que isso deixaria *${fromName}* abaixo do orçamento mínimo)`
+            : `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoneyMinor(moveMinor, wctx.currency)}${period} — o máximo seguro de uma vez)`;
+      const legFrom: Action = {
+        id: `${reallocCall.id ?? REALLOCATE_TOOL_NAME}:from`,
+        type: "adjust_budget",
+        target: fromTarget,
+        params: { [ACTION_PARAM_MODE]: BUDGET_MODE_SET, [ACTION_PARAM_AMOUNT_MINOR]: fromCur - moveMinor },
+        source: "llm",
+        riskLevel: riskForAction("adjust_budget"),
+        reason: "realocação de orçamento pedida no chat (origem)",
+      };
+      const legTo: Action = {
+        id: `${reallocCall.id ?? REALLOCATE_TOOL_NAME}:to`,
+        type: "adjust_budget",
+        target: toTarget,
+        params: { [ACTION_PARAM_MODE]: BUDGET_MODE_SET, [ACTION_PARAM_AMOUNT_MINOR]: toCur + moveMinor },
+        source: "llm",
+        riskLevel: riskForAction("adjust_budget"),
+        reason: "realocação de orçamento pedida no chat (destino)",
+      };
+      const check = applyGuardrails([legFrom, legTo], wctx.cfg, wctx.ctx);
+      // realocação é BALANCEADA — só faz sentido com as DUAS pernas. Se o guardrail barrar
+      // ou clampar qualquer uma (killswitch/ação-desligada/cap-diário/budget-já-mexido), não
+      // faço uma metade: reporto honesto e não mexo em nada.
+      const clampedFrom = check.allowed.find((x) => entityKeyOf(x.target) === fromKey);
+      const clampedTo = check.allowed.find((x) => entityKeyOf(x.target) === toKey);
+      const unchanged = (orig: Action, got: Action | undefined) =>
+        got !== undefined && got.params[ACTION_PARAM_AMOUNT_MINOR] === orig.params[ACTION_PARAM_AMOUNT_MINOR];
+      if (!unchanged(legFrom, clampedFrom) || !unchanged(legTo, clampedTo)) {
+        const reason = check.dropped[0]?.reason ?? "uma das pernas não passou no limite de segurança";
+        return { messages: [...answerToolCalls(allCalls, "não consigo realocar"), new AIMessage(`Não consigo fazer essa realocação agora: ${reason}. Não mexi em nada.`)] };
+      }
+      let dryOk = true;
+      for (const leg of [clampedFrom!, clampedTo!]) {
+        try {
+          await deps.ports.ads.mutate(wctx.account, leg, { dryRun: true });
+        } catch (err) {
+          logger.warn({ err, entityId: leg.target.id }, "conversation:dry-run da realocação falhou");
+          dryOk = false;
+        }
+      }
+      if (!dryOk) {
+        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage("Não consegui simular essa realocação agora — tenta de novo em instantes.")] };
+      }
+      const sim = wctx.cfg.dryRun ? "Modo simulação (não aplico de verdade): " : "";
+      const echo =
+        `${sim}Vou mover ${formatMoneyMinor(moveMinor, wctx.currency)}${period}${acctLbl}:\n` +
+        `• *${fromName}* cai pra ${formatMoneyMinor(fromCur - moveMinor, wctx.currency)}${period}\n` +
+        `• *${toName}* sobe pra ${formatMoneyMinor(toCur + moveMinor, wctx.currency)}${period}${clampedNote}\n\nConfirma?`;
+      return {
+        messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+        pendingWrite: {
+          echo,
+          expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(),
+          actions: [clampedFrom!, clampedTo!],
+          saga: { kind: "reallocation", sourceKey: fromKey, sourceRestoreMinor: fromCur },
+        },
+        pendingRevert: null,
+      };
+    }
+
     // id do tool_call como id da ação (idempotência); índice desempata se faltar (raro).
     const proposed = allCalls
       .filter((c) => WRITE_TOOL_NAMES.has(c.name))
@@ -1013,20 +1493,88 @@ export function makeConversationNodes(
       return { messages: answerToolCalls(allCalls, "Não entendi qual ação você quer. Pode repetir?") };
     }
 
-    const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, proposed.map((a) => a.target));
+    // Onde mora o orçamento (Gaps 1+2): mensagens honestas quando um adjust_budget mira um nível SEM
+    // orçamento próprio. NÃO aborta as OUTRAS ações do lote — a ação mal-localizada é ANOTADA (nunca
+    // dropada em silêncio) e as demais seguem. Nunca retargeta em silêncio (CBO afeta todos os conjuntos).
+    const budgetLocationNotes: string[] = [];
+    // Gap 2 (anúncio nunca tem orçamento na Meta): detecta ANTES de tocar a Meta (sem custo/erro #100).
+    const nonAdBudget: Action[] = [];
+    for (const a of proposed) {
+      if (a.type === "adjust_budget" && a.target.level === "ad") {
+        budgetLocationNotes.push(adHasNoBudgetMessage(a.target.name ?? a.target.id, acctLbl));
+      } else {
+        nonAdBudget.push(a);
+      }
+    }
+    if (nonAdBudget.length === 0) {
+      // só pedido(s) de orçamento em anúncio → devolve as explicações (sem tocar a Meta).
+      return { messages: [...answerToolCalls(allCalls, "anúncio não tem orçamento"), new AIMessage(budgetLocationNotes.join("\n\n"))] };
+    }
+
+    const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, nonAdBudget.map((a) => a.target));
     if (!wctx) {
       return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
     }
 
+    // budget set-absoluto do chat vem na unidade MAIOR (amountMajor) — converte p/ unidade menor
+    // AGORA que a moeda da conta é conhecida (JPY≠centavos). Antes disso o guardrail/mutação nem
+    // enxergariam o valor. No-op p/ pause/status/pct.
+    const resolvedAll = nonAdBudget.map((a) => resolveBudgetMinor(a, wctx.currency));
+
+    // Gap 1 (CBO/ABO): nível sem orçamento próprio (leitura fresca OK e budget ausente) → oferta
+    // honesta por-ação; a ação sai do lote (anotada), as demais seguem.
+    const resolved: Action[] = [];
+    for (const a of resolvedAll) {
+      if (
+        a.type === "adjust_budget" &&
+        (a.target.level === "campaign" || a.target.level === "adset") &&
+        wctx.ctx.budgetByEntity?.get(entityKeyOf(a.target)) === false
+      ) {
+        try {
+          const msg = await resolveMisplacedBudgetMessage(deps.ports.ads, wctx.account, a.target.level, a.target.id, a.target.name ?? a.target.id, acctLbl);
+          if (msg) {
+            budgetLocationNotes.push(msg);
+            continue; // ação mal-localizada anotada — não segue pro eco/apply
+          }
+        } catch (err) {
+          logger.warn({ err, entityId: a.target.id }, "conversation:resolução de nível de orçamento falhou — segue fluxo normal");
+        }
+      }
+      resolved.push(a);
+    }
+
+    // Ativação em cadeia (a Meta não cascateia status): ativar campanha/conjunto religa a subárvore
+    // pausada, senão só o nó liga e a campanha não veicula. Leitura da árvore best-effort (falha →
+    // só o nó). pause/→PAUSED não expande. Feito ANTES do guardrail p/ contar/isentar a árvore inteira.
+    const chain = await expandChainActivation(
+      resolved,
+      async (level, id) => {
+        try {
+          return await deps.ports.ads.readActivationTree(wctx.account, level, id);
+        } catch (err) {
+          logger.warn({ err, entityId: id }, "conversation:leitura da árvore de ativação falhou — só o nó");
+          return null;
+        }
+      },
+      { resumeAllowed: wctx.cfg.allowedActions.includes("resume_entity") },
+    );
+
     // guardrail no LOTE inteiro (uma chamada) — senão o cap de entidades/dia não acumula
-    // entre as ações do mesmo turno (seenEntities é por-chamada). §8: guardrail sempre.
-    const check = applyGuardrails(proposed, wctx.cfg, wctx.ctx);
+    // entre as ações do mesmo turno (seenEntities é por-chamada). §8: guardrail sempre. A ativação
+    // em cadeia CONFIRMADA isenta SÓ o cap de entidades/dia (intenção única; killSwitch/budget seguem).
+    const check = applyGuardrails(chain.expanded, wctx.cfg, wctx.ctx, { exemptEntityCap: chain.chainActivated });
     const labelOf = (a: Action) => a.target.name ?? a.target.id;
     const blocked = check.dropped.map((d) => `${labelOf(d.action)}: ${d.reason}`);
 
     const echoItems: EchoItem[] = [];
     const frozen: Action[] = [];
     for (const clamped of check.allowed) {
+      // ações-filho da cadeia entram no lote a aplicar, mas NÃO no eco (senão vira uma linha por
+      // filho) — o resumo delas sai na nota de listagem (`chain.notes`).
+      if (chain.childIds.has(clamped.id)) {
+        frozen.push(clamped);
+        continue;
+      }
       try {
         const dry = await deps.ports.ads.mutate(wctx.account, clamped, { dryRun: true });
         echoItems.push({
@@ -1036,7 +1584,7 @@ export function makeConversationNodes(
           entityName: clamped.target.name ?? clamped.target.id,
           currency: wctx.currency,
           // nomeia a conta no eco só em org multi-conta (evita ruído em org de 1 conta).
-          ...(ctx.multiAccount && ctx.accountName ? { accountName: ctx.accountName } : {}),
+          ...(showAccount ? { accountName: ctx.accountName! } : {}),
         });
         frozen.push(clamped);
       } catch (err) {
@@ -1049,7 +1597,16 @@ export function makeConversationNodes(
     // shadow (dry_run): o eco avisa que vai SIMULAR — senão "vou pausar" soa como escrita real.
     if (wctx.cfg.dryRun && echoItems.length > 0) parts.push("Modo simulação (não aplico de verdade):");
     if (echoItems.length > 0) parts.push(buildWriteEcho(echoItems));
+    // notas da ativação em cadeia (o que liga além do nó / ⚠️ não-entrega) + aviso de teto.
+    for (const note of chain.notes) parts.push(note);
+    // aviso de teto: conta o lote + o que já foi tocado hoje (cross-run) vs o cap (a isenção real
+    // no guardrail também considera touchedToday) — senão o aviso não bate com o consumo do dia.
+    const dayTotal = new Set([...(wctx.ctx.touchedToday ?? []), ...frozen.map((a) => entityKeyOf(a.target))]).size;
+    if (chain.chainActivated && dayTotal > wctx.cfg.maxEntitiesPerDay) parts.push(capWarningNote(dayTotal, wctx.cfg.maxEntitiesPerDay));
     if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
+    // ofertas de "onde mora o orçamento" (Gaps 1+2): entram no MESMO eco das demais ações (não dropam
+    // as outras) — ou são a resposta inteira quando todo o pedido era orçamento mal-localizado.
+    for (const note of budgetLocationNotes) parts.push(note);
     const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
 
     const update: WhatsappConversationUpdate = {
@@ -1061,6 +1618,7 @@ export function makeConversationNodes(
         echo,
         expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(),
         actions: frozen,
+        ...(chain.chainActivated ? { chainActivation: true } : {}),
       };
     }
     return update;
@@ -1108,11 +1666,9 @@ export function makeConversationNodes(
     // site) — o worker re-checa o guardrail de gasto novo, cria e empurra o desfecho.
     const pendingDraft = activePendingDraft(state.pendingDraft);
     if (pendingDraft) {
-      await deps.ports.scheduler.enqueue({
-        queue: APPROVAL_APPLY_QUEUE,
-        name: APPROVAL_APPLY_JOB,
-        payload: { orgId: ctx.orgId, approvalId: pendingDraft.approvalId, notifyRef: ctx.ref },
-      });
+      await deps.ports.scheduler.enqueue(
+        buildApprovalApplyJob({ orgId: ctx.orgId, approvalId: pendingDraft.approvalId, notifyRef: ctx.ref }),
+      );
       return {
         messages: [...answerToolCalls(calls, "criando"), new AIMessage("Beleza, tô criando — te aviso quando ficar pronto.")],
         pendingDraft: null,
@@ -1184,6 +1740,62 @@ export function makeConversationNodes(
       };
     }
 
+    // SAGA de realocação A→B (A4): NÃO é atômica na Meta → aplica a origem, depois o destino;
+    // se o destino falha, DEVOLVE o orçamento da origem (compensação); se a devolução também
+    // falha, reporta o estado parcial explícito (nunca silêncio). Reusa o mesmo apply-checado.
+    if (pending.saga?.kind === "reallocation") {
+      const saga = pending.saga;
+      const legFrom = pending.actions[0];
+      const legTo = pending.actions[1];
+      if (!legFrom || !legTo) {
+        return { messages: [...answerToolCalls(calls, "estado inválido"), new AIMessage("Perdi os detalhes dessa realocação. Me pede de novo.")], pendingWrite: null };
+      }
+      const fromName = legFrom.target.name ?? legFrom.target.id;
+      const toName = legTo.target.name ?? legTo.target.id;
+      const applyLeg = (action: Action, ctxOver: GuardrailContext, keySuffix: string): Promise<ApplyResult> =>
+        applyCheckedAction({
+          executor,
+          account: wctx.account,
+          action,
+          cfg: wctx.cfg,
+          ctx: ctxOver,
+          agentId: ctx.agentId,
+          runId: null,
+          orgId: ctx.orgId,
+          idempotencyKey: `conv:${ctx.conversationId}:${action.id}:${keySuffix}`,
+        });
+
+      // orquestração da saga (ordem + compensação) é PURA-ish (testável); aqui só renderiza o desfecho.
+      const outcome = await runReallocationSaga(legFrom, legTo, saga, wctx.ctx, applyLeg);
+      switch (outcome.kind) {
+        case "source_failed":
+          return {
+            messages: [...answerToolCalls(calls, "realocação abortada"), new AIMessage(`Não consegui mexer no orçamento de *${fromName}* (${reallocFailReason(outcome.failed)}), então não movi nada.`)],
+            pendingWrite: null,
+          };
+        case "done":
+          return {
+            messages: [...answerToolCalls(calls, "realocado"), new AIMessage(describeActionOutcome(legFrom, { kind: wctx.cfg.dryRun ? "simulated" : "applied" }) + "\n" + describeActionOutcome(legTo, { kind: wctx.cfg.dryRun ? "simulated" : "applied" }))],
+            pendingWrite: null,
+          };
+        case "compensated":
+          return {
+            messages: [...answerToolCalls(calls, "realocação revertida"), new AIMessage(`Não consegui aumentar *${toName}* (${reallocFailReason(outcome.destFailed)}), então devolvi o orçamento de *${fromName}*. No fim, nada mudou.`)],
+            pendingWrite: null,
+          };
+        case "partial": {
+          // devolução TAMBÉM falhou → estado parcial explícito (jamais silêncio). §UX erro = o quê + o quê fazer.
+          const leftMinor = Number(legFrom.params[ACTION_PARAM_AMOUNT_MINOR]);
+          const leftMoney = Number.isFinite(leftMinor) ? formatMoneyMinor(leftMinor, wctx.currency) : "um valor menor";
+          logger.error({ fromId: legFrom.target.id, toId: legTo.target.id }, "realloc:compensação falhou — estado parcial");
+          return {
+            messages: [...answerToolCalls(calls, "estado parcial"), new AIMessage(`⚠️ Reduzi *${fromName}* mas não consegui aumentar *${toName}* nem devolver o orçamento. *${fromName}* está com ${leftMoney}/dia agora — dá uma olhada no site e ajuste se precisar.`)],
+            pendingWrite: null,
+          };
+        }
+      }
+    }
+
     // escrita por chat: sem run de análise (runId null); o agentId é a âncora da trilha.
     // Acumula as entidades já aplicadas em touchedToday a cada iteração — senão o cap de
     // entidades/dia não vale DENTRO do lote (applyGuardrails é por-ação aqui). §8.
@@ -1200,6 +1812,8 @@ export function makeConversationNodes(
         runId: null,
         orgId: ctx.orgId,
         idempotencyKey: `conv:${ctx.conversationId}:${action.id}`,
+        // ativação em cadeia confirmada isenta o cap de entidades/dia (intenção única do dono).
+        ...(pending.chainActivation ? { exemptEntityCap: true } : {}),
       });
       if (outcome.kind === "applied") touchedToday.add(entityKeyOf(action.target));
       lines.push(outcomeLine(action, outcome));
@@ -1229,6 +1843,8 @@ export function routeConversation(
         WRITE_TOOL_NAMES.has(c.name) ||
         CREATE_TOOL_NAMES.has(c.name) ||
         REFINE_TOOL_NAMES.has(c.name) ||
+        c.name === EDIT_AUDIENCE_TOOL_NAME ||
+        c.name === REALLOCATE_TOOL_NAME ||
         c.name === REVERT_TOOL_NAME ||
         c.name === DESCRIBE_CAPABILITIES_TOOL_NAME ||
         c.name === WHATSAPP_NUMBER_TOOL_NAME ||

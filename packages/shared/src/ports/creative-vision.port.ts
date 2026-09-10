@@ -9,6 +9,12 @@ export interface CreativeVisionInput {
    */
   readonly imageUrls: readonly string[];
   /**
+   * Vídeo COMPLETO (data-url base64 ou URL) p/ um modelo video-capable — análise "do jeito certo"
+   * (movimento/áudio/gancho), sem depender de frames da Meta. Quando presente, o resolver manda o
+   * vídeo em vez dos frames e roteia pro modelo de vídeo. Ausente → usa `imageUrls` (fallback).
+   */
+  readonly videoUrl?: string;
+  /**
    * Hash do conteúdo — chave do cache. Deriva de um id ESTÁVEL do criativo
    * (id/video), NÃO da URL do fbcdn (que rotaciona a assinatura a cada fetch e
    * furaria o cache). Muda só quando o criativo/analisador muda.
@@ -16,6 +22,12 @@ export interface CreativeVisionInput {
   readonly contentHash: string;
   /** texto do criativo (título/corpo/CTA), quando disponível. */
   readonly copy?: string;
+  /**
+   * metering POR-CHAMADA (atribuição do custo da visão à org/run) — o `orgId` varia por job, então
+   * quando o resolver é construído sem `meta` fixo (ex: worker de análise de vídeo do WhatsApp), a
+   * chamada passa o seu aqui. Tem precedência sobre o `meta` de construção do resolver.
+   */
+  readonly meta?: { readonly orgId?: string; readonly runId?: string };
 }
 
 /**

@@ -4,7 +4,7 @@
 // neutra (nada específico de Meta aqui).
 
 import type { Action, EntityLevel } from "@trafego/shared";
-import { ACTION_PARAM_STATUS, formatMoney } from "@trafego/shared";
+import { ACTION_PARAM_STATUS, formatMoneyMinor } from "@trafego/shared";
 
 /** Uma ação a ecoar + o estado projetado pelo dry-run + rótulos resolvidos. */
 export interface EchoItem {
@@ -40,10 +40,9 @@ const STATUS_LABEL: Record<string, string> = {
   archived: "arquivado",
 };
 
-/** minor units (centavos) → moeda da conta, ex "R$ 1234,56" / "$ 1234,56". */
+/** unidade menor → moeda da conta, ex "R$ 1234,56" / "$ 1234,56" (JPY sem casas). */
 function budgetMoney(minor: unknown, currency: string): string {
-  const n = Number(minor);
-  return formatMoney(Number.isFinite(n) ? n / 100 : 0, currency);
+  return formatMoneyMinor(Number(minor), currency);
 }
 
 /** Campo de budget presente no estado (daily preferido) + rótulo de período. */

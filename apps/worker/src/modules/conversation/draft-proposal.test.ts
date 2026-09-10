@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveProposedExplicitTargeting } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, cleanPixelQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, describeResolvedSnapshot, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, matchPixelsByQuery, normalizeAdCount, pageChoiceLabel, pixelChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
+import type { PageInfo, PixelInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -80,7 +81,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       { limit: [{ campaignId: "C1", adsetId: "AS1" }] }, // ad_creatives: campanha/adset do anúncio-fonte
       { direct: [{ curatedJson: { isCBO: true, healthSignals: [] } }] }, // entity_analyses: sem creative_fatigue
     ]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING)).creative;
     expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
   });
 
@@ -91,24 +92,24 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] }, // biblioteca por recência
       { direct: [] }, // visão cacheada (vazia)
     ]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING)).creative;
     expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando, sem match → biblioteca por recência (mais recente)", async () => {
     const deps = fakeDeps([{ id: "asset_9", imageHash: "HLIB", videoId: null }]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).creative;
     expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando + vídeo na biblioteca → usa metaVideoId", async () => {
     const deps = fakeDeps([{ id: "asset_v", imageHash: null, videoId: "VID1" }]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).creative;
     expect(out).toEqual({ videoId: "VID1", assetId: "asset_v", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando + biblioteca vazia → null", async () => {
-    expect(await chooseCreative(fakeDeps([]), ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).toBeNull();
+    expect((await chooseCreative(fakeDeps([]), ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).creative).toBeNull();
   });
 
   it("CONTEXT-AWARE: com match + descrições, o matcher escolhe pelo CONTEXTO (não recência)", async () => {
@@ -126,7 +127,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       ],
       1,
     );
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING, MATCH);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING, MATCH)).creative;
     expect(llm.completeStructured).toHaveBeenCalledOnce(); // consultou o contexto
     expect(out?.assetId).toBe("b"); // escolheu pelo contexto (index 1), não a recência (a)
     expect(out?.source).toBe("library");
@@ -156,8 +157,112 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
 
   it("veiculando em vídeo, sem fadiga → escolhe o vídeo veiculado", async () => {
     const deps = fakeDepsSeq([{ limit: [{ campaignId: "C2", adsetId: "AS2" }] }, { direct: [{ curatedJson: { isCBO: true, healthSignals: [] } }] }]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING)).creative;
     expect(out).toEqual({ videoId: "SVID", assetId: "ad_2", origin: "reuse", source: "serving" });
+  });
+
+  it("S3 — vencedor de estágio OPOSTO (prospecção → campanha de remarketing) NÃO herda automático, cai pra biblioteca", async () => {
+    // o anúncio-fonte rodou em público FRIO (prospecting); a campanha nova é remarketing (match.campaignStage).
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [], audience: { stage: "prospecting" } } }] },
+      { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] },
+      { direct: [] }, // visão cacheada vazia → cai na recência da biblioteca
+    ]);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "remarketing" })).creative;
+    expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
+  });
+
+  it("S3 — vencedor do MESMO estágio (remarketing → campanha de remarketing) é herdado normalmente", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [], audience: { stage: "remarketing" } } }] },
+    ]);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "remarketing" })).creative;
+    expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
+  });
+
+  it("S3 — estágio da campanha desconhecido (unknown) → nunca demote (neutro), herda o vencedor", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [], audience: { stage: "prospecting" } } }] },
+    ]);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "unknown" })).creative;
+    expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
+  });
+
+  it("S5 — vencedor AGING (ainda entrega) NÃO é rebaixado, mas volta com crítica caveat (prepare o próximo)", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: ["creative_aging"] } }] },
+    ]);
+    const outcome = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    expect(outcome.creative).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
+    expect(outcome.critique.verdict).toBe("caveat");
+    expect(outcome.critique.reason).toBe("aging_winner");
+    expect(outcome.critique.ressalva?.code).toBe("weak_creative_pick");
+  });
+
+  it("S5 — aging + sinal DURO juntos (weak_hook) → a dura vence: REBAIXA pra biblioteca (não caveat brando)", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: ["creative_aging", "weak_hook_retention"] } }] },
+      { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] },
+      { direct: [] },
+    ]);
+    const outcome = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    expect(outcome.creative).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
+  });
+
+  it("S5 — pick provado limpo → crítica solid (sem ressalva, respeita o fluxo)", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [] } }] },
+    ]);
+    const outcome = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    expect(outcome.critique.verdict).toBe("solid");
+    expect(outcome.critique.ressalva).toBeUndefined();
+  });
+});
+
+describe("hasOfflineCover (capa conhecida offline p/ montar anúncio de vídeo)", () => {
+  it("imagem → true (imageHash é a capa)", () => {
+    expect(hasOfflineCover({ imageHash: "H", assetId: "a", origin: "upload", source: "library" })).toBe(true);
+  });
+  it("vídeo com capa guardada → true", () => {
+    expect(hasOfflineCover({ videoId: "V", imageHash: "H", assetId: "a", origin: "upload", source: "library" })).toBe(true);
+  });
+  it("vídeo SEM capa guardada → false (o apply resolve a capa ao vivo)", () => {
+    expect(hasOfflineCover({ videoId: "V", assetId: "a", origin: "upload", source: "library" })).toBe(false);
+  });
+});
+
+describe("buildCreativePool — vídeo da biblioteca sem capa: escolha explícita × auto-fill (diz×faz)", () => {
+  const LIBRARY = { mode: "library" } as const;
+  /** deps p/ describeLibraryCandidates: 1º SELECT = libs (orderBy→limit); 2º = visões (where direto). */
+  const depsLib = (libRows: unknown[], visionRows: unknown[] = []) => fakeDepsSeq([{ orderByLimit: libRows }, { direct: visionRows }]);
+
+  it("ESCOLHA explícita (includeCoverlessVideo) → o vídeo da biblioteca SEM capa entra no pool (picável)", async () => {
+    const deps = depsLib([{ id: "vlib", imageHash: null, videoId: "VID9" }]);
+    const pool = await buildCreativePool(deps, ORG, ACC, REF, LIBRARY, { includeCoverlessVideo: true });
+    expect(pool.map((c) => c.ref)).toContainEqual({ videoId: "VID9", assetId: "vlib", origin: "upload", source: "library" });
+  });
+
+  it("AUTO-fill (default) → o mesmo vídeo SEM capa é excluído (não arrisca padding que dependa de fetch)", async () => {
+    const deps = depsLib([{ id: "vlib", imageHash: null, videoId: "VID9" }]);
+    const pool = await buildCreativePool(deps, ORG, ACC, REF, LIBRARY);
+    expect(pool).toEqual([]); // dropado: video sem imageHash
+  });
+
+  it("vídeo COM capa entra nos dois modos (montável offline)", async () => {
+    const row = [{ id: "vlib", imageHash: "COVER", videoId: "VID9" }];
+    expect((await buildCreativePool(depsLib(row), ORG, ACC, REF, LIBRARY)).map((c) => c.ref)).toContainEqual({
+      videoId: "VID9",
+      imageHash: "COVER",
+      assetId: "vlib",
+      origin: "upload",
+      source: "library",
+    });
   });
 });
 
@@ -178,7 +283,8 @@ describe("audienceEchoPhrase (P0: eco não pode contradizer o targeting real)", 
   it("targetingKind=reuse_adset → NÃO diz 'amplo (Advantage+)' (bug fixado)", () => {
     const phrase = audienceEchoPhrase({ targetingKind: "reuse_adset" });
     expect(phrase).not.toContain("amplo");
-    expect(phrase).toBe("herdado do conjunto que já converte");
+    // G13: honesto — "que está rodando", não "que já converte" (a fonte é rankeada, pode não converter).
+    expect(phrase).toBe("herdado do conjunto que está rodando");
   });
 
   it("targetingKind=advantage_plus → amplo (Advantage+)", () => {
@@ -196,7 +302,7 @@ describe("audienceEchoPhrase (P0: eco não pode contradizer o targeting real)", 
       targetingKind: "reuse_adset",
       resolvedAudienceDescription: "Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público",
     });
-    expect(phrase).toBe("herda o conjunto que já converte — Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público");
+    expect(phrase).toBe("herda o público do conjunto que está rodando — Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público");
   });
 });
 
@@ -249,6 +355,44 @@ describe("buildResolvedSnapshot / describeResolvedAudience (P0.2/P1 — público
     const desc = describeResolvedAudience(profileWith({ expansion: { summary: "on", advantageAudience: 1 } }));
     expect(desc).toContain("expansão de público ligada");
   });
+
+  it("C2: buildResolvedSnapshot carrega o gênero da fonte (só-mulheres) — não vira 'todos'", () => {
+    expect(buildResolvedSnapshot(profileWith({ genders: [2] })).genders).toEqual([2]);
+    // ausente na fonte → snapshot sem gênero (todos)
+    expect(buildResolvedSnapshot(profileWith({})).genders).toBeUndefined();
+  });
+
+  it("C2: describeResolvedAudience nomeia o gênero herdado", () => {
+    expect(describeResolvedAudience(profileWith({ genders: [1] }))).toContain("homens");
+    expect(describeResolvedAudience(profileWith({ genders: [2] }))).toContain("mulheres");
+    expect(describeResolvedAudience(profileWith({ genders: [1, 2] }))).not.toContain("homens");
+  });
+});
+
+describe("describeResolvedSnapshot (C1 — honestidade do público herdado, nomeado)", () => {
+  it("nomeia cidades + idade + gênero + interesses + expansão (não o genérico)", () => {
+    const desc = describeResolvedSnapshot({
+      geo: { cities: [{ key: "1", name: "Belo Horizonte" }] },
+      ageMin: 45,
+      genders: [2],
+      interestGroups: [[{ id: "i1", name: "Estética" }]],
+      expansionRaw: { advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 },
+    });
+    expect(desc).toBe("Belo Horizonte, 45+ anos, mulheres, interesses: Estética, sem expansão de público");
+  });
+
+  it("expansão ligada → avisa; salvos incluídos/excluídos → anuncia sem vazar id", () => {
+    const desc = describeResolvedSnapshot({
+      geo: { countries: ["BR"] },
+      customAudienceIncludeIds: ["A1"],
+      customAudienceExcludeIds: ["A2"],
+      expansionRaw: { advantageAudience: 1, relaxCustomAudience: 0, relaxLookalike: 0 },
+    });
+    expect(desc).toContain("expansão de público ligada");
+    expect(desc).toContain("+ público salvo indicado");
+    expect(desc).toContain("excluindo público salvo");
+    expect(desc).not.toContain("A1");
+  });
 });
 
 describe("clampNewBudget (teto de gasto novo — criar E escalar)", () => {
@@ -288,6 +432,19 @@ describe("describeExplicitAudience (Fase 1, subfatia 3a)", () => {
   it("sem idade/gênero (só geo) → só geo + expansão", () => {
     expect(describeExplicitAudience({ kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }] })).toBe(
       "Brasil, sem expansão de público",
+    );
+  });
+
+  it("idade SEM teto (45+) → '45+ anos', nunca '45-?'", () => {
+    const desc = describeExplicitAudience({ kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }], ageMin: 45, genders: [2] });
+    expect(desc).toContain("45+ anos");
+    expect(desc).not.toContain("45-?");
+    expect(desc).toBe("Belo Horizonte, 45+ anos, mulheres, sem expansão de público");
+  });
+
+  it("idade SÓ com teto → 'até X anos'", () => {
+    expect(describeExplicitAudience({ kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }], ageMax: 30 })).toBe(
+      "Brasil, até 30 anos, sem expansão de público",
     );
   });
 
@@ -362,6 +519,110 @@ describe("buildRefineEcho — público (bug: refino não pode assumir 'amplo')",
     const echo = buildRefineEcho("from_scratch", { ...base, targeting: { kind: "reuse_adset", sourceAdsetId: "as_1" } });
     expect(echo).toContain("herda");
     expect(echo).not.toContain("amplo");
+  });
+
+  it("P2: rascunho MULTI-CONJUNTO → lista os conjuntos + onde a verba mora (não o público único)", () => {
+    const echo = buildRefineEcho("from_scratch", {
+      ...base,
+      budgetMode: "cbo",
+      targeting: { kind: "advantage_plus" }, // targeting único NÃO deve ser ecoado num rascunho multi
+      adsets: [
+        { name: "Corredores", targeting: { kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }] } },
+        { name: "Ciclistas", targeting: { kind: "advantage_plus" } },
+      ],
+    });
+    expect(echo).toContain("Teste de público, **2 conjuntos**");
+    expect(echo).toContain("Corredores");
+    expect(echo).toContain("Ciclistas");
+    expect(echo).toContain("único na campanha");
+  });
+
+  it("F1a: rascunho com Advantage LIGADO → avisa que a Meta pode alterar imagem/texto", () => {
+    const echo = buildRefineEcho("from_scratch", { ...base, advantageAudience: true, advantageCreative: true });
+    expect(echo).toContain("Advantage ligado");
+    expect(echo.toLowerCase()).toContain("imagem");
+  });
+
+  it("F1a: rascunho com Advantage DESLIGADO → confirma público/criativo fixos", () => {
+    const echo = buildRefineEcho("from_scratch", { ...base, advantageAudience: false, advantageCreative: false });
+    expect(echo).toContain("Advantage desligado");
+  });
+
+  it("F1a: rascunho sem sinal de Advantage → não fala de Advantage", () => {
+    const echo = buildRefineEcho("from_scratch", { ...base });
+    expect(echo).not.toContain("Advantage ligado");
+    expect(echo).not.toContain("Advantage desligado");
+  });
+});
+
+describe("describeConjuntosBlock (fonte única do eco de conjuntos — create + refino)", () => {
+  it("lista nome + público resumido de cada conjunto; advantage → 'amplo'", () => {
+    const out = describeConjuntosBlock([
+      { name: "A", targeting: { kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }] } },
+      { name: "B", targeting: { kind: "advantage_plus" } },
+    ]);
+    expect(out).toContain("**2 conjuntos**");
+    expect(out).toContain("1. *A*");
+    expect(out).toContain("Belo Horizonte");
+    expect(out).toContain("2. *B*");
+    expect(out).toContain("amplo (a Meta escolhe)");
+  });
+});
+
+describe("mergeSegmentPublico — P7 público completo por conjunto (segmento sobre a base)", () => {
+  it("segmento sobrepõe por campo; ausente herda a base", () => {
+    const base = { geo: ["Belo Horizonte"], gender: "women" as const, ageMin: 18 };
+    // "mulheres 45+": só idade própria → herda geo/gênero da base.
+    const seg1 = mergeSegmentPublico(base, { ageMin: 45 });
+    expect(seg1).toEqual({ geo: ["Belo Horizonte"], gender: "women", ageMin: 45 });
+    // "mulheres no geral": nada próprio → herda tudo (gênero women, faixa da base).
+    const seg2 = mergeSegmentPublico(base, {});
+    expect(seg2).toEqual({ geo: ["Belo Horizonte"], gender: "women", ageMin: 18 });
+  });
+  it("segmento traz interesse próprio (o testado) e herda a base demográfica", () => {
+    const base = { geo: ["BR"], gender: "women" as const };
+    const seg = mergeSegmentPublico(base, { interests: ["corrida"] });
+    expect(seg).toEqual({ geo: ["BR"], gender: "women", interests: ["corrida"] });
+  });
+  it("base vazia (addSegment) → o público é só o do segmento", () => {
+    const seg = mergeSegmentPublico({}, { gender: "men", ageMin: 30 });
+    expect(seg).toEqual({ gender: "men", ageMin: 30 });
+  });
+  it("gênero do segmento sobrepõe o da base", () => {
+    const seg = mergeSegmentPublico({ gender: "women" }, { gender: "men" });
+    expect(seg.gender).toBe("men");
+  });
+});
+
+describe("patchTouchesSinglePublico (guard multi-conjunto — P2)", () => {
+  it("edições de público único → true; add/removeSegment e orçamento/nome → false", () => {
+    expect(patchTouchesSinglePublico({ addInterests: ["corrida"] })).toBe(true);
+    expect(patchTouchesSinglePublico({ ageMin: 25 })).toBe(true);
+    expect(patchTouchesSinglePublico({ addAudiences: ["remarketing"] })).toBe(true);
+    // operar OS conjuntos (não o público de um) NÃO é edição de público único:
+    expect(patchTouchesSinglePublico({ addSegment: [{ interests: ["corrida"] }] })).toBe(false);
+    expect(patchTouchesSinglePublico({ removeSegment: [1] })).toBe(false);
+    expect(patchTouchesSinglePublico({ budgetReais: 50 })).toBe(false);
+    expect(patchTouchesSinglePublico({ campaignName: "x" })).toBe(false);
+  });
+});
+
+describe("patchHasNonLinkAction (Bug A — link espúrio não bloqueia um turno que pede outra coisa)", () => {
+  it("só link → false (o link é o único pedido)", () => {
+    expect(patchHasNonLinkAction({ link: "https://loja.com" })).toBe(false);
+    expect(patchHasNonLinkAction({})).toBe(false);
+  });
+  it("link + outra ação → true (advantage/ativação/budget/público/objetivo/…)", () => {
+    expect(patchHasNonLinkAction({ link: "https://loja.com", advantage: true })).toBe(true);
+    expect(patchHasNonLinkAction({ advantage: false })).toBe(true);
+    expect(patchHasNonLinkAction({ activation: "active" })).toBe(true);
+    expect(patchHasNonLinkAction({ budgetReais: 50 })).toBe(true);
+    expect(patchHasNonLinkAction({ budgetMode: "abo" })).toBe(true);
+    expect(patchHasNonLinkAction({ objective: "purchase" })).toBe(true);
+    expect(patchHasNonLinkAction({ addInterests: ["corrida"] })).toBe(true); // público (reusa patchTouchesSinglePublico)
+    expect(patchHasNonLinkAction({ addSegment: [{ interests: ["corrida"] }] })).toBe(true);
+    expect(patchHasNonLinkAction({ campaignName: "x" })).toBe(true);
+    expect(patchHasNonLinkAction({ regenerateCopy: true })).toBe(true);
   });
 });
 
@@ -600,3 +861,181 @@ describe("resolveProposedExplicitTargeting (nome→id + montagem compartilhada �
     expect(res.targeting.geo).toEqual([{ key: "BR", name: "Brasil", kind: "country" }]); // fallback país
   });
 });
+
+describe("scaleForbiddenRefineField (G16 — escala não edita o herdado)", () => {
+  it("budget/ativação numa escala → permitido (null)", () => {
+    expect(scaleForbiddenRefineField({ budgetReais: 50 })).toBeNull();
+    expect(scaleForbiddenRefineField({ activation: "active" })).toBeNull();
+    expect(scaleForbiddenRefineField({})).toBeNull();
+  });
+  it("objetivo/público/copy/nome numa escala → rótulo do campo herdado (mensagem honesta)", () => {
+    expect(scaleForbiddenRefineField({ objective: "purchase" })).toBe("objective");
+    expect(scaleForbiddenRefineField({ addInterests: ["estética"] })).toBe("targeting");
+    expect(scaleForbiddenRefineField({ ageMin: 25 })).toBe("targeting");
+    expect(scaleForbiddenRefineField({ regenerateCopy: true })).toBe("copyVariants");
+    expect(scaleForbiddenRefineField({ variantsCount: 3 })).toBe("copyVariants");
+    expect(scaleForbiddenRefineField({ setAdCreative: [{ index: 0, creative: "o campeão" }] })).toBe("copyVariants");
+    expect(scaleForbiddenRefineField({ link: "https://loja.com" })).toBe("link");
+    expect(scaleForbiddenRefineField({ setPage: "CaquiAI Loja" })).toBe("pageId");
+    expect(scaleForbiddenRefineField({ campaignName: "x" })).toBe("campaignName");
+    // P2: add/remover conjunto (público) também é herdado numa escala.
+    expect(scaleForbiddenRefineField({ addSegment: [{ interests: ["corrida"] }] })).toBe("targeting");
+    expect(scaleForbiddenRefineField({ removeSegment: [1] })).toBe("targeting");
+    // F1a/F1b: Advantage e onde a verba mora (CBO/ABO) são do rascunho do zero — na escala herdados.
+    expect(scaleForbiddenRefineField({ advantage: true })).toBe("advantage");
+    expect(scaleForbiddenRefineField({ budgetMode: "abo" })).toBe("budgetMode");
+  });
+  it("regenerateCopy:false NÃO é edição (não trava)", () => {
+    expect(scaleForbiddenRefineField({ regenerateCopy: false })).toBeNull();
+  });
+});
+
+describe("resolveCreativeFill (política de faltante do picker — Slice 3)", () => {
+  it("sem picks → o agente escolhe todos (comportamento atual)", () => {
+    expect(resolveCreativeFill(0, 3, undefined)).toEqual({ decision: "agent", variants: 3 });
+    expect(resolveCreativeFill(0, 1, "only_picked")).toEqual({ decision: "agent", variants: 1 });
+  });
+  it("picks ≥ anúncios → usa só os escolhidos (nunca completa à toa)", () => {
+    expect(resolveCreativeFill(3, 3, undefined)).toEqual({ decision: "only_picked", variants: 3 });
+    expect(resolveCreativeFill(5, 3, undefined)).toEqual({ decision: "only_picked", variants: 3 });
+  });
+  it("picks < anúncios sem decisão → PERGUNTA (não decide sozinho, §8)", () => {
+    expect(resolveCreativeFill(2, 5, undefined)).toEqual({ decision: "ask" });
+  });
+  it("picks < anúncios, fill=agent → completa o resto pela performance (mantém o adCount)", () => {
+    expect(resolveCreativeFill(2, 5, "agent")).toEqual({ decision: "agent", variants: 5 });
+  });
+  it("picks < anúncios, fill=only_picked → reduz os anúncios aos escolhidos", () => {
+    expect(resolveCreativeFill(2, 5, "only_picked")).toEqual({ decision: "only_picked", variants: 2 });
+  });
+  it("adCount 0/negativo → clampa pra ≥1", () => {
+    expect(resolveCreativeFill(0, 0, undefined)).toEqual({ decision: "agent", variants: 1 });
+  });
+});
+
+describe("cleanPageQuery (sanitiza o `page` do LLM — incidente do lixo vazado)", () => {
+  it("nome/número normal → passa (uma linha, aparado)", () => {
+    expect(cleanPageQuery("  Automato ")).toBe("Automato");
+    expect(cleanPageQuery("3491398")).toBe("3491398");
+  });
+  it("vazio/ausente → null", () => {
+    expect(cleanPageQuery("")).toBeNull();
+    expect(cleanPageQuery(undefined)).toBeNull();
+    expect(cleanPageQuery(null)).toBeNull();
+    expect(cleanPageQuery("   ")).toBeNull();
+  });
+  it("lixo do modelo (longo/multi-linha/JSON malformado) → null (nunca ecoa, usa a padrão)", () => {
+    // o incidente real: raciocínio malformado caiu no campo `page`.
+    expect(cleanPageQuery(':null}"】【 тру? JSON invalid strings? Need correct null. Tool call malformed perhaps recipient accepted? I wrote `')).toBeNull();
+    expect(cleanPageQuery("linha1\nlinha2\nlinha3 com um monte de texto que claramente é alucinação do modelo e passa de oitenta caracteres")).toBeNull();
+  });
+  it("multi-linha curto → colapsa pra uma linha (mantém se couber)", () => {
+    expect(cleanPageQuery("CaquiAI\nOficial")).toBe("CaquiAI Oficial");
+  });
+  it("sentinela/artefato do modelo (`:null`, `null`, `{}`, …) → null (não vira query, não pune)", () => {
+    // incidente real: criação SEM Página dita → o modelo mandou ":null" → Roy puniu "não achei :null".
+    expect(cleanPageQuery(":null")).toBeNull();
+    expect(cleanPageQuery("null")).toBeNull();
+    expect(cleanPageQuery("undefined")).toBeNull();
+    expect(cleanPageQuery("none")).toBeNull();
+    expect(cleanPageQuery("n/a")).toBeNull();
+    expect(cleanPageQuery("{}")).toBeNull();
+    expect(cleanPageQuery('":"')).toBeNull();
+    // um nome de verdade que CONTÉM "null" não é sentinela (só o núcleo exato conta).
+    expect(cleanPageQuery("Nullify Store")).toBe("Nullify Store");
+  });
+});
+
+describe("matchPagesByQuery / pageChoiceLabel (picker de Página — W2)", () => {
+  const pages: PageInfo[] = [
+    { pageId: "P1", name: "CaquiAI Oficial", whatsappNumber: "5531953491398" },
+    { pageId: "P2", name: "CaquiAI Loja", whatsappNumber: "5531999990000" },
+    { pageId: "P3", name: "Consultório Dr. Ana" },
+  ];
+  it("nome (substring, case-insensitive) → casa a Página", () => {
+    expect(matchPagesByQuery(pages, "loja").map((p) => p.pageId)).toEqual(["P2"]);
+    expect(matchPagesByQuery(pages, "CONSULTÓRIO").map((p) => p.pageId)).toEqual(["P3"]);
+  });
+  it("acento não separa: 'Autômato' casa a Página 'Automato' (incidente real)", () => {
+    const p: PageInfo[] = [{ pageId: "PA", name: "Automato" }];
+    expect(matchPagesByQuery(p, "Autômato").map((x) => x.pageId)).toEqual(["PA"]);
+    // e o inverso: query sem acento casa nome com acento.
+    expect(matchPagesByQuery(pages, "consultorio").map((x) => x.pageId)).toEqual(["P3"]);
+  });
+  it("mesmo matcher fuzzy das outras entidades: typo/caixa toleradas (resolveNamedMatch)", () => {
+    const p: PageInfo[] = [{ pageId: "PA", name: "Automato" }];
+    expect(matchPagesByQuery(p, "atomato").map((x) => x.pageId)).toEqual(["PA"]); // typo (falta 'u')
+    expect(matchPagesByQuery(p, "AUTOMATO").map((x) => x.pageId)).toEqual(["PA"]); // caixa
+    expect(matchPagesByQuery(p, "auto").map((x) => x.pageId)).toEqual(["PA"]); // parcial (contenção)
+  });
+  it("número (dígitos, substring, mín. 6) → casa pela linha do WhatsApp", () => {
+    expect(matchPagesByQuery(pages, "3491398").map((p) => p.pageId)).toEqual(["P1"]);
+    expect(matchPagesByQuery(pages, "+55 (31) 99999-0000").map((p) => p.pageId)).toEqual(["P2"]);
+  });
+  it("prefixo comum → N matches (o caller pergunta, nunca chuta)", () => {
+    expect(matchPagesByQuery(pages, "caquiai").map((p) => p.pageId)).toEqual(["P1", "P2"]);
+  });
+  it("nada bate → lista vazia (o caller lista as opções)", () => {
+    expect(matchPagesByQuery(pages, "farmácia")).toEqual([]);
+  });
+  it("número curto (<6 dígitos) não casa fragmento à toa", () => {
+    expect(matchPagesByQuery(pages, "553")).toEqual([]);
+  });
+  it("query vazia → lista vazia", () => {
+    expect(matchPagesByQuery(pages, "  ")).toEqual([]);
+  });
+  it("rótulo mostra nome + WhatsApp quando há; só nome quando não", () => {
+    expect(pageChoiceLabel(pages[0]!)).toBe("CaquiAI Oficial (WhatsApp +5531953491398)");
+    expect(pageChoiceLabel(pages[2]!)).toBe("Consultório Dr. Ana");
+    expect(pageChoiceLabel({ pageId: "PX" })).toBe("Página do Facebook");
+  });
+});
+
+describe("matchPixelsByQuery / pixelChoiceLabel / cleanPixelQuery (picker de pixel — B)", () => {
+  const pixels: PixelInfo[] = [
+    { pixelId: "PX1", name: "Loja Nova" },
+    { pixelId: "PX2", name: "Loja Antiga" },
+    { pixelId: "PX3" },
+  ];
+  it("nome (substring, case/acento-insensitive) → casa o pixel", () => {
+    expect(matchPixelsByQuery(pixels, "nova").map((p) => p.pixelId)).toEqual(["PX1"]);
+    expect(matchPixelsByQuery(pixels, "ANTIGA").map((p) => p.pixelId)).toEqual(["PX2"]);
+  });
+  it("typo tolerado (mesmo matcher fuzzy)", () => {
+    expect(matchPixelsByQuery(pixels, "antigga").map((p) => p.pixelId)).toEqual(["PX2"]);
+  });
+  it("prefixo comum → N matches (o caller pergunta, nunca chuta)", () => {
+    expect(matchPixelsByQuery(pixels, "loja").map((p) => p.pixelId)).toEqual(["PX1", "PX2"]);
+  });
+  it("nada bate → lista vazia (o caller lista as opções)", () => {
+    expect(matchPixelsByQuery(pixels, "farmácia")).toEqual([]);
+  });
+  it("rótulo mostra o nome; sem nome → id abreviado", () => {
+    expect(pixelChoiceLabel(pixels[0]!)).toBe("Loja Nova");
+    expect(pixelChoiceLabel(pixels[2]!)).toBe("pixel PX3");
+  });
+  it("cleanPixelQuery descarta vazio/sentinela ('pixel'/'null'), mantém nome real", () => {
+    expect(cleanPixelQuery("Loja Nova")).toBe("Loja Nova");
+    expect(cleanPixelQuery(":null")).toBeNull();
+    expect(cleanPixelQuery("pixel")).toBeNull();
+    expect(cleanPixelQuery("  ")).toBeNull();
+    expect(cleanPixelQuery(null)).toBeNull();
+  });
+});
+
+describe("stripGeoQualifier (retry de geo sem o sufixo)", () => {
+  it("tira o estado após a vírgula", () => {
+    expect(stripGeoQualifier("Belo Horizonte, MG")).toBe("Belo Horizonte");
+    expect(stripGeoQualifier("Belo Horizonte, Minas Gerais")).toBe("Belo Horizonte");
+  });
+  it("bairro, cidade → mantém o bairro (a busca casa o lugar, não a composição)", () => {
+    expect(stripGeoQualifier("Buritis, Belo Horizonte")).toBe("Buritis");
+    expect(stripGeoQualifier("Buritis, Belo Horizonte, MG")).toBe("Buritis, Belo Horizonte");
+  });
+  it("sem vírgula ou resto vazio → undefined (nada a tirar)", () => {
+    expect(stripGeoQualifier("Belo Horizonte")).toBeUndefined();
+    expect(stripGeoQualifier(", MG")).toBeUndefined();
+    expect(stripGeoQualifier("")).toBeUndefined();
+  });
+});
+

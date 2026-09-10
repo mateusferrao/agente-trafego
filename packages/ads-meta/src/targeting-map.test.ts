@@ -19,6 +19,24 @@ describe("explicitTargetingToRaw", () => {
     expect(raw["geo_locations"]).toEqual({ countries: [DEFAULT_TARGETING_GEO_COUNTRY] });
   });
 
+  it("C3: advantageAudience=true liga a expansão (advantage_audience: 1); default fica fixo (0)", () => {
+    expect(explicitTargetingToRaw(spec(), true)["targeting_automation"]).toEqual({ advantage_audience: 1 });
+    expect(explicitTargetingToRaw(spec(), false)["targeting_automation"]).toEqual({ advantage_audience: 0 });
+  });
+
+  it("B1: Advantage ON omite age_max (a Meta só aceita idade como MÍNIMO-sugestão sob expansão); age_min fica", () => {
+    const raw = explicitTargetingToRaw(spec({ ageMin: 45, ageMax: 65 }), true);
+    expect(raw["age_min"]).toBe(45);
+    expect(raw["age_max"]).toBeUndefined(); // "45+" — sem teto; a expansão sobe
+    expect(raw["targeting_automation"]).toEqual({ advantage_audience: 1 });
+  });
+
+  it("B1: Advantage OFF mantém a faixa fixa (min + max)", () => {
+    const raw = explicitTargetingToRaw(spec({ ageMin: 45, ageMax: 65 }), false);
+    expect(raw["age_min"]).toBe(45);
+    expect(raw["age_max"]).toBe(65);
+  });
+
   it("raio é city-only: region ignora radius, city mantém", () => {
     const raw = explicitTargetingToRaw(
       spec({
@@ -31,6 +49,21 @@ describe("explicitTargetingToRaw", () => {
     expect(raw["geo_locations"]).toEqual({
       regions: [{ key: "R1" }],
       cities: [{ key: "C1", radius: 15, distance_unit: "kilometer" }],
+    });
+  });
+
+  it("bairro (neighborhood) → geo_locations.neighborhoods (só key, sem raio)", () => {
+    const raw = explicitTargetingToRaw(
+      spec({
+        geo: [
+          { key: "N1", name: "Buritis", kind: "neighborhood" },
+          { key: "C1", name: "Belo Horizonte", kind: "city" },
+        ],
+      }),
+    );
+    expect(raw["geo_locations"]).toEqual({
+      neighborhoods: [{ key: "N1" }],
+      cities: [{ key: "C1" }],
     });
   });
 

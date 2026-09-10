@@ -12,12 +12,16 @@ import { campaignDrafts, guardrailConfigs } from "@trafego/db";
 import { toGuardrailConfig } from "@trafego/shared";
 import type { Action, EntityLevel } from "@trafego/shared/types";
 import type { AdAccountRef } from "@trafego/shared/ports";
+import { mapStatus } from "@trafego/ads-meta";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 
 export type ActivationOutcome =
-  | { readonly kind: "activated"; readonly dryRun: boolean }
+  // `notDelivering` (G8): a DUPLICATA de conjunto entra na campanha da FONTE (não numa criada por nós);
+  // se essa campanha-mãe estiver pausada, ligar o conjunto não faz veicular (a Meta não cascateia p/
+  // cima) → o desfecho não afirma "veiculando".
+  | { readonly kind: "activated"; readonly dryRun: boolean; readonly notDelivering?: boolean }
   | { readonly kind: "blocked"; readonly reason: string }
   | { readonly kind: "failed"; readonly error: unknown };
 
@@ -45,6 +49,21 @@ function idsAt(ids: Record<string, unknown>, key: string): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
 }
 
+/** G8: o conjunto copiado está entregando? Lê o `effective_status` (que rola p/ baixo a partir da
+ *  campanha-mãe da fonte) — não-active = a mãe está pausada. Best-effort: erro de leitura → `false`
+ *  (não afirma nada de errado; a ativação em si já foi aplicada). */
+async function copiedAdsetNotDelivering(deps: WorkerDeps, ref: AdAccountRef, createdIds: Record<string, unknown> | null): Promise<boolean> {
+  const copiedId = idAt(createdIds ?? {}, "copiedId");
+  if (!copiedId) return false;
+  try {
+    const fresh = await deps.ports.ads.readEntityState(ref, copiedId);
+    return mapStatus(fresh["effective_status"] as string | undefined, fresh["status"] as string | undefined) !== "active";
+  } catch (err) {
+    deps.logger.warn({ err, copiedId }, "apply-activation:leitura de entrega do conjunto copiado falhou");
+    return false;
+  }
+}
+
 /**
  * ENTIDADES a ativar = a ÁRVORE INTEIRA criada, pausada (§P0.1). A Meta NÃO cascateia status
  * (a entrega efetiva é o E-lógico da árvore: campanha ∧ adset ∧ ad), então ativar só a raiz
@@ -57,10 +76,23 @@ export function entitiesToActivate(draft: DraftForActivation): ActivateTarget[] 
   const out: ActivateTarget[] = [];
   if (draft.kind === "from_scratch") {
     const campaignId = idAt(ids, "campaignId");
-    const adsetId = idAt(ids, "adsetId");
     if (campaignId) out.push({ level: "campaign", id: campaignId });
-    if (adsetId) out.push({ level: "adset", id: adsetId });
-    for (const adId of idsAt(ids, "adIds")) out.push({ level: "ad", id: adId });
+    // C2: multi-conjunto grava `adsetIds`/`adIdsByAdset`; single grava `adsetId`/`adIds`. A árvore
+    // inteira (todos os N conjuntos + N×M anúncios) precisa ser ativada — a Meta não cascateia.
+    const adsetIds = idsAt(ids, "adsetIds");
+    if (adsetIds.length > 0) {
+      for (const adsetId of adsetIds) out.push({ level: "adset", id: adsetId });
+      const byAdset = ids["adIdsByAdset"];
+      if (Array.isArray(byAdset)) {
+        for (const row of byAdset) {
+          if (Array.isArray(row)) for (const adId of row) if (typeof adId === "string" && adId.length > 0) out.push({ level: "ad", id: adId });
+        }
+      }
+    } else {
+      const adsetId = idAt(ids, "adsetId");
+      if (adsetId) out.push({ level: "adset", id: adsetId });
+      for (const adId of idsAt(ids, "adIds")) out.push({ level: "ad", id: adId });
+    }
     return out;
   }
   const copiedId = idAt(ids, "copiedId");
@@ -133,7 +165,12 @@ export async function applyActivation(deps: WorkerDeps, input: ApplyActivationIn
       dryRun = done.dryRun;
     }
     logger.info({ draftId: row.id, dryRun, entities: targets.length }, "apply-activation:ativado (árvore inteira)");
-    return { kind: "activated", dryRun };
+    // G8: duplicata de CONJUNTO entra na campanha da FONTE (não criamos a campanha-mãe) — se ela
+    // estiver pausada, ligar só o conjunto não veicula (o efetivo rola p/ baixo). Lê o efetivo do
+    // conjunto copiado: não-active = a mãe está pausada → o desfecho é honesto (não diz "veiculando").
+    // Best-effort (falha de leitura NÃO derruba a ativação, que já foi aplicada).
+    const notDelivering = !dryRun && row.kind === "duplicate" && (row.sourceRef ?? null)?.level === "adset" ? await copiedAdsetNotDelivering(deps, ref, row.createdIds) : false;
+    return { kind: "activated", dryRun, ...(notDelivering ? { notDelivering: true } : {}) };
   } catch (error) {
     logger.error({ draftId: row.id, err: error }, "apply-activation:falhou");
     return { kind: "failed", error };

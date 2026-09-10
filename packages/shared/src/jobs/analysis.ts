@@ -3,6 +3,7 @@
  * consumidor (worker) — evita string mágica e drift de payload entre processos.
  * A fila é a mesma ("agent-runs"); o worker distingue por `mode` (execute|resume).
  */
+import type { JobSpec } from "../ports/scheduler.port.js";
 import type { SignalFinding } from "../types/index.js";
 import type { ConversationRef } from "./whatsapp.js";
 
@@ -108,6 +109,26 @@ export type ApprovalApplyPayload = {
   /** conversa (DM ou grupo) p/ empurrar o desfecho no WhatsApp (5b-2 — aprovação conversacional). */
   readonly notifyRef?: ConversationRef;
 };
+
+/** Retry de APLICAÇÃO em rate-limit da Meta (#613, D3): a escrita é idempotente (idempotency_key
+ *  `${approval}:apply`), então re-tentar com backoff é seguro. Só o kind `rate_limited` re-lança
+ *  (approval-apply.ts decide); demais falhas resolvem no 1º giro. Backoff longo (a janela do #613
+ *  é de minutos). */
+export const APPROVAL_APPLY_ATTEMPTS = 4;
+export const APPROVAL_APPLY_BACKOFF_MS = 30_000;
+
+/** Fonte única do job de aplicação de aprovação (com attempts/backoff p/ o retry de rate-limit). */
+export function buildApprovalApplyJob(payload: ApprovalApplyPayload): JobSpec {
+  return {
+    queue: APPROVAL_APPLY_QUEUE,
+    name: APPROVAL_APPLY_JOB,
+    payload,
+    attempts: APPROVAL_APPLY_ATTEMPTS,
+    backoffMs: APPROVAL_APPLY_BACKOFF_MS,
+    removeOnComplete: true,
+    removeOnFail: true,
+  };
+}
 
 export type AgentRunTrigger = "cron" | "on_demand" | "conversation" | "signal" | "onboarding";
 

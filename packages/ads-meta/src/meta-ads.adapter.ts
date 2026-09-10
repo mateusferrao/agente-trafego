@@ -2,7 +2,9 @@ import type {
   AccessibleAccount,
   AccountHealth,
   Action,
+  ActivationTree,
   AdEntity,
+  AdMetric,
   AudienceProfile,
   BidStrategy,
   CampaignStructure,
@@ -16,6 +18,8 @@ import type {
   InterestSearchResult,
   MetaAccountHealthStatus,
   WhatsappDestination,
+  PageInfo,
+  PixelInfo,
 } from "@trafego/shared/types";
 import type {
   AdAccountRef,
@@ -38,7 +42,7 @@ import { normalizeAdAccountId, stripActPrefix } from "./ids.js";
 import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
 import { MetaMutationsService } from "./mutations.js";
-import { MetaCreationService } from "./creation.js";
+import { MetaCreationService, type AdsDebugLogger } from "./creation.js";
 import { MetaWhatsappDestinationService } from "./whatsapp-destination.js";
 import { MetaAudiencesService } from "./audiences.js";
 import { MetaGeoSearchService } from "./geo-search.js";
@@ -84,9 +88,13 @@ const ENTITY_EDGE: Readonly<Record<ListableLevel, string>> = {
 const ENTITY_FIELDS: Readonly<Record<ListableLevel, string>> = {
   campaign: "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,objective,bid_strategy,bid_amount",
   adset:
-    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,bid_strategy,bid_amount,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id,whatsapp_phone_number},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
+    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,bid_strategy,bid_amount,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id,whatsapp_phone_number},targeting{geo_locations,age_min,age_max,genders,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
   ad: "id,name,status,effective_status,adset_id,campaign_id",
 };
+
+/** Tetos de página da leitura da árvore de ativação (single-page; paginação = fast-follow). */
+const ACTIVATION_TREE_ADSET_LIMIT = 50;
+const ACTIVATION_TREE_AD_LIMIT = 100;
 
 /** effective_status/status (preferir effective) → EntityStatus do domínio. */
 const STATUS_MAP: Readonly<Record<string, EntityStatus>> = {
@@ -148,6 +156,11 @@ interface RawEntityNode {
 interface MetaEntitiesPage {
   readonly data?: RawEntityNode[];
   readonly paging?: { readonly next?: string; readonly cursors?: { readonly after?: string } };
+}
+
+/** A página tem próxima (há mais entidades além do teto pedido)? — evita sub-ativar em silêncio. */
+function hasNextPage(page: MetaEntitiesPage): boolean {
+  return !!page.paging?.next;
 }
 
 /**
@@ -254,8 +267,10 @@ function toAdsError(error: unknown): AdsPlatformError {
   if (error instanceof AdsPlatformError) return error; // já traduzido — não re-embrulha
   if (error instanceof MetaApiError) {
     // `error_user_msg` = texto legível que a Meta fez pro usuário final; repassa no port neutro
-    // (a casca envelopa). O `subcode` NÃO sai daqui — fica interno ao adapter.
-    const userMsg = error.userMessage;
+    // (a casca envelopa). Sem ele, cai no `error_user_title` (ex: "Ad set creation failed") — ainda
+    // legível e melhor que silêncio → o desfecho determinístico (G2) tem o quê dizer. O `subcode`
+    // NÃO sai daqui (fica interno ao adapter).
+    const userMsg = error.userMessage ?? error.userTitle;
     if (error.code === 190) return new AdsPlatformError("invalid_credential", error.message, userMsg);
     // rate-limit (throttling) → recuperável esperando; mensagem própria na casca.
     if (error.code !== undefined && META_RATE_LIMIT_CODES.has(error.code)) {
@@ -277,6 +292,8 @@ export interface MetaAdsAdapterDeps {
   readonly creatives?: MetaCreativesService;
   readonly mutations?: MetaMutationsService;
   readonly creation?: MetaCreationService;
+  /** Logger de diagnóstico (opcional) — hoje só p/ o payload de `createAdSet` (idade×Advantage). */
+  readonly logger?: AdsDebugLogger;
   /** Resolve nomes de conversão personalizada p/ rotular objetivos (opcional; degrada). */
   readonly customConversions?: CustomConversionsResolver;
   /** Cache do catálogo de entidades entre runs (opcional; ausente = sempre lista fresco). */
@@ -315,7 +332,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.insights = deps.insights ?? new MetaInsightsService(deps.client, deps.governor);
     this.creatives = deps.creatives ?? new MetaCreativesService(deps.client, deps.governor, deps.visionFrames);
     this.mutations = deps.mutations ?? new MetaMutationsService(deps.client);
-    this.creation = deps.creation ?? new MetaCreationService(deps.client);
+    this.creation = deps.creation ?? new MetaCreationService(deps.client, deps.logger);
     this.whatsapp = new MetaWhatsappDestinationService(deps.client, deps.governor, this.creatives);
     this.audiences = new MetaAudiencesService(deps.client, deps.governor);
     this.geoSearch = new MetaGeoSearchService(deps.client, deps.governor);
@@ -484,11 +501,23 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async getAdMetrics(account: AdAccountRef, window: string): Promise<AdMetric[]> {
+    return this.creation.getAdMetrics(account, window); // best-effort no service (falha → [])
+  }
+
   async getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]> {
     try {
       return await this.creatives.videoFrames(account, videoId);
     } catch (error) {
       throw toAdsError(error);
+    }
+  }
+
+  async getImageUrlByHash(account: AdAccountRef, imageHash: string): Promise<string | null> {
+    try {
+      return await this.creatives.imageUrlByHash(account, imageHash);
+    } catch {
+      return null; // best-effort: a miniatura nunca derruba o fluxo (o card cai no placeholder)
     }
   }
 
@@ -500,6 +529,20 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async getPageWhatsappInfo(account: AdAccountRef, pageId: string): Promise<PageInfo> {
+    // best-effort (o service já degrada a { pageId } em falha) — não mapeia erro pra não quebrar o
+    // rascunho por um destino que é só informativo.
+    return this.whatsapp.pageInfo(account, pageId);
+  }
+
+  async listPages(account: AdAccountRef): Promise<PageInfo[]> {
+    return this.whatsapp.listAccountPages(account);
+  }
+
+  async listPixels(account: AdAccountRef): Promise<PixelInfo[]> {
+    return this.creation.listPixels(account);
+  }
+
   async listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]> {
     try {
       return await this.audiences.list(account);
@@ -508,7 +551,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
-  async searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city")[]): Promise<GeoSearchResult[]> {
+  async searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city" | "neighborhood")[]): Promise<GeoSearchResult[]> {
     try {
       return await this.geoSearch.search(account, query, locationTypes);
     } catch (error) {
@@ -551,6 +594,46 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure> {
     try {
       return await this.campaignStructure.read(account, campaignId, normalizeAdAccountId(account.adAccountId));
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async readActivationTree(account: AdAccountRef, level: "campaign" | "adset", id: string): Promise<ActivationTree> {
+    try {
+      const accountId = normalizeAdAccountId(account.adAccountId);
+      // `status` = próprio (o que RELIGAR), `effective_status` = efetivo (o que ENTREGA).
+      const adsPage = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<MetaEntitiesPage>({
+            method: "GET",
+            path: `${id}/ads`,
+            accessToken: account.accessToken,
+            params: { fields: "id,name,status,effective_status,adset_id", limit: ACTIVATION_TREE_AD_LIMIT },
+          }),
+        { governor: this.governor },
+      );
+      const ads = (adsPage.data ?? [])
+        .filter((a): a is RawEntityNode & { id: string } => !!a.id)
+        .map((a) => ({ id: a.id, name: a.name ?? null, status: mapStatus(a.status), effectiveStatus: mapStatus(a.effective_status, a.status), adsetId: a.adset_id ?? "" }));
+      // conjunto: os anúncios já são os descendentes (não há sub-conjunto). campanha: também os conjuntos.
+      if (level === "adset") return { adsets: [], ads, truncated: hasNextPage(adsPage) };
+      const adsetsPage = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<MetaEntitiesPage>({
+            method: "GET",
+            path: `${id}/adsets`,
+            accessToken: account.accessToken,
+            params: { fields: "id,name,status,effective_status", limit: ACTIVATION_TREE_ADSET_LIMIT },
+          }),
+        { governor: this.governor },
+      );
+      const adsets = (adsetsPage.data ?? [])
+        .filter((a): a is RawEntityNode & { id: string } => !!a.id)
+        .map((a) => ({ id: a.id, name: a.name ?? null, status: mapStatus(a.status), effectiveStatus: mapStatus(a.effective_status, a.status) }));
+      return { adsets, ads, truncated: hasNextPage(adsPage) || hasNextPage(adsetsPage) };
     } catch (error) {
       throw toAdsError(error);
     }
@@ -615,6 +698,13 @@ export class MetaAdsAdapter implements AdsPlatformPort {
 
   async createCampaign(account: AdAccountRef, input: Parameters<AdsPlatformPort["createCampaign"]>[1]) {
     return this.writeThroughGovernor(account, () => this.creation.createCampaign(account, input));
+  }
+
+  async deleteCampaign(account: AdAccountRef, campaignId: string): Promise<boolean> {
+    // Limpeza da órfã: como o `revertRoot`, DELETE direto (sem governor) — a compensação NUNCA pode
+    // ser barrada/estourada pelo cooldown (o bucket costuma estar quente logo após a rajada de criação)
+    // nem lançar (o call site confia no contrato "NUNCA lança" p/ não mascarar o erro original).
+    return this.creation.deleteCampaign(account, campaignId);
   }
 
   async createAdSet(account: AdAccountRef, input: Parameters<AdsPlatformPort["createAdSet"]>[1]) {
@@ -684,12 +774,26 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
-  /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). */
+  /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). Passa pelo
+   *  `callWithGovernor` (acquire + retry de rate-limit/transiente) — GET idempotente, seguro retriar. */
   async readEntityState(account: AdAccountRef, entityId: string): Promise<Record<string, unknown>> {
+    try {
+      return await callWithGovernor(
+        normalizeAdAccountId(account.adAccountId),
+        () => this.mutations.readEntityStateResponse(account, entityId),
+        { governor: this.governor },
+      );
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  /** Lê SÓ o `targeting` cru atual de um adset — drift fino do revert de `adjust_audience` (D4). */
+  async readAdSetTargeting(account: AdAccountRef, adsetId: string): Promise<Record<string, unknown> | null> {
     try {
       const acquired = await this.governor.acquire(normalizeAdAccountId(account.adAccountId));
       if (!acquired.granted) throw cooldownError();
-      return await this.mutations.readEntityState(account, entityId);
+      return await this.mutations.readAdSetTargeting(account, adsetId);
     } catch (error) {
       throw toAdsError(error);
     }

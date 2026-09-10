@@ -54,7 +54,7 @@ export interface ExplicitAudienceState {
   geo: readonly {
     key: string;
     name: string;
-    kind: 'country' | 'region' | 'city';
+    kind: 'country' | 'region' | 'city' | 'neighborhood';
     radius: number | null;
     distanceUnit: 'mile' | 'kilometer' | null;
   }[];
@@ -71,7 +71,7 @@ export interface ExplicitAudienceState {
 /** Público explícito no formato de WIRE (keys/ids já resolvidos) — shape comum do input de
  *  substituição total, servido tanto ao PATCH de rascunho quanto ao editAction de adjust_audience. */
 export interface ExplicitAudienceWire {
-  geo: { key: string; name: string; kind: 'country' | 'region' | 'city'; radius?: number; distanceUnit?: 'mile' | 'kilometer' }[];
+  geo: { key: string; name: string; kind: 'country' | 'region' | 'city' | 'neighborhood'; radius?: number; distanceUnit?: 'mile' | 'kilometer' }[];
   radiusAreas: { address: string; radius: number; distanceUnit: 'mile' | 'kilometer' }[];
   ageMin?: number;
   ageMax?: number;
@@ -750,8 +750,8 @@ export class GeoAudienceEditor {
     return r.countryCode ? `${this.kindLabel(r.kind)} · ${r.countryCode}` : this.kindLabel(r.kind);
   }
 
-  private kindLabel(kind: 'country' | 'region' | 'city'): string {
-    return kind === 'country' ? 'país' : kind === 'region' ? 'região' : 'cidade';
+  private kindLabel(kind: 'country' | 'region' | 'city' | 'neighborhood'): string {
+    return kind === 'country' ? 'país' : kind === 'region' ? 'região' : kind === 'neighborhood' ? 'bairro' : 'cidade';
   }
 
   // ----- raio por endereço -----

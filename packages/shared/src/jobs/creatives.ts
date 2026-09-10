@@ -1,4 +1,6 @@
 import type { JobSpec } from "../ports/scheduler.port.js";
+import type { MediaMessageKey } from "../ports/messaging-channel.port.js";
+import type { ConversationRef } from "./whatsapp.js";
 
 // Fila de POLL do status de vídeo (Fatia 7). Vídeo processa ASYNC na plataforma: o intake
 // insere o asset `pending` e enfileira este job, que consulta getVideoStatus e re-enfileira
@@ -25,6 +27,12 @@ export type CreativeVideoPollPayload = {
   readonly metaVideoId: string;
   /** tentativa atual (1-based) — cap em CREATIVE_VIDEO_POLL_MAX_ATTEMPTS. */
   readonly attempt: number;
+  /**
+   * Contexto de conversa p/ o fecho-de-loop de vídeo (B1): quando o vídeo veio de um intake do
+   * WhatsApp com escrita conversacional LIGADA, o poll oferece "usar/criar" ao flipar `ready`.
+   * Ausente = upload web (sem conversa) OU escrita OFF → sem oferta.
+   */
+  readonly offer?: { readonly ref: ConversationRef; readonly conversationId: string };
 };
 
 /** Job de poll (delayado). Sem idempotencyKey: cada tentativa é um job fresco (a cadeia
@@ -69,6 +77,42 @@ export function buildCreativeAnalyzeJob(payload: CreativeAnalyzePayload): JobSpe
     idempotencyKey: `creative-analyze-${payload.assetId}`,
     attempts: CREATIVE_ANALYZE_JOB_ATTEMPTS,
     backoffMs: CREATIVE_ANALYZE_JOB_BACKOFF_MS,
+    removeOnComplete: true,
+    removeOnFail: true,
+  };
+}
+
+// ─── Análise CONVERSACIONAL de VÍDEO enviado no WhatsApp (Slice 2) ─────────────────────
+// O dono manda um vídeo (marcando o Roy / com legenda) e o Roy analisa DOS NOSSOS BYTES: manda o
+// vídeo COMPLETO pro modelo video-capable (movimento/áudio/gancho) — SEM o desvio pela Meta (upload
+// + espera `ready` + frames). Fila PRÓPRIA (paralela ao intake da biblioteca, que segue subindo
+// pra Meta em background). Falha/parse → degrada com aviso honesto (a análise de biblioteca sai lá).
+export const CREATIVE_VIDEO_ANALYZE_QUEUE = "creative-video-analyze";
+export const CREATIVE_VIDEO_ANALYZE_JOB = "analyze-whatsapp-video";
+export const CREATIVE_VIDEO_ANALYZE_JOB_ATTEMPTS = 3;
+export const CREATIVE_VIDEO_ANALYZE_JOB_BACKOFF_MS = 5_000;
+
+export type CreativeVideoAnalyzePayload = {
+  readonly orgId: string;
+  readonly ref: ConversationRef;
+  readonly conversationId: string;
+  readonly instanceId: string;
+  /** chave da mídia p/ buscar os bytes por fora do webhook (`fetchMediaBase64`). */
+  readonly messageKey: MediaMessageKey;
+  readonly mimetype: string;
+  /** legenda/pergunta do usuário (o que ele quer saber do criativo). */
+  readonly caption: string | null;
+  /** tamanho do arquivo (bytes) informado pelo WhatsApp — probe ANTES de baixar (evita OOM). */
+  readonly fileLength?: number;
+};
+
+export function buildCreativeVideoAnalyzeJob(payload: CreativeVideoAnalyzePayload): JobSpec {
+  return {
+    queue: CREATIVE_VIDEO_ANALYZE_QUEUE,
+    name: CREATIVE_VIDEO_ANALYZE_JOB,
+    payload,
+    attempts: CREATIVE_VIDEO_ANALYZE_JOB_ATTEMPTS,
+    backoffMs: CREATIVE_VIDEO_ANALYZE_JOB_BACKOFF_MS,
     removeOnComplete: true,
     removeOnFail: true,
   };

@@ -103,6 +103,16 @@ export const envSchema = z.object({
   // JSON-schema — que o structured output do `map_units` exige (por isso NÃO um sem enforcement).
   OPENROUTER_UNIT_FALLBACK_MODEL: z.string().default("google/gemini-3.1-flash-lite"),
   OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
+  // Modelo p/ analisar o VÍDEO COMPLETO (movimento/áudio/gancho) enviado pelo WhatsApp — dos nossos
+  // bytes, sem o desvio pela Meta. PRECISA ser video-capable (aceitar `video_url` via OpenRouter);
+  // o default espelha o de mensagem, mas p/ análise de vídeo de verdade aponte pra um modelo que
+  // entende vídeo (ex: Gemini 3.x pro/flash). Vídeo acima de WHATSAPP_VIDEO_MODEL_MAX_MB ou falha
+  // da chamada → degradação honesta ("vídeo grande/não consegui agora; salvei na biblioteca") + a
+  // análise de biblioteca sai depois. (ffmpeg-local p/ frames dos nossos bytes = fast-follow.)
+  OPENROUTER_VIDEO_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
+  // Teto (MB) do vídeo enviado INTEIRO ao modelo — acima disso degrada (não manda ao modelo); protege
+  // custo/latência/limite do modelo. O vídeo segue salvo na biblioteca. (ffmpeg-local = fast-follow.)
+  WHATSAPP_VIDEO_MODEL_MAX_MB: z.coerce.number().int().positive().default(20),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.
   // 3 (Bloco 2): decomposição ganha body + proofStrength → invalida o cache antigo uma vez.
@@ -389,14 +399,28 @@ export const envSchema = z.object({
   // quando o telefone de quem foi mencionado/citado não vem direto no payload da
   // mensagem. Participação de grupo muda pouco; folgado (~1h) é seguro.
   GROUP_PARTICIPANTS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(3600),
-  // Kill-switch de PLATAFORMA da escrita conversacional de ads pelo chat (v1 MVP): quando OFF
-  // (default), o agente no WhatsApp NÃO autora/edita/muta a Meta por conversa (criar/copiar/
-  // escalar/ajustar rascunho/pausar/orçamento + o "sim" que cria via criativo enviado somem do
-  // toolset). Consulta + aprovar/rejeitar + revert + auto-config seguem; autonomia/proativo/site
-  // intactos. Autoria/edição fina vive na plataforma (menos risco de má-interpretação). Reverter =
-  // ligar aqui (o código fica pendente). enum (não z.coerce.boolean): "false" coage p/ true em
-  // Boolean() — o kill-switch NÃO desligaria. Mesmo padrão dos demais booleanos do arquivo.
-  TRAFEGO_CHAT_ADS_WRITES: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  // Kill-switch de PLATAFORMA da escrita conversacional de ads pelo chat. Default ON (o gestor
+  // autora/edita/muta a Meta por conversa: pausar/orçamento/status/realocar/editar público/criar/
+  // copiar/escalar + o "sim" que cria via criativo enviado), sempre atrás de eco+confirma +
+  // guardrail + nunca-auto nas ações de risco. Habilitado após a bateria adversarial de eco+confirma
+  // passar (D1): roteamento anti-auto-apply (nenhuma escrita vai direto pro apply), saga de
+  // realocação com compensação, e `adjust_audience`/ressalva nunca auto (core). Cada capacidade
+  // ainda é gated por binding (`agent_tool_bindings`/`allowedActions`): as mutações seguem
+  // `allowedActions` (default só `pause_entity`, `dryRun:true`), **editar público**
+  // (`adjust_audience`) é opt-in (default OFF), e **criar/escalar** nascem default-ON — mas toda
+  // criação nasce PAUSADA + 2ª aprovação de ativação, sob eco+confirma, então o blast radius
+  // default é rascunho pausado/simulado. OFF ("false") = desliga TODA a escrita conversacional (só
+  // consulta + aprovar/rejeitar + revert + auto-config; autonomia/proativo/site intactos) — o freio
+  // de emergência. enum (não z.coerce.boolean): "false" coage p/ true em Boolean(). Mesmo padrão
+  // dos demais booleanos do arquivo.
+  TRAFEGO_CHAT_ADS_WRITES: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+
+  // Kill-switch da ESCOLHA de criativo por chat (picker: o dono nomeia o criativo por conversa +
+  // troca por-anúncio). v1: default OFF — o AGENTE escolhe o criativo (entre os da Meta, qualquer
+  // status, + a biblioteca), priorizando desempenho, e diz que trocar um específico é no site. O
+  // código do picker fica intacto (fast-follow = flip pra "true"). ON → reabre o picker no chat.
+  // enum (não z.coerce.boolean): "false" coage p/ true em Boolean(). Mesmo padrão dos booleanos.
+  TRAFEGO_CHAT_CREATIVE_PICKER: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
 
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).

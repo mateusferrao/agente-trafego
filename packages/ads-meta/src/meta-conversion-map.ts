@@ -240,6 +240,21 @@ export interface AdSetConversionAssets {
 
 /** Destino CTWA (click-to-WhatsApp) — o produto opera 1 canal WhatsApp (CLAUDE §9). */
 const DESTINATION_WHATSAPP = "WHATSAPP";
+/** CTA e link genérico do criativo CTWA. O número REAL não vai no link (vem do `promoted_object` do
+ *  conjunto, `destination_type: WHATSAPP`) — o link é o deep-link genérico do WhatsApp. */
+const META_WHATSAPP_CTA = "WHATSAPP_MESSAGE";
+export const WHATSAPP_SEND_LINK = "https://api.whatsapp.com/send";
+
+/** O objetivo leva pro WhatsApp (CTWA)? Fonte única no adapter (a taxonomia neutra é do core). */
+export function isWhatsappDestinationGoal(goal: ConversionGoal): boolean {
+  return goal === "messaging_started";
+}
+
+/** `call_to_action` do criativo CTWA: CTA WHATSAPP_MESSAGE + destino app WhatsApp + link genérico.
+ *  Difere do CTA de site (que precisa do link do site em `link_data.link`/`value.link`). */
+export function whatsappCreativeCta(): { readonly type: string; readonly value: { readonly app_destination: string; readonly link: string } } {
+  return { type: META_WHATSAPP_CTA, value: { app_destination: DESTINATION_WHATSAPP, link: WHATSAPP_SEND_LINK } };
+}
 
 /**
  * Resolve a config de conversão do adset. Com pixel + evento mapeável → OFFSITE_CONVERSIONS
@@ -252,7 +267,7 @@ const DESTINATION_WHATSAPP = "WHATSAPP";
 export function resolveAdSetConversion(goal: ConversionGoal, assets: AdSetConversionAssets = {}): MetaAdSetConversion {
   const { pixelId, pageId } = assets;
   const customEvent = GOAL_TO_CUSTOM_EVENT_TYPE[goal];
-  if (pixelId && customEvent && goal !== "messaging_started") {
+  if (pixelId && customEvent && !isWhatsappDestinationGoal(goal)) {
     return {
       optimizationGoal: "OFFSITE_CONVERSIONS",
       billingEvent: DEFAULT_BILLING_EVENT,
@@ -260,7 +275,7 @@ export function resolveAdSetConversion(goal: ConversionGoal, assets: AdSetConver
     };
   }
   const pageObject = pageId ? { promotedObject: { page_id: pageId } as const } : {};
-  if (goal === "messaging_started") {
+  if (isWhatsappDestinationGoal(goal)) {
     return { optimizationGoal: "CONVERSATIONS", billingEvent: DEFAULT_BILLING_EVENT, destinationType: DESTINATION_WHATSAPP, ...pageObject };
   }
   if (goal === "app_install") return { optimizationGoal: "APP_INSTALLS", billingEvent: DEFAULT_BILLING_EVENT };

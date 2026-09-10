@@ -499,6 +499,18 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     expect(decodeURIComponent(adsetPost.url)).toContain('"advantage_audience":1');
   });
 
+  it("B2: deleteCampaign apaga a órfã → true; falha na limpeza → false (best-effort, nunca lança)", async () => {
+    const okSpy = vi.fn(async (..._args: unknown[]) => new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", okSpy);
+    await expect(svc().deleteCampaign(account, "CAMP1")).resolves.toBe(true);
+    const call = String(okSpy.mock.calls[0]![0]);
+    expect(call).toContain("CAMP1");
+
+    // falha (400) → false, sem lançar (a limpeza não mascara o erro original da criação).
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { message: "no", code: 100 } }), { status: 400, headers: { "content-type": "application/json" } })));
+    await expect(svc().deleteCampaign(account, "CAMP1")).resolves.toBe(false);
+  });
+
   it("reuse_adset COM snapshot resolvido (subfatia 2) → monta targeting DIRETO, ZERO chamada Graph pra fonte", async () => {
     const posts: Array<{ url: string }> = [];
     vi.stubGlobal(
@@ -523,6 +535,7 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
           geo: { cities: [{ key: "123", name: "Belo Horizonte" }] },
           ageMin: 35,
           ageMax: 64,
+          genders: [2],
           interestGroups: [[{ id: "i1", name: "Estética" }]],
           customAudienceIncludeIds: ["ca1"],
           customAudienceExcludeIds: ["ca2"],
@@ -536,6 +549,8 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     const decoded = decodeURIComponent(adsetPost.url);
     expect(decoded).toContain('"cities":[{"key":"123"}]'); // sem "name" — só o key vai pra Meta
     expect(decoded).toContain('"age_min":35');
+    // C2: a cópia reuse_adset preserva o GÊNERO da fonte (antes o snapshot não tinha e virava "todos").
+    expect(decoded).toContain('"genders":[2]');
     // Slice 6: o snapshot preserva os interesses da fonte → apply reemite flexible_spec (cópia fiel).
     expect(decoded).toContain('"flexible_spec":[{"interests":[{"id":"i1"}]}]');
     // Slice 9: cópia reuse_adset de REMARKETING preserva os públicos salvos (antes virava frio).
@@ -789,6 +804,7 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
     const r = await svc().createAdCreative(account, {
       name: "cr img",
       pageId: "PAGE1",
+      goal: "purchase",
       imageHash: "IMGHASH",
       linkUrl: "https://ex.com/lp",
       copy,
@@ -813,6 +829,7 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
     await svc().createAdCreative(account, {
       name: "cr vid",
       pageId: "PAGE1",
+      goal: "purchase",
       videoId: "VID1",
       linkUrl: "https://ex.com/lp",
       copy,
@@ -831,7 +848,7 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
 
   it("VÍDEO com imageHash → usa a capa dada (image_hash) e NÃO busca thumbnail", async () => {
     const { posts } = stubCreativeGraph("https://cover.jpg");
-    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", videoId: "VID1", imageHash: "COVERHASH", copy });
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", goal: "purchase", videoId: "VID1", imageHash: "COVERHASH", copy });
     const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
     expect(oss.video_data.image_hash).toBe("COVERHASH");
     expect(oss.video_data.image_url).toBeUndefined();
@@ -839,11 +856,49 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
 
   it("VÍDEO sem capa disponível → cria mesmo assim, sem image_url (o caller decide)", async () => {
     const { posts } = stubCreativeGraph(null); // vídeo sem thumbnails
-    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", videoId: "VID1", copy });
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", goal: "purchase", videoId: "VID1", copy });
     const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
     expect(oss.video_data.video_id).toBe("VID1");
     expect(oss.video_data.image_url).toBeUndefined();
     expect(oss.video_data.image_hash).toBeUndefined();
+  });
+
+  it("CONVERSAS (messaging_started) IMAGEM → CTA WHATSAPP_MESSAGE + link genérico (não CTA/link de site)", async () => {
+    // regressão do incidente "criativo inválido para o objetivo" + "campo de link obrigatório":
+    // um criativo de conversas precisa do CTA de WhatsApp + link api.whatsapp.com/send (o número real
+    // vem do promoted_object do conjunto), NUNCA um CTA de site sem link.
+    const { posts } = stubCreativeGraph(null);
+    await svc().createAdCreative(account, { name: "cr wa", pageId: "PAGE1", goal: "messaging_started", imageHash: "IMGHASH", copy });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.link_data.link).toBe("https://api.whatsapp.com/send"); // link SEMPRE presente (senão "campo obrigatório")
+    expect(oss.link_data.call_to_action.type).toBe("WHATSAPP_MESSAGE"); // não SIGN_UP/LEARN_MORE
+    expect(oss.link_data.call_to_action.value).toMatchObject({ app_destination: "WHATSAPP", link: "https://api.whatsapp.com/send" });
+  });
+
+  it("CONVERSAS (messaging_started) VÍDEO → mesmo CTA de WhatsApp no video_data", async () => {
+    const { posts } = stubCreativeGraph("https://cover.jpg");
+    await svc().createAdCreative(account, { name: "cr wa vid", pageId: "PAGE1", goal: "messaging_started", videoId: "VID1", copy });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.video_data.call_to_action.type).toBe("WHATSAPP_MESSAGE");
+    expect(oss.video_data.call_to_action.value).toMatchObject({ app_destination: "WHATSAPP", link: "https://api.whatsapp.com/send" });
+  });
+
+  it("C3: advantageCreative=true anexa degrees_of_freedom_spec com features em OPT_IN; sem ele, ausente", async () => {
+    const dofOf = (url: string): Record<string, any> | undefined => {
+      const raw = new URL(url).searchParams.get("degrees_of_freedom_spec");
+      return raw ? JSON.parse(raw) : undefined;
+    };
+    const on = stubCreativeGraph(null);
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", goal: "purchase", imageHash: "IMGHASH", copy, advantageCreative: true });
+    const dofOn = dofOf(on.posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(dofOn?.creative_features_spec).toBeTruthy();
+    const features = Object.values(dofOn!.creative_features_spec as Record<string, { enroll_status: string }>);
+    expect(features.length).toBeGreaterThan(0);
+    expect(features.every((f) => f.enroll_status === "OPT_IN")).toBe(true);
+
+    const off = stubCreativeGraph(null);
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", goal: "purchase", imageHash: "IMGHASH", copy });
+    expect(dofOf(off.posts().find((p) => p.url.includes("/adcreatives"))!.url)).toBeUndefined();
   });
 });
 
@@ -937,5 +992,54 @@ describe("MetaCreationService.inferCreationDefaults", () => {
     const r = await svc().inferCreationDefaults(account);
     expect(r.videoId).toBe("VID9");
     expect(r.imageHash).toBe("COVER9"); // a capa do vídeo (antes ficava ausente → apply falhava na Meta)
+  });
+});
+
+describe("MetaCreationService.listPixels — pixels da conta (id+nome, best-effort)", () => {
+  it("mapeia {id,name} do /adspixels pra PixelInfo (vocabulário Meta só aqui)", async () => {
+    const spy = vi.fn(async (_input: string | URL | Request) =>
+      new Response(JSON.stringify({ data: [{ id: "PX1", name: "Loja Nova" }, { id: "PX2" }] }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", spy);
+    const out = await svc().listPixels(account);
+    expect(out).toEqual([{ pixelId: "PX1", name: "Loja Nova" }, { pixelId: "PX2" }]);
+    expect(decodeURIComponent(String(spy.mock.calls[0]?.[0] ?? ""))).toContain("/adspixels");
+  });
+
+  it("sem acesso/pixel (400) → lista vazia (honesto, o caller cai no inferido)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: { message: "no access", code: 100 } }), { status: 400, headers: { "content-type": "application/json" } })),
+    );
+    expect(await svc().listPixels(account)).toEqual([]);
+  });
+});
+
+describe("MetaCreationService.getAdMetrics — gasto/resultados por anúncio (inline, best-effort)", () => {
+  it("extrai gasto + resultados de cada anúncio (reusa metricsOf) e valida o window no fields", async () => {
+    const spy = vi.fn(async (_input: string | URL | Request) => new Response(JSON.stringify({ data: [
+      { id: "AD1", insights: { data: [{ spend: "100", actions: [{ action_type: "lead", value: "5" }] }] } },
+      { id: "AD2", insights: { data: [{ spend: "40", actions: [] }] } },
+    ] }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", spy);
+    const out = await svc().getAdMetrics(account, "maximum");
+    expect(out).toEqual([
+      { adId: "AD1", spend: 100, results: 5 },
+      { adId: "AD2", spend: 40, results: 0 },
+    ]);
+    // window vira date_preset no fields, sem interpolar cru
+    expect(decodeURIComponent(String(spy.mock.calls[0]?.[0] ?? ""))).toContain("insights.date_preset(maximum)");
+  });
+
+  it("window inválido (não [a-z0-9_]) cai pra 'maximum' — nunca interpola string arbitrária", async () => {
+    const spy = vi.fn(async (_input: string | URL | Request) => new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", spy);
+    await svc().getAdMetrics(account, "last_30d){bad}//");
+    expect(decodeURIComponent(String(spy.mock.calls[0]?.[0] ?? ""))).toContain("insights.date_preset(maximum)");
+  });
+
+  it("falha da Meta (erro/403) → lista vazia (best-effort, o caller degrada honesto)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { message: "x", code: 100 } }), { status: 400, headers: { "content-type": "application/json" } })));
+    expect(await svc().getAdMetrics(account, "maximum")).toEqual([]);
   });
 });

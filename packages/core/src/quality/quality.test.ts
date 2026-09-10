@@ -76,6 +76,21 @@ describe("detectHealthSignals", () => {
   it("1 sinal só não é fadiga", () => {
     expect(detectHealthSignals({ ctrDropPct: 30, costRisePct: 0, hasSignificance: true }, T)).not.toContain("creative_fatigue");
   });
+  it("desgaste (2+ sinais) num que AINDA ENTREGA (stillDelivering) → creative_aging, não creative_fatigue", () => {
+    const s = detectHealthSignals({ frequency: 3.4, ctrDropPct: 30, costRisePct: 0, hasSignificance: true, stillDelivering: true }, T);
+    expect(s).toContain("creative_aging");
+    expect(s).not.toContain("creative_fatigue");
+  });
+  it("desgaste (2+ sinais) num que já NÃO entrega → creative_fatigue (troque)", () => {
+    const s = detectHealthSignals({ frequency: 3.4, ctrDropPct: 30, costRisePct: 0, hasSignificance: true, stillDelivering: false }, T);
+    expect(s).toContain("creative_fatigue");
+    expect(s).not.toContain("creative_aging");
+  });
+  it("stillDelivering ausente → conservador (creative_fatigue), nunca aging por omissão", () => {
+    const s = detectHealthSignals({ frequency: 3.4, ctrDropPct: 30, costRisePct: 0, hasSignificance: true }, T);
+    expect(s).toContain("creative_fatigue");
+    expect(s).not.toContain("creative_aging");
+  });
   it("sem significância → low_volume", () => {
     expect(detectHealthSignals({ ctrDropPct: 0, costRisePct: 0, hasSignificance: false }, T)).toContain("low_volume");
   });
@@ -197,6 +212,41 @@ describe("enrichEntitiesQuality (integração das peças)", () => {
       { thresholds: T, hasTarget: true, currency: "BRL" },
     );
     expect(out[0]!.tier).toBe("winner");
+  });
+
+  it("vencedor desgastando MAS ainda batendo a meta → creative_aging + tier winner (não creative_fatigue)", () => {
+    // 2 sinais de desgaste (CTR -25%, CPA +50% vs baseline) mas CPA 12 ainda < meta 15 → aging, não fatigue.
+    const [w] = enrichEntitiesQuality(
+      [
+        summary({
+          id: "AGING",
+          metrics: { spend: 480, impressions: 20000, clicks: 400, ctr: 6, cpc: 1.2, cpm: 24, frequency: 1.2, conversions: 40, cpa: 12 },
+          deltaVsBaseline: { ctr: -2, cpa: 4 },
+        }),
+      ],
+      { targetCPA: 15 },
+      { thresholds: T, hasTarget: true, currency: "BRL" },
+    );
+    expect(w?.tier).toBe("winner");
+    expect(w?.healthSignals ?? []).toContain("creative_aging");
+    expect(w?.healthSignals ?? []).not.toContain("creative_fatigue");
+  });
+
+  it("mesma deterioração num que já NÃO bate a meta → creative_fatigue (troque)", () => {
+    const [u] = enrichEntitiesQuality(
+      [
+        summary({
+          id: "FATIGUED",
+          metrics: { spend: 480, impressions: 20000, clicks: 400, ctr: 6, cpc: 1.2, cpm: 24, frequency: 1.2, conversions: 40, cpa: 20 },
+          deltaVsBaseline: { ctr: -2, cpa: 6 },
+          flags: ["cpa_acima_da_meta"],
+        }),
+      ],
+      { targetCPA: 15 },
+      { thresholds: T, hasTarget: true, currency: "BRL" },
+    );
+    expect(u?.healthSignals ?? []).toContain("creative_fatigue");
+    expect(u?.healthSignals ?? []).not.toContain("creative_aging");
   });
 
   it("conta de mensagem vira significante/winner por conversas (basis=proxy) mesmo com poucas conversões absolutas (S3)", () => {

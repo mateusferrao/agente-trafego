@@ -9,13 +9,14 @@ import { z } from "zod";
 import { adAccounts, agents, conversations, playbookRules } from "@trafego/db";
 import {
   ACTION_PARAM_AMOUNT_MINOR,
+  ACTION_PARAM_AMOUNT_MAJOR,
   AGENT_NAME,
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
   ACTION_PARAM_STATUS,
-  APPROVAL_APPLY_JOB,
-  APPROVAL_APPLY_QUEUE,
+  buildApprovalApplyJob,
   BUDGET_MODE_SET,
+  toMinorUnits,
   CONVERSION_GOALS,
   COPY_TEXT_MAX,
   ENTITY_NAME_MAX,
@@ -43,7 +44,10 @@ import {
   type Posture,
   type Volume,
 } from "@trafego/shared";
+import { BUDGET_MODES } from "@trafego/shared";
 import {
+  CAMPAIGN_INTENTS,
+  CREATIVE_INTENTS,
   describePlaybookRule,
   mergeConfigText,
   postureLevelLabel,
@@ -60,6 +64,7 @@ import { acceptThreshold, confirmLesson, dismissAdvisory, forgetLesson, rejectPr
 import type { WorkerDeps } from "../../composition.js";
 import { createRunDispatcher } from "../../modules/dispatch/run-dispatcher.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
+import { persistFocus } from "../../modules/conversation/account-focus.js";
 import { makeReadTools, type ReadToolContext } from "./read-data.js";
 import type { PendingPlaybookOp } from "./state.js";
 
@@ -81,6 +86,13 @@ export interface ConversationToolContext extends ReadToolContext {
   /** escrita conversacional de ads ligada (v1 MVP: default OFF). OFF → o chat não autora/edita/
    *  muta a Meta; autoria/edição/ação vivem na plataforma. Molda prompt + copy de capacidades. */
   readonly chatAdsWrites?: boolean;
+  /** escolha de criativo por chat ligada (v1: default OFF). OFF → o agente escolhe o criativo
+   *  (Meta qualquer status + biblioteca) e diz que trocar um específico é no site. Molda prompt +
+   *  gate dos args de picker (creatives/fillRemaining/setAdCreative). */
+  readonly chatCreativePicker?: boolean;
+  /** B3: imagem anexada a ESTE turno (data-url) — o usuário mandou um criativo perguntando. O
+   *  modelo já a vê no HumanMessage multimodal; injeta o kernel de criativo no prompt p/ aterrar. */
+  readonly attachedMedia?: { readonly dataUrl: string; readonly mimetype: string };
 }
 
 // ── Vocabulário das tools de config (sem string mágica; espelham os enums do site).
@@ -182,11 +194,9 @@ export function makeConversationTools(
           skipped += 1;
           continue;
         }
-        await deps.ports.scheduler.enqueue({
-          queue: APPROVAL_APPLY_QUEUE,
-          name: APPROVAL_APPLY_JOB,
-          payload: { orgId: ctx.orgId, approvalId: id, notifyRef: ctx.ref },
-        });
+        await deps.ports.scheduler.enqueue(
+          buildApprovalApplyJob({ orgId: ctx.orgId, approvalId: id, notifyRef: ctx.ref }),
+        );
         ok += 1;
       }
       const tail = skipped > 0 ? ` (${skipped} já não estava(m) pendente(s).)` : "";
@@ -335,18 +345,19 @@ export function makeConversationTools(
   });
   const resumeEntity = tool(proposeOnly, {
     name: "resume_entity",
-    description: "Propõe REATIVAR uma entidade pausada. Requer eco+confirma.",
+    description:
+      "Propõe REATIVAR uma entidade pausada. Reativar uma CAMPANHA/CONJUNTO liga também os conjuntos/anúncios pausados dela por PADRÃO (a Meta não cascateia status → senão a campanha não veicula) — o eco lista o que vai ligar. Pra granularidade, mire o nó específico (só um conjunto ou só um anúncio). Requer eco+confirma.",
     schema: z.object(writeSchema),
   });
   const setStatus = tool(proposeOnly, {
     name: "set_status",
-    description: "Propõe mudar o status de uma entidade. Requer eco+confirma.",
+    description: "Propõe mudar o status de uma entidade. Ativar (active) uma campanha/conjunto liga a cadeia pausada por padrão (o eco lista); pausar (paused) é só o nó. Critério (1×): pra REATIVAR o que está pausado, prefira resume_entity (mais direto); use set_status só quando o dono falar em 'status' ou quiser PAUSAR via status. Requer eco+confirma.",
     schema: z.object({ ...writeSchema, status: z.enum(["active", "paused"]) }),
   });
   const adjustBudget = tool(proposeOnly, {
     name: "adjust_budget",
     description:
-      "Propõe ajustar o budget diário: por % (mode increase/decrease + pct) OU valor absoluto (mode set + amountReais). " +
+      "Propõe ajustar o budget da entidade (diário ou vitalício, conforme o que ela usa): por % (mode increase/decrease + pct) OU valor absoluto (mode set + amountReais). " +
       "USE ISTO quando o usuário der um NÚMERO explícito de orçamento — inclusive 'escala em 30%' ou 'aumenta o orçamento em 20%' " +
       "(intenção de budget = sobe direto, NUNCA duplica). Só use scale_winner quando NÃO houver número. " +
       "Se a intenção for de orçamento mas faltar A CAMPANHA ou O VALOR/%, NÃO chame ainda — pergunte concretamente o que falta " +
@@ -357,6 +368,45 @@ export function makeConversationTools(
       // nullable+optional: o structured-output exige que campo omissível seja nullable.
       pct: z.number().positive().nullable().optional().describe("magnitude % (só para increase/decrease)"),
       amountReais: z.number().positive().nullable().optional().describe("valor absoluto em reais (só para mode set)"),
+    }),
+  });
+
+  // EDITAR PÚBLICO de adset vivo (A1) — opt-in (default OFF); nunca auto-aplica; reseta o
+  // aprendizado da Meta (o eco avisa). SET: o público informado VIRA o novo público do conjunto.
+  const editAudience = tool(proposeOnly, {
+    name: EDIT_AUDIENCE_TOOL_NAME,
+    description:
+      "Propõe EDITAR o público de um CONJUNTO de anúncios (adset) que já está veiculando. Você DEFINE o novo público por NOME (geo/idade/gênero/interesses/comportamentos/públicos salvos) — é uma SUBSTITUIÇÃO: passe o público completo que deve valer no conjunto. Precisa do id do conjunto (descubra com get_campaign_analysis/get_ads_breakdown; passe adsetName pro eco). Editar o público REINICIA o aprendizado da Meta desse conjunto — o eco avisa. Requer eco+confirma; nunca aplica sozinho. Targeting muito complexo/ambíguo → oriente o dono a editar no site.",
+    schema: z.object({
+      adsetId: z.string().min(1),
+      adsetName: z.string().min(1).describe("nome legível do conjunto (do get_campaign_analysis)"),
+      geo: z.array(z.string()).nullable().optional().describe("cidades/regiões/países por nome"),
+      ageMin: z.number().int().min(13).max(65).nullable().optional(),
+      ageMax: z.number().int().min(13).max(65).nullable().optional(),
+      gender: z.enum(["all", "men", "women"]).nullable().optional(),
+      interests: z.array(z.string()).nullable().optional().describe("interesses por nome (eu resolvo na Meta; ambíguo → pergunto)"),
+      behaviors: z.array(z.string()).nullable().optional().describe("comportamentos por nome"),
+      includeAudiences: z.array(z.string()).nullable().optional().describe("públicos salvos a INCLUIR, por nome"),
+      excludeAudiences: z.array(z.string()).nullable().optional().describe("públicos salvos a EXCLUIR, por nome"),
+      radiusKm: z.number().positive().nullable().optional().describe("raio (km) em torno das cidades"),
+    }),
+  });
+
+  // REALOCAR ORÇAMENTO A→B (A4): move um valor/dia da origem pro destino. Vira DUAS ações
+  // adjust_budget (origem cai, destino sobe) aplicadas como SAGA com compensação. Reusa o
+  // gate do adjust_budget (mesmo binding). Precisa dos dois ids + o valor a mover.
+  const reallocateBudget = tool(proposeOnly, {
+    name: REALLOCATE_TOOL_NAME,
+    description:
+      "Propõe REALOCAR orçamento de uma entidade pra OUTRA (tirar de uma que rende menos e pôr na que rende mais): a origem CAI e o destino SOBE no mesmo valor. USE quando o usuário quiser MOVER grana entre campanhas/conjuntos (ex: 'tira R$50/dia da campanha A e põe na B', 'realoca da que tá indo mal pra melhor'). Origem e destino têm o NÍVEL de cada uma (fromLevel/toLevel) — podem ser níveis diferentes (ex: de uma campanha pra um conjunto). As duas precisam ter orçamento próprio e do MESMO tipo (as duas diárias, ou as duas vitalícias). Se o usuário só quer mexer numa, use adjust_budget. Precisa do valor a mover; se faltar a origem, o destino ou o valor, PERGUNTE. Requer eco+confirma; nunca aplica sozinho.",
+    schema: z.object({
+      fromLevel: z.enum(["campaign", "adset"]).describe("nível da ORIGEM (onde está o orçamento que sai)"),
+      toLevel: z.enum(["campaign", "adset"]).describe("nível do DESTINO (onde o orçamento entra)"),
+      fromEntityId: z.string().min(1),
+      fromEntityName: z.string().min(1).describe("nome legível da ORIGEM (perde orçamento)"),
+      toEntityId: z.string().min(1),
+      toEntityName: z.string().min(1).describe("nome legível do DESTINO (ganha orçamento)"),
+      amountReais: z.number().positive().describe("valor a mover (por dia se diário; total se vitalício)"),
     }),
   });
 
@@ -408,12 +458,29 @@ export function makeConversationTools(
         .describe("resposta do usuário à pergunta do passo agressivo: 'raise' = subir orçamento; 'duplicate' = criar cópia"),
     }),
   });
+  // P7: público COMPLETO por conjunto do teste — mesmo conjunto de campos do público de topo (o dono
+  // varia QUALQUER dimensão por conjunto); o que o segmento não define herda a base compartilhada.
+  const segmentSchema = z.object({
+    label: z.string().nullable().optional().describe("nome do conjunto (ex: 'Mulheres 45+', 'Interesse em estética', 'Remarketing 90d')"),
+    geo: z.array(z.string()).nullable().optional().describe("localizações DESTE conjunto pelo NOME (cidade/região/país/bairro) — eu resolvo e pergunto se ambíguo. Ausente = herda o geo da base."),
+    ageMin: z.number().int().min(13).max(65).nullable().optional().describe("idade mínima DESTE conjunto (ausente = herda a base)"),
+    ageMax: z.number().int().min(13).max(65).nullable().optional().describe("idade máxima DESTE conjunto (ausente = herda a base)"),
+    gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero DESTE conjunto — 'men'/'women'/'all' (ausente = herda a base)"),
+    interests: z.array(z.string()).nullable().optional().describe("interesses DESTE conjunto pelo NOME/termo — eu busco na Meta e pergunto se ambíguo"),
+    behaviors: z.array(z.string()).nullable().optional().describe("comportamentos DESTE conjunto pelo NOME — eu resolvo no catálogo e pergunto se ambíguo"),
+    includeAudiences: z.array(z.string()).nullable().optional().describe("públicos salvos a INCLUIR neste conjunto, pelo NOME/descrição — eu resolvo e pergunto se ambíguo"),
+    excludeAudiences: z.array(z.string()).nullable().optional().describe("públicos salvos a EXCLUIR neste conjunto, pelo NOME/descrição"),
+    radiusKm: z.number().positive().nullable().optional().describe("raio (km) em torno das cidades DESTE conjunto (clampo 17–80 km)"),
+    addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("raio em torno de ENDEREÇOS de rua deste conjunto (Meta geocodifica; clampo 1–80 km)"),
+  });
   const createCampaign = tool(proposeOnly, {
     name: "create_campaign",
     description:
       "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Pode mirar um PÚBLICO específico (passe includeAudienceIds/excludeAudienceIds — use list_audiences pra achar os ids) e/ou GEO/IDADE/GÊNERO/INTERESSES explícitos (geo/ageMin/ageMax/gender/interests); sem nenhum = amplo (Advantage+). Todos se COMBINAM se o usuário pedir juntos (ex: 'pra SP, mulheres, interessadas em estética e pro público X'). " +
-      "Pedido de RECOMENDAÇÃO de campanha nova ('recomenda uma campanha pra gente criar', 'que campanha eu deveria criar') é o MESMO gatilho — chame esta tool (ela nunca aplica sozinha, sempre para no eco+confirma); não responda em texto livre inventando a estrutura, e não confunda com pedido de recomendação GENÉRICA da conta (aí é análise normal, sem chamar esta tool). NÃO mande o usuário criar no Gerenciador Meta nem peça pra 'analisar antes' — você cria por aqui. As copies geradas aparecem no ECO antes de aplicar; editar depois é adjust_draft. Se o usuário mudar de ideia no meio (ex: 'quero do zero' em vez de copiar uma base), mantenha o que ele já pediu de estrutura (nº de anúncios/objetivo) — 'do zero' descarta só a cópia de uma campanha-base, não o resto do pedido. Requer eco+confirma.",
+      "Pedido de RECOMENDAÇÃO de campanha nova ('recomenda uma campanha pra gente criar', 'que campanha eu deveria criar') é o MESMO gatilho — chame esta tool (ela nunca aplica sozinha, sempre para no eco+confirma); não responda em texto livre inventando a estrutura, e não confunda com pedido de recomendação GENÉRICA da conta (aí é análise normal, sem chamar esta tool). NÃO peça pra 'analisar antes' — você cria por aqui, DESDE QUE a conta já tenha uma Página/anúncio ativo de onde montar o anúncio (é de lá que vem página, pixel e criativo). Conta zerada, sem nenhum anúncio, ainda não dá pra criar por aqui — nesse caso seja honesto: falta uma Página ligada à conta (costuma vir do 1º anúncio), oriente a publicar/conectar. " +
+      "CRIATIVOS: no passo de criativo, OFEREÇA a escolha — o dono pode dizer QUAIS criativos usar por nome/descrição ('usa o vídeo da praia e o campeão') que eu resolvo pro asset e distribuo 1 por anúncio (passe em `creatives`); ou pedir a lista ('quais criativos eu tenho'), aí use get_top_creatives; ou deixar comigo, aí eu escolho pela performance. Se ele escolher MENOS criativos que anúncios, eu pergunto se completo o resto ou ele escolhe mais (`fillRemaining`). As copies geradas aparecem no ECO antes de aplicar; editar depois é adjust_draft (inclusive trocar o criativo de um anúncio com setAdCreative). Se o usuário mudar de ideia no meio (ex: 'quero do zero' em vez de copiar uma base), mantenha o que ele já pediu de estrutura (nº de anúncios/objetivo) — 'do zero' descarta só a cópia de uma campanha-base, não o resto do pedido. Requer eco+confirma.",
     schema: z.object({
+      name: z.string().nullable().optional().describe("NOME da campanha que o usuário deu (ex: 'Teste de Criação'). Passe EXATAMENTE o que ele disse. O conjunto e os anúncios derivam desse nome. Omita se ele não nomeou (aí eu uso um nome padrão)."),
       goal: z.string().nullable().optional().describe("objetivo de negócio (ex: purchase, lead)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional)"),
       includeAudiences: z.array(z.string()).nullable().optional().describe("públicos a INCLUIR, pelo NOME/descrição que o usuário disse (ex: 'engajamento 90 dias') — eu resolvo pro público real e pergunto se ambíguo. Mira esse público em vez de amplo."),
@@ -426,9 +493,21 @@ export function makeConversationTools(
       behaviors: z.array(z.string()).nullable().optional().describe("comportamentos pelo NOME (ex: 'compradores online', 'viajantes frequentes') — eu resolvo no catálogo da Meta e pergunto se ambíguo. Diferente de interesse (é ação/hábito, não afinidade)."),
       radiusKm: z.number().positive().nullable().optional().describe("raio em KM em torno das CIDADES indicadas em geo (ex: 'raio de 20 km de BH'). Clampo pro limite da Meta (17–80 km)."),
       addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("raio em torno de ENDEREÇOS de rua (ex: '5 km da Av. Afonso Pena 1500'). A Meta geocodifica; clampo 1–80 km."),
-      adCount: z.number().int().positive().nullable().optional().describe("nº de ANÚNCIOS a criar (ex: 'cria 5 anúncios', estrutura '1-1-5' = 5 anúncios; '1-1-4' = 4). EU escolho os N criativos pela estratégia do agente. O usuário NÃO escolhe o asset específico pelo chat (isso é no site). Teto 10."),
-      distinctCreatives: z.number().int().positive().nullable().optional().describe("quantos criativos DIFERENTES entre os anúncios; o resto REPETE. Ex: '2 criativos iguais e 2 diferentes' com 4 anúncios = adCount 4 + distinctCreatives 3 (um criativo repetido em 2 anúncios + 2 criativos únicos). 'todos diferentes' = distinctCreatives = adCount (ou omita). EU escolho QUAIS."),
-      mediaPreference: z.enum(["video", "image", "mixed"]).nullable().optional().describe("tipo de mídia dos criativos: 'video', 'image' (imagem estática) ou 'mixed' (vídeos E imagens). Ex: 'use vídeos e imagens' = mixed. EU escolho quais assets desse tipo."),
+      adCount: z.number().int().positive().nullable().optional().describe("nº de ANÚNCIOS a criar (ex: 'cria 5 anúncios', estrutura '1-1-5' = 5 anúncios; '1-1-4' = 4). Sem `creatives`, EU escolho os N criativos pela estratégia do agente; com `creatives`, o dono escolhe (1 por anúncio). Teto 10."),
+      distinctCreatives: z.number().int().positive().nullable().optional().describe("quantos criativos DIFERENTES entre os anúncios; o resto REPETE. Ex: '2 criativos iguais e 2 diferentes' com 4 anúncios = adCount 4 + distinctCreatives 3 (um criativo repetido em 2 anúncios + 2 criativos únicos). 'todos diferentes' = distinctCreatives = adCount (ou omita). EU escolho QUAIS (ignorado quando o dono passa `creatives`)."),
+      mediaPreference: z.enum(["video", "image", "mixed"]).nullable().optional().describe("tipo de mídia dos criativos: 'video', 'image' (imagem estática) ou 'mixed' (vídeos E imagens). Ex: 'use vídeos e imagens' = mixed. EU escolho quais assets desse tipo (ignorado quando o dono passa `creatives`)."),
+      creatives: z.array(z.string()).nullable().optional().describe("CRIATIVOS escolhidos pelo dono, pelo NOME/descrição que ele disse (ex: ['o vídeo da praia', 'o campeão']) — eu resolvo cada um pro asset (entre os veiculando + biblioteca) e distribuo 1 por anúncio; se algum for ambíguo/não achar, eu PERGUNTO (nunca chuto). Passe SÓ quando o dono escolher; senão eu escolho pela performance."),
+      fillRemaining: z.enum(["agent", "only_picked"]).nullable().optional().describe("quando o dono escolheu MENOS criativos que anúncios: 'agent' = eu completo o resto com os que performam melhor; 'only_picked' = reduzo os anúncios só aos escolhidos. Omita → eu PERGUNTO o que ele prefere (não decido sozinho)."),
+      link: z.string().nullable().optional().describe("URL de DESTINO do anúncio (o site/página pra onde o clique leva, ex: 'https://loja.com/promo'). Passe quando o dono indicar pra onde mandar o tráfego. Só vale pra objetivos de SITE/tráfego/conversão; num objetivo de CONVERSAS no WhatsApp (messaging_started) eu IGNORO o link (esse tipo leva pro WhatsApp, não pra um site) e aviso. Omitido → herda o link do anúncio que serve de base."),
+      page: z.string().nullable().optional().describe("PÁGINA do Facebook de destino, principalmente pelo NOME que o dono disse (ex: 'a página CaquiAI Loja'); número de WhatsApp casa só quando a Meta expõe o número da Página (raro — em geral use o nome). Passe quando ele escolher entre várias — eu resolvo pra Página real e, se for ambíguo ou não achar, LISTO as opções e pergunto (nunca chuto). Em campanha de CONVERSAS, a Página define pra qual WhatsApp o clique leva. Omitido → uso a Página do anúncio-base. Pra só LISTAR o que ele tem, use list_pages."),
+      pixel: z.string().nullable().optional().describe("PIXEL de conversão pelo NOME que o dono disse (ex: 'usa o pixel da Loja Nova'). Passe SÓ quando ele pedir um pixel específico — por padrão EU uso o pixel que já converte (o do melhor anúncio), sem perguntar. Eu resolvo pro pixel real; ambíguo/não achar → LISTO e pergunto (nunca chuto); se a conta tem 1 pixel só, uso ele. Só vale em objetivo de CONVERSÃO (venda/lead-site/etc); conversas no WhatsApp não usam pixel. Pra só LISTAR os pixels, use list_pixels."),
+      intent: z.enum(CAMPAIGN_INTENTS).nullable().optional().describe("SINAL de estrutura que o dono expressou — você EXTRAI da fala, NÃO decide a estrutura (eu monto a recomendada do playbook a partir disso): 'test' = testar algo novo; 'scale' = escalar um vencedor; 'isolated_test' = testar UM criativo/ângulo isolado; 'audience_test' = testar VÁRIOS públicos/segmentos; 'create' = genérico (default). Ex: 'quero escalar a campeã' = scale; 'testa esses 3 públicos' = audience_test."),
+      budgetMode: z.enum(BUDGET_MODES).nullable().optional().describe("SÓ quando o dono pedir explicitamente ONDE mora a verba: 'cbo' = orçamento único na campanha (a Meta distribui entre os conjuntos); 'abo' = orçamento por conjunto. Omita pra eu usar o recomendado pra intenção. NUNCA diga a sigla ao dono — fale em linguagem de negócio."),
+      creativeAngle: z.string().nullable().optional().describe("FOCO do criativo que o dono quer destacar (o que a mensagem deve enfatizar): ex 'preço/oferta', 'prova social/depoimento', 'benefício/resultado', 'novidade/lançamento', 'urgência/escassez', ou livre. Você PERGUNTA isso antes de montar (a menos que o dono já tenha dito) e passa o que ele respondeu. Guia a ESCOLHA do criativo (não a copy)."),
+      creativeIntent: z.enum(CREATIVE_INTENTS).nullable().optional().describe("INTENÇÃO de criativo do dono: 'reuse' = reusar o criativo que já converte (o vencedor provado); 'test' = testar um criativo novo/da biblioteca. Você PERGUNTA junto do ângulo (a menos que o dono já tenha dito 'usa o mesmo que funciona' = reuse, ou 'quero testar algo novo' = test). Omita se ele não indicar — aí uso a estratégia configurada do agente."),
+      advantage: z.boolean().nullable().optional().describe("Advantage+ (deixar a Meta EXPANDIR o público e AJUSTAR automaticamente o criativo pra performar melhor). Passe true quando o dono pedir explicitamente ('liga o Advantage', 'deixa a Meta otimizar'); false quando pedir tudo fixo. Omita pra eu inferir do contexto. O eco sempre confirma antes de aplicar e AVISA que as melhorias podem mudar a imagem/texto do anúncio."),
+      localBusiness: z.boolean().nullable().optional().describe("true quando o negócio é LOCAL (atende só uma região/cidade — ex: clínica, restaurante, loja física de bairro), inferido do contexto do negócio. Guia a recomendação de Advantage (local → recomendo fixo/OFF; amplo/nacional → recomendo expansão). O dono sempre decide no eco."),
+      segments: z.array(segmentSchema).nullable().optional().describe("TESTE DE PÚBLICO multi-conjunto: passe 2+ segmentos quando o dono quiser comparar VÁRIOS públicos (ex: 'testa interesse em estética, meu público de remarketing e um lookalike'; ou 'conjunto 1 mulheres 45+, conjunto 2 mulheres no geral'). Cada segmento carrega o público COMPLETO — pode variar QUALQUER dimensão por conjunto (idade, gênero, lugar, interesse, comportamento, público salvo); o que o segmento NÃO define herda a base compartilhada dos campos acima. MESMO criativo em todos (isola a variável público) e orçamento único na campanha por padrão. Trocar o criativo por conjunto é no site. NUNCA recuse um teste porque os conjuntos diferem em idade/gênero/lugar — monte o que o dono pediu. NÃO use pra 1 público só (aí use os campos includeAudiences/interests normais)."),
     }),
   });
 
@@ -462,15 +541,18 @@ export function makeConversationTools(
   const adjustDraft = tool(proposeOnly, {
     name: "adjust_draft",
     description:
-      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente) — TUDO que o painel do site faz, EXCETO escolher/editar o criativo em si: budget, ativação, nº de anúncios (variantsCount), OBJETIVO (objective — ex: trocar de lead pra 'conversas iniciadas'/messaging_started; eu re-resolvo o pixel da conta e aviso se o objetivo exigir pixel que a conta não tem), NOME da campanha (campaignName) e do conjunto (adsetName), e o PÚBLICO por completo. Público: geo (addGeo/removeGeo pelo nome), RAIO (radiusKm nas cidades, addressAreas em endereços), idade (ageMin/ageMax), gênero (gender), INTERESSES (addInterests=OU, narrowInterests=E, removeInterests), COMPORTAMENTOS (addBehaviors/narrowBehaviors/removeBehaviors), PÚBLICOS SALVOS (addAudiences/excludeAudiences/removeAudiences pelo nome). Se o rascunho ainda é 'herda o vencedor'/'amplo' e o dono pede um primitivo, eu CONVERTO pra público personalizado (mantendo o herdado) — igual ao 'personalizar público' do site. Também audience:'reuse'/'broad' pra alternar o modo. Não cria rascunho novo. Só ESCOLHER/TROCAR o criativo específico de cada anúncio e editar o TEXTO da copy campo-a-campo = painel do site.",
+      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente) — TUDO que o painel do site faz, EXCETO escolher/editar o criativo em si: budget, ativação, nº de anúncios (variantsCount), OBJETIVO (objective — ex: trocar de lead pra 'conversas iniciadas'/messaging_started; eu re-resolvo o pixel da conta e aviso se o objetivo exigir pixel que a conta não tem), NOME da campanha (campaignName) e do conjunto (adsetName), e o PÚBLICO por completo. Público: geo (addGeo/removeGeo pelo nome), RAIO (radiusKm nas cidades, addressAreas em endereços), idade (ageMin/ageMax), gênero (gender), INTERESSES (addInterests=OU, narrowInterests=E, removeInterests), COMPORTAMENTOS (addBehaviors/narrowBehaviors/removeBehaviors), PÚBLICOS SALVOS (addAudiences/excludeAudiences/removeAudiences pelo nome). Se o rascunho ainda é 'herda o vencedor'/'amplo' e o dono pede um primitivo, eu CONVERTO pra público personalizado (mantendo o herdado) — igual ao 'personalizar público' do site. Também audience:'reuse'/'broad' pra alternar o modo. TROCAR o criativo de um anúncio específico pelo NOME ('troca o anúncio 2 pro vídeo da praia') = setAdCreative (eu resolvo o nome pro asset e pergunto se ambíguo). Não cria rascunho novo. Editar o TEXTO da copy campo-a-campo = copyEdits; o resto (ex: reordenar) = painel do site.",
     schema: z.object({
       budgetReais: z.number().positive().nullable().optional(),
-      activation: z.enum(["active", "paused"]).nullable().optional(),
+      activation: z.enum(["active", "paused"]).nullable().optional().describe("O QUE FAZER AO APROVAR o rascunho: 'active' = ativa em seguida; 'paused' = deixa pausada. Pedidos como 'ativa o rascunho'/'tenta ativar de novo'/'pode ativar' vêm AQUI (não é link nem público)."),
       variantsCount: z.number().int().positive().nullable().optional().describe("nº total de ANÚNCIOS do rascunho (ex: 'deixa com 3 anúncios', 'adiciona mais um anúncio' = total atual + 1). AUMENTAR faz EU escolher criativos distintos pros novos anúncios; se faltar criativo distinto, repito e aviso no eco."),
       objective: z.enum(CONVERSION_GOALS as unknown as [string, ...string[]]).nullable().optional().describe("novo objetivo/conversão de negócio (ex: 'messaging_started' pra conversas iniciadas, 'lead', 'purchase'). Só rascunho criado do zero. Eu re-resolvo o pixel da conta e bloqueio com aviso amigável se o objetivo exigir pixel e a conta não tiver."),
       audience: z.enum(["reuse", "broad"]).nullable().optional(),
+      link: z.string().nullable().optional().describe("TROCAR a URL de destino do rascunho (o site pra onde o anúncio leva) — só quando o DONO DEU uma URL de site explícita. NUNCA invente ou preencha um link por conta própria (nem a home do negócio): ligar Advantage, ativar, mexer em orçamento/público NÃO são link. Só em objetivo de site/tráfego."),
       campaignName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional(),
       adsetName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional().describe("novo nome do conjunto de anúncios"),
+      setPage: z.string().min(1).nullable().optional().describe("TROCAR a Página de destino do rascunho, principalmente pelo NOME ('usa a página CaquiAI Loja'); número de WhatsApp casa só quando a Meta expõe o número da Página (raro — prefira o nome). Só rascunho criado do zero (numa escala/duplicata a Página é herdada — eu bloqueio honesto). Eu resolvo pra Página real e, se ambíguo/não achar, LISTO as opções (nunca chuto). Em campanha de conversas, muda pra qual WhatsApp o clique leva."),
+      setPixel: z.string().min(1).nullable().optional().describe("TROCAR o pixel de conversão do rascunho, pelo NOME ('usa o pixel da Loja Nova'). Só rascunho criado do zero e em objetivo de CONVERSÃO (venda/lead-site/etc — conversas no WhatsApp não usam pixel). Eu resolvo pro pixel real e, se ambíguo/não achar, LISTO as opções (nunca chuto); conta com 1 pixel → uso ele."),
       removeGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a REMOVER do público explícito já resolvido (ex: ['Ibirité'])"),
       addGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a ADICIONAR ao público explícito (eu resolvo pro lugar real e pergunto se ambíguo)"),
       ageMin: z.number().int().min(13).max(65).nullable().optional(),
@@ -487,8 +569,27 @@ export function makeConversationTools(
       addAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a INCLUIR, pelo NOME — eu resolvo pro público real e pergunto se ambíguo"),
       excludeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a EXCLUIR, pelo NOME"),
       removeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a TIRAR do rascunho (incluir/excluir), pelo NOME"),
+      addSegment: z
+        .array(segmentSchema)
+        .nullable()
+        .optional()
+        .describe("ADICIONAR conjunto(s) ao teste de público ('adiciona um conjunto de mulheres 45+', 'adiciona um conjunto de corredores'). Cada um vira um conjunto com o público COMPLETO próprio (idade/gênero/geo/interesse/comportamento/público salvo — mesmo criativo em todos, pra comparar só o público). Se o rascunho tinha 1 conjunto, viro um teste multi-conjunto (o público atual é o 1º; orçamento único na campanha). Criativo diferente por conjunto é no site."),
+      removeSegment: z.array(z.number().int().min(0)).nullable().optional().describe("REMOVER conjunto(s) do teste de público pelo NÚMERO começando em 0 (o 1º = 0). Sobrar 1 = volta a campanha de 1 conjunto."),
+      advantage: z.boolean().nullable().optional().describe("LIGAR/DESLIGAR o Advantage+ do rascunho ('liga/ativa o advantage', 'ativa a otimização', 'deixa a Meta otimizar' = true; 'deixa tudo fixo', 'desliga o advantage' = false). Pedidos com 'ativa/ativar o advantage' vêm AQUI (NÃO é link). true deixa a Meta EXPANDIR o público e AJUSTAR imagem/texto do anúncio; false trava tudo como aprovado. Só rascunho criado do zero. O eco sempre AVISA que as melhorias podem mudar a imagem/texto antes de aplicar. NÃO mande o dono ajustar isso no site — dá pra fazer por aqui."),
+      resolveAgeConflict: z.enum(["lock_age", "drop_age"]).nullable().optional().describe("RESOLVER o conflito idade×otimização automática quando eu perguntei (a Meta não trava idade acima de ~25 junto do Advantage). Eu ofereço DUAS saídas, nesta ordem: (1) TRAVAR a idade, (2) TIRAR a faixa. Mapeie a resposta do dono pela INTENÇÃO, não por frase exata: qualquer coisa que signifique manter a faixa fixa / priorizar a idade / abrir mão da otimização — 'travar', 'trava', 'mantém a idade/faixa', 'deixa 45+', 'desliga a otimização/o advantage', 'a primeira', 'opção 1', '1' — = 'lock_age' (desligo o Advantage, mantenho a faixa). Qualquer coisa que signifique abrir a idade / priorizar a otimização — 'tirar', 'tira', 'remove a idade', 'sem faixa/idade', 'sem restrição', 'idade livre', 'deixa livre/aberto', 'mantém a otimização/o advantage', 'a segunda', 'opção 2', '2' — = 'drop_age' (REMOVO a idade de todos os conjuntos, mantenho o Advantage). Na dúvida entre as duas, PERGUNTE de novo em vez de chutar. Use SEMPRE este campo pra responder à minha pergunta do conflito — NÃO re-setar ageMin/ageMax (isso não limpa a idade). Só rascunho criado do zero."),
+      budgetMode: z.enum(BUDGET_MODES).nullable().optional().describe("TROCAR onde a verba mora num teste de público ('muda pra orçamento por conjunto' = 'abo'; 'deixa a verba única na campanha'/'a Meta distribui' = 'cbo'). Num teste multi-conjunto eu MOVO a verba de nível: pra 'abo' CADA conjunto passa a ter o próprio diário (o gasto TOTAL sobe conforme o nº de conjuntos — avise o dono); pra 'cbo' junto o gasto dos conjuntos numa verba única na campanha. Só rascunho criado do zero. NUNCA diga a sigla ao dono — fale em linguagem de negócio. NÃO mande ajustar no site — dá pra fazer por aqui."),
       distinctCreatives: z.number().int().positive().nullable().optional().describe("RECOMPOR a distribuição de criativos: quantos DIFERENTES entre os anúncios (o resto repete). Ex: 'deixa 2 iguais e 2 diferentes' num rascunho de 4 = distinctCreatives 3. EU escolho quais."),
       mediaPreference: z.enum(["video", "image", "mixed"]).nullable().optional().describe("recompor com mídia 'video'/'image'/'mixed'. EU escolho quais assets."),
+      setAdCreative: z
+        .array(
+          z.object({
+            index: z.number().int().min(0).describe("nº do anúncio começando em 0 (o 1º anúncio = 0)"),
+            creative: z.string().min(1).describe("criativo pelo NOME/descrição que o dono disse (ex: 'o vídeo da praia', 'o campeão') — eu resolvo pro asset entre os veiculando + biblioteca e pergunto se ambíguo"),
+          }),
+        )
+        .nullable()
+        .optional()
+        .describe("TROCAR o criativo de anúncios específicos pelo nome/descrição ('troca o anúncio 2 pro vídeo da praia'). Eu resolvo o nome pro asset (nunca chuto). NÃO mexe no texto da copy (isso é copyEdits)."),
       copyEdits: z
         .array(
           z.object({
@@ -550,10 +651,7 @@ export function makeConversationTools(
         return `Achei a conta ${acc.name}, mas ela ainda não tem um agente ativo — dá pra ativar no site. Quer focar em outra conta?`;
       }
 
-      await deps.db
-        .update(conversations)
-        .set({ focusedAccountId: acc.id, focusedAt: new Date() })
-        .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.orgId, ctx.orgId)));
+      await persistFocus(deps.db, ctx.orgId, ctx.conversationId, acc.id);
 
       // Footgun fix (S3): aplica o foco JÁ NESTE turno mutando o ctx (turno-local — o ctx é
       // criado por turno em turn.ts e compartilhado por referência com as demais tools, que
@@ -623,7 +721,7 @@ export function makeConversationTools(
   const setActionAccess = tool(proposeOnly, {
     name: "set_action_access",
     description:
-      "Liga ou desliga UMA ação específica por completo (o agente NUNCA a executa enquanto desligada, nem sozinho nem com sua aprovação) — pausar=pause_entity, retomar=resume_entity, mudar status=set_status, ajustar orçamento=adjust_budget, criar campanha=create_campaign, duplicar pra escalar=duplicate_scale. Mais fino que a lista clássica de guardrails (é a MESMA fonte da tela 'Ações permitidas' do site) e é o ÚNICO jeito de ligar/desligar criar/duplicar. Requer eco+confirma.",
+      "Liga ou desliga UMA ação específica por completo (o agente NUNCA a executa enquanto desligada, nem sozinho nem com sua aprovação) — pausar=pause_entity, retomar=resume_entity, mudar status=set_status, ajustar orçamento=adjust_budget, editar público=adjust_audience, criar campanha=create_campaign, duplicar pra escalar=duplicate_scale. Mais fino que a lista clássica de guardrails (é a MESMA fonte da tela 'Ações permitidas' do site) e é o ÚNICO jeito de ligar/desligar editar público / criar / duplicar. Requer eco+confirma.",
     schema: z.object({
       actions: z
         .array(z.object({ toolKey: z.enum(GATEABLE_TOOL_KEYS as unknown as [string, ...string[]]), enabled: z.boolean() }))
@@ -854,7 +952,7 @@ export function makeConversationTools(
   const configTools = [setGoal, setAutonomy, setGuardrail, setActionAccess, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance, setDirectiveness, setVolume, setDidacticDepth, setExperienceLevel];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
-  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
+  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, editAudience, reallocateBudget, revertAction, confirmWrite, cancelWrite];
   const createTools = [scaleWinner, createCampaign, copyCampaign, adjustDraft, regenerateCopy];
   return [
     ...readTools,
@@ -905,7 +1003,8 @@ export async function buildCapabilitiesText(
   // (texto verbatim), então a concisão é embutida na própria redação.
   const parts: string[] = [`Sou o ${AGENT_NAME}, seu gestor de tráfego aqui no WhatsApp. No dia a dia eu:`];
   parts.push("• Leio sua conta e te mostro onde tem dinheiro parado, o que vai bem e o que dá pra melhorar — no período que você quiser.");
-  parts.push('• Rodo uma análise na hora quando você pede ("analisa agora").');
+  // S2: análise na hora + planejamento inerente (consultivo, sempre presente) numa linha só (enxuto).
+  parts.push('• Rodo uma análise na hora quando você pede ("analisa agora") e penso à frente com você: pergunta "como eu cresço?" que eu diagnostico e proponho a sequência de próximos passos (o que testar, o que escalar, quando renovar o criativo).');
   // Aprendizado (S7): sempre leio o que aprendi; confirmar por chat depende do kill-switch.
   if (allow.has(CONFIRM_LEARNING_TOOL_NAME)) {
     parts.push("• Vou aprendendo os padrões da sua conta com o tempo — pergunta \"o que você aprendeu?\" que eu te mostro, e você pode confirmar ou me corrigir por aqui.");
@@ -920,6 +1019,15 @@ export async function buildCapabilitiesText(
     parts.push("• Recomendo o que fazer e você aprova por aqui; mexer na campanha em si é no site.");
   } else {
     parts.push("• Mexer nas campanhas está desligado nos guardrails — dá pra liberar nas configurações.");
+  }
+
+  // A4: realocar orçamento entre entidades — só declara quando de fato habilitado (binding + flag).
+  if (allow.has(REALLOCATE_TOOL_NAME)) {
+    parts.push("• Realoco orçamento de uma campanha pra outra que você pedir (tiro da que rende menos, ponho na que rende mais), sempre confirmando antes.");
+  }
+  // A1: editar público de conjunto vivo — opt-in; declara com a ressalva honesta do reset.
+  if (allow.has(EDIT_AUDIENCE_TOOL_NAME)) {
+    parts.push("• Edito o público de um conjunto que já está no ar quando você pedir (com sua confirmação) — lembrando que mexer no público reinicia o aprendizado da Meta.");
   }
 
   // Criação (Fatia 7) — condicional às bindings reais, em uma linha só.
@@ -996,9 +1104,11 @@ export function actionFromToolCall(name: string, args: Record<string, unknown>, 
     if (mode === BUDGET_MODE_SET) {
       // == null cobre o `null` que o structured-output manda no campo não usado do outro modo.
       if (args["amountReais"] == null) return null;
-      const reais = Number(args["amountReais"]);
-      if (!Number.isFinite(reais)) return null;
-      return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_AMOUNT_MINOR]: Math.round(reais * 100) } };
+      const major = Number(args["amountReais"]);
+      if (!Number.isFinite(major)) return null;
+      // guarda o valor na unidade MAIOR (como o gestor falou); a conversão p/ unidade menor
+      // depende da MOEDA (JPY≠centavos) e só acontece quando a conta é resolvida (`resolveBudgetMinor`).
+      return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_AMOUNT_MAJOR]: major } };
     }
     if (args["pct"] == null) return null;
     const pct = Number(args["pct"]);
@@ -1006,6 +1116,19 @@ export function actionFromToolCall(name: string, args: Record<string, unknown>, 
     return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_PCT]: Math.abs(pct) } };
   }
   return { ...base, params: {} };
+}
+
+/**
+ * Converte o valor MAIOR (`amountMajor`, do chat) p/ unidade menor (`amountMinor`) que o guardrail
+ * e a mutação usam, assim que a MOEDA da conta é conhecida (inverso de `actionFromToolCall`). A
+ * conversão depende da moeda (×100 p/ BRL, ×1 p/ JPY, ×1000 p/ BHD) — por isso só aqui, não na
+ * montagem da ação. No-op p/ ações sem `amountMajor` (pause/status/pct). PURA.
+ */
+export function resolveBudgetMinor(action: Action, currency: string): Action {
+  const major = action.params[ACTION_PARAM_AMOUNT_MAJOR];
+  if (typeof major !== "number") return action;
+  const { [ACTION_PARAM_AMOUNT_MAJOR]: _omit, ...rest } = action.params;
+  return { ...action, params: { ...rest, [ACTION_PARAM_AMOUNT_MINOR]: toMinorUnits(major, currency) } };
 }
 
 /**
@@ -1025,9 +1148,12 @@ export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "get_agent_config",
   "explain_recommendation",
   "get_top_creatives",
+  "recall_creative",
   "get_account_health",
   "get_ads_breakdown",
   "list_audiences",
+  "list_pages",
+  "list_pixels",
   "list_recommendations",
   "list_learnings",
   "list_pending",
@@ -1080,9 +1206,12 @@ export const GROUP_CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "get_agent_config",
   "explain_recommendation",
   "get_top_creatives",
+  "recall_creative",
   "get_account_health",
   "get_ads_breakdown",
   "list_audiences",
+  "list_pages",
+  "list_pixels",
   "list_recommendations",
   "list_learnings",
   "list_pending",
@@ -1118,6 +1247,14 @@ export const REFINE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["adjust_d
 
 /** Tool de DESFAZER — também passa pelo eco+confirma (roteada pro nó `confirm`, 5c-4). */
 export const REVERT_TOOL_NAME = "revert_action";
+
+/** Tool de EDITAR PÚBLICO de adset vivo (A1) — escrita `adjust_audience`, opt-in, roteada p/ `confirm`.
+ *  Nome próprio (não é `adjust_audience` pra não colidir com o vocabulário de Action). */
+export const EDIT_AUDIENCE_TOOL_NAME = "edit_audience";
+
+/** Tool de REALOCAR ORÇAMENTO A→B (A4) — vira 2 `adjust_budget` (saga com compensação), roteada
+ *  p/ `confirm`. Nome próprio: uma call → duas ações, então não entra em `WRITE_TOOL_NAMES`. */
+export const REALLOCATE_TOOL_NAME = "reallocate_budget";
 
 /** Tools de controle do eco+confirma (turno 2) — roteadas pro nó `applyWrite`. */
 export const CONTROL_WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["confirm_write", "cancel_write"]);

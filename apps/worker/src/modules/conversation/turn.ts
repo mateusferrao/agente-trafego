@@ -7,12 +7,14 @@
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
-import { adAccounts, agents, conversations, loadOrgTimezone, type Database } from "@trafego/db";
+import { agents, loadOrgTimezone, type Database } from "@trafego/db";
 import type { AutonomyPolicy, ConversationRef } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
 import {
   AGENT_TOOL_NAMES,
+  EDIT_AUDIENCE_TOOL_NAME,
+  REALLOCATE_TOOL_NAME,
   REFINE_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
   CONFIG_CHAT_TOOL_NAMES,
@@ -21,11 +23,25 @@ import {
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { loadEnabledTools } from "../tools/enabled.js";
+import { resolveActiveAgents, resolveExplicitFocus, resolveFocusedAgent, type AgentInContext } from "./account-focus.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { applyOfferedCreative } from "./draft-proposal.js";
 import { clearCreativeOffer, getCreativeOffer, isSimpleAffirmation } from "./creative-offer.js";
+import { takePendingMedia, type PendingTurnMedia } from "./pending-media.js";
 import { DEFAULT_CURRENCY, withTimeout } from "@trafego/shared";
+
+/** Monta o HumanMessage do turno: multimodal (texto + imagem) quando há mídia-como-pergunta (B3),
+ *  senão texto puro. `image_url` com data-url — o modelo do chat (multimodal) "vê" a imagem. */
+function buildTurnMessage(text: string, media: PendingTurnMedia | null): HumanMessage {
+  if (!media) return new HumanMessage(text);
+  return new HumanMessage({
+    content: [
+      { type: "text", text },
+      { type: "image_url", image_url: { url: media.dataUrl } },
+    ],
+  });
+}
 
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";
@@ -52,75 +68,6 @@ export async function deliverReply(
   }
 }
 
-/** Agente em contexto (id + conta + nome da conta). */
-interface AgentInContext {
-  readonly agentId: string;
-  readonly adAccountId: string;
-  readonly accountName: string | null;
-}
-
-/**
- * Agentes ativos da org (cap 2 p/ decidir sole × multi-conta). `sole` = exatamente 1;
- * `multiAccount` = ≥2 (concierge/foco). Nome da conta vem junto (eco/foco).
- */
-async function resolveActiveAgents(
-  db: Database,
-  orgId: string,
-): Promise<{ sole: AgentInContext | null; multiAccount: boolean }> {
-  const rows = await db
-    .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
-    .from(agents)
-    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
-    .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")))
-    .limit(2);
-  return { sole: rows.length === 1 ? rows[0]! : null, multiAccount: rows.length >= 2 };
-}
-
-/** ms por hora — staleness do foco (S4). */
-const MS_PER_HOUR = 60 * 60 * 1000;
-
-/**
- * Agente da conta em FOCO do fio (5c-6) — org-scoped, conta+agente ativos. Null se sem foco/
- * indisponível. **Staleness (S4, semântica de ÚLTIMO USO):** foco sem carimbo ou cujo último
- * uso passou de `ttlHours` PERDE precedência (retorna null → grupo cai no contexto ambiente,
- * DM cai em "qual conta?"). Ao resolver via foco fresco, RENOVA o carimbo (`focusedAt=now`).
- */
-export async function resolveFocusedAgent(
-  db: Database,
-  orgId: string,
-  conversationId: string,
-  ttlHours: number,
-): Promise<AgentInContext | null> {
-  const [conv] = await db
-    .select({ focusedAccountId: conversations.focusedAccountId, focusedAt: conversations.focusedAt })
-    .from(conversations)
-    .where(eq(conversations.id, conversationId))
-    .limit(1);
-  if (!conv?.focusedAccountId) return null;
-  const staleBefore = Date.now() - ttlHours * MS_PER_HOUR;
-  if (!conv.focusedAt || conv.focusedAt.getTime() < staleBefore) return null;
-  const [row] = await db
-    .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
-    .from(agents)
-    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
-    .where(
-      and(
-        eq(agents.orgId, orgId),
-        eq(agents.status, "active"),
-        eq(adAccounts.status, "active"),
-        eq(adAccounts.id, conv.focusedAccountId),
-      ),
-    )
-    .limit(1);
-  if (!row) return null;
-  // último uso: renova o carimbo (o TTL conta desde a última atividade com foco).
-  await db
-    .update(conversations)
-    .set({ focusedAt: new Date() })
-    .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)));
-  return row;
-}
-
 /**
  * Tools de ESCRITA/CRIAÇÃO habilitadas p/ o chat (A2) — AUTORITATIVO por `agent_tool_bindings`
  * (fallback = allowedActions p/ as 4, default-on p/ criação; ver `loadEnabledTools`). Tool não
@@ -137,6 +84,10 @@ async function allowedChatWriteTools(db: Database, orgId: string, agentId: strin
   // copiar campanha (Fatia 7) reusa o mesmo gate de criação (gasto novo, mesma saga).
   if (enabled.has("create_campaign")) tools.push("copy_campaign");
   if (enabled.has("duplicate_scale") || enabled.has("adjust_budget")) tools.push("scale_winner");
+  // A1: editar público de adset vivo — opt-in, gated pelo binding `adjust_audience` (default OFF).
+  if (enabled.has("adjust_audience")) tools.push(EDIT_AUDIENCE_TOOL_NAME);
+  // A4: realocar orçamento A→B — vira 2 adjust_budget, então gated pelo mesmo binding `adjust_budget`.
+  if (enabled.has("adjust_budget")) tools.push(REALLOCATE_TOOL_NAME);
   return tools;
 }
 
@@ -205,13 +156,19 @@ export interface ConversationTurnInput {
 export async function runConversationTurn(deps: WorkerDeps, input: ConversationTurnInput): Promise<void> {
   const { logger, ports } = deps;
   const sendToConversation = createSendToConversation({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
+  // B3: imagem-com-legenda anexada a ESTE turno (multimodal) — consumida uma vez (get+del).
+  const attachedMedia = await takePendingMedia(deps.redis, input.conversationId);
 
   // agente em contexto = a única conta ativa (sole) OU a conta em foco do fio (multi-conta,
   // 5c-6). Sem nenhuma das duas → concierge (só org-level + set_focus p/ escolher). Igual
   // no grupo: mesmo concierge/foco, escopo = todas as contas da org (§13 reuso-primeiro).
   const { sole, multiAccount } = await resolveActiveAgents(deps.db, input.orgId);
-  const inContext =
+  // 1) conta única → ela; 2) foco salvo do fio; 3) conta NOMEADA de forma inequívoca na mensagem
+  // (S6b — resolve o foco antes de montar o toolset, pra a escrita ligar no mesmo fluxo). O (3) só
+  // roda quando não há (1) nem (2); ambíguo/inexistente → null → concierge pergunta a conta.
+  let inContext =
     sole ?? (await resolveFocusedAgent(deps.db, input.orgId, input.conversationId, deps.conversation.focusTtlHours));
+  if (!inContext) inContext = await resolveExplicitFocus(deps.db, input.orgId, input.conversationId, input.text);
 
   // com agente em contexto: leitura/controle + escrita livre filtrada por allowedActions (5c)
   // + config-por-chat gated pelo kill-switch (S2.3). Sem contexto (multi-conta sem foco):
@@ -231,7 +188,12 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     configViaChat: config.enabled,
     // escrita conversacional de ads (v1: default OFF) — molda toolset + prompt + capacidades.
     chatAdsWrites: deps.conversation.chatAdsWrites,
+    // escolha de criativo por chat (v1: default OFF) — OFF: o agente escolhe, troca é no site.
+    chatCreativePicker: deps.conversation.chatCreativePicker,
     ...(inContext?.accountName ? { accountName: inContext.accountName } : {}),
+    // B3: mídia anexada ao turno → injeta o kernel de criativo no prompt + habilita a tool de
+    // análise estruturada sobre a imagem (o modelo já a vê no HumanMessage multimodal).
+    ...(attachedMedia ? { attachedMedia } : {}),
   };
   // sem agente em contexto: concierge. Em GRUPO multi-conta, always-bind de LEITURA (S6) →
   // a 1ª pergunta resolve num turno (set_focus muta o ctx; reads self-guardam sem foco).
@@ -284,7 +246,7 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     const result = await withTimeout(
       graph.invoke(
         {
-          messages: [new HumanMessage(input.text)],
+          messages: [buildTurnMessage(input.text, attachedMedia)],
           orgId: ctx.orgId,
           agentId: ctx.agentId,
           adAccountId: ctx.adAccountId,
