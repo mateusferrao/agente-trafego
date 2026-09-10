@@ -961,6 +961,9 @@ export class MetaCreationService {
       geo_locations,
       ...(snapshot.ageMin !== undefined ? { age_min: snapshot.ageMin } : {}),
       ...(snapshot.ageMax !== undefined ? { age_max: snapshot.ageMax } : {}),
+      // C2: reemite o GÊNERO da fonte (cópia/herança reuse_adset preserva um público só-de-homens/
+      // -mulheres — antes o snapshot não tinha gênero e a cópia virava "todos").
+      ...(snapshot.genders && snapshot.genders.length > 0 ? { genders: snapshot.genders } : {}),
       ...(flexible_spec.length > 0 ? { flexible_spec } : {}),
       // Slice 9: reemite os públicos salvos da fonte (cópia reuse_adset de remarketing preserva o
       // público quente — antes o snapshot só tinha geo/idade/expansão/interesses e virava prospecção).

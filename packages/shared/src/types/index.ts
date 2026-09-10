@@ -111,6 +111,10 @@ export interface AudienceProfile {
   readonly geoEntries?: readonly { readonly key: string; readonly name: string; readonly kind: "city" | "region" }[];
   readonly ageMin?: number;
   readonly ageMax?: number;
+  /** gênero da fonte (mesma taxonomia de `TargetingSpec.explicit.genders`: 1=homens, 2=mulheres).
+   *  Ausente/ambos = todos. Necessário pra a cópia/herança NÃO perder um público só-de-homens ou
+   *  só-de-mulheres (C2 — fidelidade de gênero). */
+  readonly genders?: readonly (1 | 2)[];
   /** principais interesses/comportamentos (top-N nomes), quando houver — resumo p/ eco/UI. */
   readonly interests?: readonly string[];
   /** interesses/comportamentos COM id, agrupados (Slice 6) — necessário pra CÓPIA FIEL repassar o
@@ -1193,6 +1197,9 @@ export interface ResolvedAudienceSnapshot {
   };
   readonly ageMin?: number;
   readonly ageMax?: number;
+  /** gênero da fonte (1=homens, 2=mulheres; ausente/ambos = todos) — pra a cópia/herança `reuse_adset`
+   *  NÃO perder um público só-de-homens/só-de-mulheres no apply (C2 — fidelidade de gênero). */
+  readonly genders?: readonly (1 | 2)[];
   /** interesses/comportamentos da fonte COM id (Slice 6) — pra a cópia `reuse_adset` preservar o
    *  targeting detalhado no apply (senão o snapshot só tinha geo/idade/expansão e perdia interesses). */
   readonly interestGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];

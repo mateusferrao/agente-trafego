@@ -105,6 +105,13 @@ describe("audienceFromTargeting", () => {
     expect(a?.expansion.summary).toBe("on");
   });
 
+  it("genders: só [2] (mulheres) → carrega no profile; [1,2]/ausente = todos (omite)", () => {
+    expect(audienceFromTargeting({ geo_locations: { countries: ["BR"] }, genders: [2] })?.genders).toEqual([2]);
+    expect(audienceFromTargeting({ geo_locations: { countries: ["BR"] }, genders: [1] })?.genders).toEqual([1]);
+    expect(audienceFromTargeting({ geo_locations: { countries: ["BR"] }, genders: [1, 2] })?.genders).toBeUndefined();
+    expect(audienceFromTargeting({ geo_locations: { countries: ["BR"] } })?.genders).toBeUndefined();
+  });
+
   it("geoEntries preserva key de cidade/região (nome sozinho não basta pra remontar geo_locations)", () => {
     const a = audienceFromTargeting({
       geo_locations: { cities: [{ key: "2430536", name: "Belo Horizonte" }], regions: [{ key: "3157", name: "Minas Gerais" }] },

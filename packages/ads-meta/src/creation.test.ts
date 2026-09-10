@@ -535,6 +535,7 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
           geo: { cities: [{ key: "123", name: "Belo Horizonte" }] },
           ageMin: 35,
           ageMax: 64,
+          genders: [2],
           interestGroups: [[{ id: "i1", name: "Estética" }]],
           customAudienceIncludeIds: ["ca1"],
           customAudienceExcludeIds: ["ca2"],
@@ -548,6 +549,8 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     const decoded = decodeURIComponent(adsetPost.url);
     expect(decoded).toContain('"cities":[{"key":"123"}]'); // sem "name" — só o key vai pra Meta
     expect(decoded).toContain('"age_min":35');
+    // C2: a cópia reuse_adset preserva o GÊNERO da fonte (antes o snapshot não tinha e virava "todos").
+    expect(decoded).toContain('"genders":[2]');
     // Slice 6: o snapshot preserva os interesses da fonte → apply reemite flexible_spec (cópia fiel).
     expect(decoded).toContain('"flexible_spec":[{"interests":[{"id":"i1"}]}]');
     // Slice 9: cópia reuse_adset de REMARKETING preserva os públicos salvos (antes virava frio).

@@ -31,7 +31,7 @@ import {
   type FreshKpis,
 } from "../../modules/conversation/fresh-metrics.js";
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
-import { describeExplicitAudience } from "../../modules/conversation/draft-proposal.js";
+import { describeExplicitAudience, describeResolvedSnapshot } from "../../modules/conversation/draft-proposal.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -1062,7 +1062,13 @@ export function pickAdIdsToRefresh<T extends RankableCreative & { adId: string }
  *  explícito ("mulheres 45+ BH" saía como "amplo"), o falso positivo que o Roy narrava. §UX. */
 export function describeDraftAudience(targeting: TargetingSpec | undefined): string {
   if (targeting?.kind === "explicit") return describeExplicitAudience(targeting);
-  if (targeting?.kind === "reuse_adset") return "herda o público do conjunto do seu anúncio reusado (a mesma segmentação que está rodando)";
+  if (targeting?.kind === "reuse_adset") {
+    // C1: o rascunho reuse_adset SEMPRE nasce com o retrato (`resolved`) do público herdado — NOMEIA
+    // (cidades/idade/gênero/interesses/salvos) em vez do genérico "a mesma segmentação que está rodando".
+    return targeting.resolved
+      ? `herda o público que já converte no seu anúncio: ${describeResolvedSnapshot(targeting.resolved)}`
+      : "herda o público do conjunto do seu anúncio reusado (a mesma segmentação que está rodando)";
+  }
   return "público amplo — a Meta escolhe quem tem mais chance de converter";
 }
 

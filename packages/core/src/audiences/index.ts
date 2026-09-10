@@ -126,6 +126,9 @@ export function buildResolvedSnapshot(profile: AudienceProfile): ResolvedAudienc
     geo: snapshotGeoFromProfile(profile),
     ...(profile.ageMin !== undefined ? { ageMin: profile.ageMin } : {}),
     ...(profile.ageMax !== undefined ? { ageMax: profile.ageMax } : {}),
+    // C2: preserva o GÊNERO da fonte no snapshot → a cópia/herança reuse_adset não perde um público
+    // só-de-homens/só-de-mulheres no apply (antes o snapshot não carregava gênero e virava "todos").
+    ...(profile.genders && profile.genders.length > 0 ? { genders: profile.genders } : {}),
     // Slice 6: preserva interesses/comportamentos da fonte (com id) no snapshot → a cópia reuse_adset
     // não perde mais o targeting detalhado no apply.
     ...(profile.interestGroupRefs && profile.interestGroupRefs.length > 0 ? { interestGroups: profile.interestGroupRefs } : {}),

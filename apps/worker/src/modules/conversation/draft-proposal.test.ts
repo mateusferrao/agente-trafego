@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, cleanPixelQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, matchPixelsByQuery, normalizeAdCount, pageChoiceLabel, pixelChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, cleanPixelQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, describeResolvedSnapshot, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, matchPixelsByQuery, normalizeAdCount, pageChoiceLabel, pixelChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
 import type { PageInfo, PixelInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
@@ -354,6 +354,44 @@ describe("buildResolvedSnapshot / describeResolvedAudience (P0.2/P1 — público
   it("describeResolvedAudience: expansão ligada explícita → avisa no texto", () => {
     const desc = describeResolvedAudience(profileWith({ expansion: { summary: "on", advantageAudience: 1 } }));
     expect(desc).toContain("expansão de público ligada");
+  });
+
+  it("C2: buildResolvedSnapshot carrega o gênero da fonte (só-mulheres) — não vira 'todos'", () => {
+    expect(buildResolvedSnapshot(profileWith({ genders: [2] })).genders).toEqual([2]);
+    // ausente na fonte → snapshot sem gênero (todos)
+    expect(buildResolvedSnapshot(profileWith({})).genders).toBeUndefined();
+  });
+
+  it("C2: describeResolvedAudience nomeia o gênero herdado", () => {
+    expect(describeResolvedAudience(profileWith({ genders: [1] }))).toContain("homens");
+    expect(describeResolvedAudience(profileWith({ genders: [2] }))).toContain("mulheres");
+    expect(describeResolvedAudience(profileWith({ genders: [1, 2] }))).not.toContain("homens");
+  });
+});
+
+describe("describeResolvedSnapshot (C1 — honestidade do público herdado, nomeado)", () => {
+  it("nomeia cidades + idade + gênero + interesses + expansão (não o genérico)", () => {
+    const desc = describeResolvedSnapshot({
+      geo: { cities: [{ key: "1", name: "Belo Horizonte" }] },
+      ageMin: 45,
+      genders: [2],
+      interestGroups: [[{ id: "i1", name: "Estética" }]],
+      expansionRaw: { advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 },
+    });
+    expect(desc).toBe("Belo Horizonte, 45+ anos, mulheres, interesses: Estética, sem expansão de público");
+  });
+
+  it("expansão ligada → avisa; salvos incluídos/excluídos → anuncia sem vazar id", () => {
+    const desc = describeResolvedSnapshot({
+      geo: { countries: ["BR"] },
+      customAudienceIncludeIds: ["A1"],
+      customAudienceExcludeIds: ["A2"],
+      expansionRaw: { advantageAudience: 1, relaxCustomAudience: 0, relaxLookalike: 0 },
+    });
+    expect(desc).toContain("expansão de público ligada");
+    expect(desc).toContain("+ público salvo indicado");
+    expect(desc).toContain("excluindo público salvo");
+    expect(desc).not.toContain("A1");
   });
 });
 

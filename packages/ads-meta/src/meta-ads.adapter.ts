@@ -88,7 +88,7 @@ const ENTITY_EDGE: Readonly<Record<ListableLevel, string>> = {
 const ENTITY_FIELDS: Readonly<Record<ListableLevel, string>> = {
   campaign: "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,objective,bid_strategy,bid_amount",
   adset:
-    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,bid_strategy,bid_amount,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id,whatsapp_phone_number},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
+    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,bid_strategy,bid_amount,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id,whatsapp_phone_number},targeting{geo_locations,age_min,age_max,genders,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
   ad: "id,name,status,effective_status,adset_id,campaign_id",
 };
 

@@ -179,6 +179,17 @@ export function audienceEchoPhrase(args: {
   return "amplo (Advantage+)";
 }
 
+/** Rótulo PT de gênero a partir da taxonomia neutra (1=homens, 2=mulheres). Só-um = restrição real;
+ *  ambos/vazio = todos (null — não anuncia). Fonte única dos describers. PURO. */
+function genderLabelPt(genders: readonly (1 | 2)[] | undefined): string | null {
+  if (!genders) return null;
+  const men = genders.includes(1);
+  const women = genders.includes(2);
+  if (men && !women) return "homens";
+  if (women && !men) return "mulheres";
+  return null;
+}
+
 /** Descrição HONESTA do público EXPLÍCITO (Fase 1, subfatia 3a) — geo/idade/gênero pro eco. Pura. */
 export function describeExplicitAudience(targeting: Extract<TargetingSpec, { readonly kind: "explicit" }>): string {
   // raio (Slice 5): cidade com raio → "BH (raio 20 km)"; senão só o nome.
@@ -199,7 +210,7 @@ export function describeExplicitAudience(targeting: Extract<TargetingSpec, { rea
         : targeting.ageMax !== undefined
           ? `até ${targeting.ageMax} anos`
           : null;
-  const genderLabel = targeting.genders?.includes(1) && !targeting.genders.includes(2) ? "homens" : targeting.genders?.includes(2) && !targeting.genders.includes(1) ? "mulheres" : null;
+  const genderLabel = genderLabelPt(targeting.genders);
   // grupos (Slice 3/4): "A ou B" dentro do grupo, " e " entre grupos (AND narrowing).
   const describeGroups = (gs: readonly (readonly { readonly name: string }[])[] | undefined, label: string): string | null => {
     const groups = (gs ?? []).filter((g) => g.length > 0);
@@ -263,12 +274,45 @@ export function describeResolvedAudience(profile: AudienceProfile): string {
   const places = cityNames.length > 0 ? cityNames : regionNames.length > 0 ? regionNames : (profile.geo ?? []);
   const placesLabel = places.length > 0 ? summarizePlaces(places) : null;
   const ageLabel = profile.ageMin !== undefined || profile.ageMax !== undefined ? `${profile.ageMin ?? "?"}-${profile.ageMax ?? "?"} anos` : null;
+  const genderLabel = genderLabelPt(profile.genders); // C2: nomeia o gênero herdado (só-homens/só-mulheres)
   const { summary } = resolveExpansion(profile.expansion);
   const expansionLabel = summary === "on" ? "expansão de público ligada" : "sem expansão de público";
   // Slice 9: eco honesto — a cópia reuse_adset preserva os públicos salvos; anuncia quando houver.
   const savedLabel = profile.customAudienceCount > 0 ? `${profile.customAudienceCount} público(s) salvo(s)` : null;
   const exclLabel = profile.exclusionCount > 0 ? `${profile.exclusionCount} exclusão(ões)` : null;
-  return [placesLabel, ageLabel, savedLabel, exclLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
+  return [placesLabel, ageLabel, genderLabel, savedLabel, exclLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
+}
+
+/**
+ * Descrição HONESTA e NOMEADA do público herdado a partir do SNAPSHOT resolvido (C1) — cidades/regiões/
+ * países, idade, GÊNERO, interesses/comportamentos (com nome, do snapshot), públicos salvos e expansão.
+ * Diferente de `describeResolvedAudience` (que parte do `AudienceProfile` e só CONTA os salvos), aqui o
+ * snapshot já traz os grupos com nome → o `get_pending_draft` para de dizer o genérico "a mesma
+ * segmentação que está rodando" e NOMEIA o que o público herdado é. PURA. */
+export function describeResolvedSnapshot(snapshot: ResolvedAudienceSnapshot): string {
+  const cities = (snapshot.geo.cities ?? []).map((c) => c.name);
+  const regions = (snapshot.geo.regions ?? []).map((r) => r.name);
+  const places = cities.length > 0 ? cities : regions.length > 0 ? regions : (snapshot.geo.countries ?? []);
+  const placesLabel = places.length > 0 ? summarizePlaces(places) : null;
+  const ageLabel =
+    snapshot.ageMin !== undefined && snapshot.ageMax !== undefined
+      ? `${snapshot.ageMin}-${snapshot.ageMax} anos`
+      : snapshot.ageMin !== undefined
+        ? `${snapshot.ageMin}+ anos`
+        : snapshot.ageMax !== undefined
+          ? `até ${snapshot.ageMax} anos`
+          : null;
+  const genderLabel = genderLabelPt(snapshot.genders);
+  const nameGroups = (gs: readonly (readonly { readonly name: string }[])[] | undefined, label: string): string | null => {
+    const groups = (gs ?? []).filter((g) => g.length > 0);
+    return groups.length > 0 ? `${label}: ${groups.map((g) => g.map((i) => i.name).join(" ou ")).join(" e ")}` : null;
+  };
+  const interestsLabel = nameGroups(snapshot.interestGroups, "interesses");
+  const behaviorsLabel = nameGroups(snapshot.behaviorGroups, "comportamentos");
+  const savedLabel = snapshot.customAudienceIncludeIds && snapshot.customAudienceIncludeIds.length > 0 ? "+ público salvo indicado" : null;
+  const exclLabel = snapshot.customAudienceExcludeIds && snapshot.customAudienceExcludeIds.length > 0 ? "excluindo público salvo" : null;
+  const expansionLabel = snapshot.expansionRaw.advantageAudience === 1 ? "expansão de público ligada" : "sem expansão de público";
+  return [placesLabel, ageLabel, genderLabel, interestsLabel, behaviorsLabel, savedLabel, exclLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
 }
 
 /** Rótulo PT do formato não-reusável (o vocabulário neutro vem do adapter). */

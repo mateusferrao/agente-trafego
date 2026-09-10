@@ -36,6 +36,8 @@ export interface RawTargeting {
   };
   readonly age_min?: number;
   readonly age_max?: number;
+  /** gênero Meta: [1]=homens, [2]=mulheres, ausente/ambos = todos. C2 — pra não perder o gênero da fonte. */
+  readonly genders?: readonly number[];
   readonly custom_audiences?: readonly RawAudienceRef[];
   readonly excluded_custom_audiences?: readonly RawAudienceRef[];
   readonly flexible_spec?: readonly RawInterestGroup[];
@@ -148,6 +150,9 @@ export function audienceFromTargeting(t: RawTargeting | undefined): AudienceProf
   const entries = geoEntries(t);
   const interestGroupRefs = collectGroupRefs(t, "interests");
   const behaviorGroupRefs = collectGroupRefs(t, "behaviors");
+  // gênero: só é RESTRIÇÃO real quando é um único (só [1] ou só [2]); [1,2]/ausente = todos (omite).
+  const genders = (t.genders ?? []).filter((g): g is 1 | 2 => g === 1 || g === 2);
+  const genderRestricted = genders.length === 1;
 
   return {
     stage,
@@ -157,6 +162,7 @@ export function audienceFromTargeting(t: RawTargeting | undefined): AudienceProf
     ...(entries.length > 0 ? { geoEntries: entries } : {}),
     ...(t.age_min !== undefined ? { ageMin: t.age_min } : {}),
     ...(t.age_max !== undefined ? { ageMax: t.age_max } : {}),
+    ...(genderRestricted ? { genders } : {}),
     ...(interests.length > 0 ? { interests } : {}),
     ...(interestGroupRefs.length > 0 ? { interestGroupRefs } : {}),
     ...(behaviorGroupRefs.length > 0 ? { behaviorGroupRefs } : {}),

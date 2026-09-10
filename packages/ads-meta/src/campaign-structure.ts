@@ -75,7 +75,7 @@ export class MetaCampaignStructureService {
           accessToken: account.accessToken,
           params: {
             fields:
-              "id,effective_status,daily_budget,lifetime_budget,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
+              "id,effective_status,daily_budget,lifetime_budget,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id},targeting{geo_locations,age_min,age_max,genders,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
             limit: COPY_STRUCTURE_ADSET_LIMIT,
           },
         }),
