@@ -209,6 +209,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
   const ads = new MetaAdsAdapter({
     client,
     governor,
+    logger, // diagnóstico do payload de createAdSet (idade×Advantage)
     customConversions: new CustomConversionsResolver({
       client,
       redis,

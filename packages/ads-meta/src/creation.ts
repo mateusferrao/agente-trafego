@@ -353,12 +353,18 @@ function positiveCount(n: number | undefined): number | undefined {
   return typeof n === "number" && n >= 0 ? n : undefined;
 }
 
+/** Logger de diagnóstico mínimo (structural — a instância pino do worker satisfaz). Mantém o
+ *  adapter livre de dependência de logging; ausente = silencioso. */
+export interface AdsDebugLogger {
+  info(obj: Record<string, unknown>, msg: string): void;
+}
+
 /**
  * Serviço de CRIAÇÃO/DUPLICAÇÃO na Meta (Fatia 7). Isola o vocabulário Meta (`/copies`,
  * `status_option`, `deep_copy`) — o core/shared falam `DuplicateEntityInput`/`DuplicateResult`.
  */
 export class MetaCreationService {
-  constructor(private readonly client: MetaGraphClient) {}
+  constructor(private readonly client: MetaGraphClient, private readonly logger?: AdsDebugLogger) {}
 
   /**
    * Duplica reconstruindo a árvore com cópias RASAS (`/copies` deep_copy=false = 1 objeto por
@@ -693,6 +699,18 @@ export class MetaCreationService {
     if (conv.promotedObject) params["promoted_object"] = JSON.stringify(conv.promotedObject);
     // destino do conjunto (CTWA/WhatsApp) — a Meta exige junto do promoted_object.page_id.
     if (conv.destinationType) params["destination_type"] = conv.destinationType;
+    // DIAGNÓSTICO (idade×Advantage): registra o `targeting` REAL que vai pra Meta — kind + a flag
+    // advantageAudience efetiva + o objeto cru (mostra se `age_max` saiu junto de `advantage_audience:1`,
+    // e por qual builder). Sem token. É a verdade do byte enviado (o eco/spec é intenção, não o enviado).
+    this.logger?.info(
+      {
+        conjunto: input.name,
+        targetingKind: input.targeting.kind,
+        advantageAudience: input.advantageAudience ?? false,
+        rawTargeting: targeting,
+      },
+      "ads-meta:createAdSet targeting enviado",
+    );
     const adsetId = await this.createOnAccount(account, "adsets", params);
     return { adsetId, targetingFallback: fallback };
   }

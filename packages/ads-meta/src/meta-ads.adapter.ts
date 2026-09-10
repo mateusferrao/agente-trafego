@@ -41,7 +41,7 @@ import { normalizeAdAccountId, stripActPrefix } from "./ids.js";
 import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
 import { MetaMutationsService } from "./mutations.js";
-import { MetaCreationService } from "./creation.js";
+import { MetaCreationService, type AdsDebugLogger } from "./creation.js";
 import { MetaWhatsappDestinationService } from "./whatsapp-destination.js";
 import { MetaAudiencesService } from "./audiences.js";
 import { MetaGeoSearchService } from "./geo-search.js";
@@ -291,6 +291,8 @@ export interface MetaAdsAdapterDeps {
   readonly creatives?: MetaCreativesService;
   readonly mutations?: MetaMutationsService;
   readonly creation?: MetaCreationService;
+  /** Logger de diagnóstico (opcional) — hoje só p/ o payload de `createAdSet` (idade×Advantage). */
+  readonly logger?: AdsDebugLogger;
   /** Resolve nomes de conversão personalizada p/ rotular objetivos (opcional; degrada). */
   readonly customConversions?: CustomConversionsResolver;
   /** Cache do catálogo de entidades entre runs (opcional; ausente = sempre lista fresco). */
@@ -329,7 +331,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.insights = deps.insights ?? new MetaInsightsService(deps.client, deps.governor);
     this.creatives = deps.creatives ?? new MetaCreativesService(deps.client, deps.governor, deps.visionFrames);
     this.mutations = deps.mutations ?? new MetaMutationsService(deps.client);
-    this.creation = deps.creation ?? new MetaCreationService(deps.client);
+    this.creation = deps.creation ?? new MetaCreationService(deps.client, deps.logger);
     this.whatsapp = new MetaWhatsappDestinationService(deps.client, deps.governor, this.creatives);
     this.audiences = new MetaAudiencesService(deps.client, deps.governor);
     this.geoSearch = new MetaGeoSearchService(deps.client, deps.governor);

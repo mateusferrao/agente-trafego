@@ -283,6 +283,12 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
       await runFromScratchSaga(ports.ads, pausedDraft, ref, createdIds, persist);
     }
   } catch (error) {
+    // DIAGNÓSTICO: o texto CRU da Meta (error_user_msg via userMessage) + kind + msg técnica — INTERNO,
+    // nunca vai pro usuário (que recebe a versão traduzida do B3). Pareado com o log do payload de
+    // createAdSet, fecha o caso idade×Advantage (o que saiu × o que a Meta respondeu de verdade).
+    if (error instanceof AdsPlatformError) {
+      logger.warn({ draftId: row.id, kind: error.kind, metaUserMessageCru: error.userMessage, tech: error.message }, "apply-draft:meta recusou (cru)");
+    }
     // createdIds já foi persistido incrementalmente → o retry retoma daqui.
     await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
     // vencedor legado (criativo descontinuado): falha HONESTA + 2 saídas, não erro genérico.
