@@ -94,7 +94,7 @@ export const OBJECTIVE_REQUIRES_PIXEL_REASON =
  * DECIDE (nunca o Roy). Erro = o quê + as duas saídas concretas. Reusado na rede do apply e no chat.
  */
 export const ADVANTAGE_AGE_CONFLICT_REASON =
-  "você escolheu uma faixa de idade fixa, mas a otimização automática de público não trava a idade na Meta — as duas não vão juntas. Como você prefere? Me diga: *travar a idade* (eu desligo a otimização e mantenho a sua faixa) ou *manter a otimização* (eu deixo a idade livre pra ela escolher)";
+  "você escolheu uma faixa de idade fixa, mas a otimização automática de público não trava a idade na Meta — as duas não vão juntas. Como você prefere? Me diga: *travar a idade* (desligo a otimização e mantenho a sua faixa) ou *tirar a faixa de idade* (mantenho a otimização e deixo o público livre pra ela otimizar)";
 
 /** Patch NEUTRO de edição — campos já RESOLVIDOS pela casca (audience→targeting, asset/serving→
  *  creative, geração/add/remover→copyVariants). O núcleo só faz o merge + as regras de negócio. */

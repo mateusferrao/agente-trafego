@@ -50,9 +50,12 @@ export function explicitTargetingToRaw(spec: ExplicitTargeting, advantageAudienc
   return {
     geo_locations: geoLocations,
     ...(spec.ageMin !== undefined ? { age_min: spec.ageMin } : {}),
-    // B1: sob Advantage+ audience a Meta trata a idade como MÍNIMO-sugestão e NÃO aceita um teto —
-    // enviar `age_max` junto de `advantage_audience:1` faz a Meta recusar o adset ("adicione uma idade
-    // mínima maior como sugestão"). "45+" é 45 e acima, a expansão sobe. Advantage OFF → faixa fixa.
+    // Sob Advantage+ audience a Meta só HONRA idade dura na faixa 18-25 (log de prod: `age_min:45` +
+    // `advantage_audience:1` → "Invalid parameter"). O conflito idade×otimização é resolvido A MONTANTE
+    // PERGUNTANDO ao dono (core `advantageAgeConflict` + rede do apply), então um payload conflitante não
+    // chega aqui. Este drop de `age_max` sob Advantage é só um último net (não silencia o dono — o eco já
+    // perguntou); Advantage OFF → faixa fixa (piso + teto). FAST-FOLLOW: reconciliar com o detector
+    // (hoje ele não dispara pra teto ≤25, que este drop ainda tiraria em silêncio).
     ...(spec.ageMax !== undefined && !advantageAudience ? { age_max: spec.ageMax } : {}),
     ...(spec.genders && spec.genders.length > 0 ? { genders: spec.genders } : {}),
     ...(spec.customAudienceIncludeIds && spec.customAudienceIncludeIds.length > 0 ? { custom_audiences: spec.customAudienceIncludeIds.map((id) => ({ id })) } : {}),

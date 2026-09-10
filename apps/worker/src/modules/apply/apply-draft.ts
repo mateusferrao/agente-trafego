@@ -201,10 +201,12 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     if (allowed.spec.objective && conversionRequiresPixel(allowed.spec.objective) && !allowed.spec.pixelId) {
       return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
     }
-    // B4 (rede): idade fixa (piso/teto fora de 18-25) + otimização automática = a Meta recusa o
+    // B4 (rede): idade dura com piso>25 (ou teto>25) + otimização automática = a Meta recusa o
     // createAdSet ("Invalid parameter") no meio da saga. O propose já pergunta ao dono, mas um spec do
     // site/proativo/legado pode escapar — barra ANTES de criar (sem tentativa falha nem órfã) e devolve
-    // a MESMA pergunta (§8: o dono decide travar a idade OU manter a otimização).
+    // a MESMA pergunta (§8: o dono decide travar a idade OU tirar a faixa). Cobre `explicit` (single +
+    // conjuntos); `reuse_adset`/snapshot NÃO é lido aqui (fast-follow — o rollback do B2 evita a órfã se
+    // um snapshot conflitante escapar).
     if (advantageAgeConflict(allowed.spec, allowed.spec.advantageAudience ?? false)) {
       return { kind: "blocked", reason: ADVANTAGE_AGE_CONFLICT_REASON };
     }

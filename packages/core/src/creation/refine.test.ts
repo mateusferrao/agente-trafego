@@ -72,6 +72,10 @@ describe("advantageAgeConflict — idade fixa × otimização automática (§8: 
   it("advantage ON + idade dentro de 18-25 → NÃO conflita (a Meta trava nessa faixa)", () => {
     expect(advantageAgeConflict({ targeting: explicit({ ageMin: 18, ageMax: 24 }) }, true)).toBe(false);
   });
+  it("fronteira exata do limite (25 não conflita; 26 conflita)", () => {
+    expect(advantageAgeConflict({ targeting: explicit({ ageMin: 25 }) }, true)).toBe(false);
+    expect(advantageAgeConflict({ targeting: explicit({ ageMin: 26 }) }, true)).toBe(true);
+  });
   it("advantage ON + sem idade explícita (advantage_plus) → não conflita", () => {
     expect(advantageAgeConflict({ targeting: { kind: "advantage_plus" } }, true)).toBe(false);
   });
