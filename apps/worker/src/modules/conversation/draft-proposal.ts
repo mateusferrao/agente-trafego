@@ -2781,8 +2781,11 @@ export async function proposeCreateCampaign(
   if (!auto && !pixelQuery && pixelId && conversionRequiresPixel(goal)) {
     const pixels = await deps.ports.ads.listPixels(ac.ref);
     if (pixels.length > 1) {
+      // G14 (sem id cru): se o inferido não está no set listado, NÃO vaza o id numérico — rótulo genérico.
       const inferred = pixels.find((p) => p.pixelId === pixelId);
-      pixelChoiceNote = `Rastreando pelo pixel *${inferred ? pixelChoiceLabel(inferred) : pixelId}* — você tem outros; me diz se quer trocar.`;
+      pixelChoiceNote = inferred
+        ? `Rastreando pelo pixel *${pixelChoiceLabel(inferred)}* — você tem outros; me diz se quer trocar.`
+        : `Rastreando pelo pixel de conversão da conta — você tem outros; me diz se quer um específico.`;
     }
   }
   const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? [], auto);
@@ -3464,7 +3467,9 @@ export async function proposeCopyCampaign(
           ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
           ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}),
           ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}),
-          ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
+          // C2: gênero — o dono escolheu vence; senão HERDA o da fonte (do snapshot) igual a idade/interesses
+          // (antes o ramo explicit da cópia perdia um público só-de-homens/-mulheres em silêncio ao editar um primitivo).
+          ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : resolvedSnapshot.genders && resolvedSnapshot.genders.length > 0 ? { genders: resolvedSnapshot.genders } : {}),
           // Slice 6: sobrescreveu → usa o novo; senão HERDA os grupos da fonte (com id, do snapshot) —
           // a cópia fiel não perde mais interesses/comportamentos ao virar explicit.
           ...(interestPrep.interests.length > 0 ? { interestGroups: [interestPrep.interests] } : resolvedSnapshot.interestGroups && resolvedSnapshot.interestGroups.length > 0 ? { interestGroups: resolvedSnapshot.interestGroups } : {}),
