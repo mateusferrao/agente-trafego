@@ -11,7 +11,7 @@ import type {
   DuplicateResult,
   ModernizationNote,
 } from "@trafego/shared/ports";
-import type { AdMetric, AudienceProfile, ConversionGoal, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
+import type { AdMetric, AudienceProfile, ConversionGoal, DeliveryEstimate, PixelInfo, ResolvedAudienceSnapshot } from "@trafego/shared/types";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION, type BatchSubRequest, type BatchSubResponse } from "./client.js";
@@ -1091,6 +1091,33 @@ export class MetaCreationService {
       ...(unsupportedTopFormat ? { unsupportedTopFormat } : {}),
     };
     return result;
+  }
+
+  /** limite de pixels a listar — uma conta raramente tem mais que um punhado. */
+  private static readonly PIXEL_LIST_LIMIT = 50;
+
+  /**
+   * Pixels de rastreamento de conversões da conta (`{account}/adspixels?fields=id,name`) — pra o dono
+   * ESCOLHER qual usar quando há N e pra nomear o inferido. Best-effort: sem acesso/pixel (403/vazio) →
+   * lista vazia (o caller cai no pixel inferido/padrão, honesto). Vocabulário Meta (`adspixels`) só aqui.
+   */
+  async listPixels(account: AdAccountRef): Promise<PixelInfo[]> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    try {
+      const { data: body } = await this.client.request<{ data?: ReadonlyArray<{ id?: string; name?: string }> }>({
+        method: "GET",
+        path: `${accountId}/adspixels`,
+        accessToken: account.accessToken,
+        params: { fields: "id,name", limit: String(MetaCreationService.PIXEL_LIST_LIMIT) },
+      });
+      const out: PixelInfo[] = [];
+      for (const p of body.data ?? []) {
+        if (p.id) out.push({ pixelId: p.id, ...(p.name ? { name: p.name } : {}) });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   /**

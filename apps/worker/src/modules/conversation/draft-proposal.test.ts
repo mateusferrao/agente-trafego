@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, copyRequiresDestinationPage, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
-import type { PageInfo } from "@trafego/shared";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, cleanPixelQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, matchPixelsByQuery, normalizeAdCount, pageChoiceLabel, pixelChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
+import type { PageInfo, PixelInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -953,6 +953,38 @@ describe("matchPagesByQuery / pageChoiceLabel (picker de Página — W2)", () =>
   });
 });
 
+describe("matchPixelsByQuery / pixelChoiceLabel / cleanPixelQuery (picker de pixel — B)", () => {
+  const pixels: PixelInfo[] = [
+    { pixelId: "PX1", name: "Loja Nova" },
+    { pixelId: "PX2", name: "Loja Antiga" },
+    { pixelId: "PX3" },
+  ];
+  it("nome (substring, case/acento-insensitive) → casa o pixel", () => {
+    expect(matchPixelsByQuery(pixels, "nova").map((p) => p.pixelId)).toEqual(["PX1"]);
+    expect(matchPixelsByQuery(pixels, "ANTIGA").map((p) => p.pixelId)).toEqual(["PX2"]);
+  });
+  it("typo tolerado (mesmo matcher fuzzy)", () => {
+    expect(matchPixelsByQuery(pixels, "antigga").map((p) => p.pixelId)).toEqual(["PX2"]);
+  });
+  it("prefixo comum → N matches (o caller pergunta, nunca chuta)", () => {
+    expect(matchPixelsByQuery(pixels, "loja").map((p) => p.pixelId)).toEqual(["PX1", "PX2"]);
+  });
+  it("nada bate → lista vazia (o caller lista as opções)", () => {
+    expect(matchPixelsByQuery(pixels, "farmácia")).toEqual([]);
+  });
+  it("rótulo mostra o nome; sem nome → id abreviado", () => {
+    expect(pixelChoiceLabel(pixels[0]!)).toBe("Loja Nova");
+    expect(pixelChoiceLabel(pixels[2]!)).toBe("pixel PX3");
+  });
+  it("cleanPixelQuery descarta vazio/sentinela ('pixel'/'null'), mantém nome real", () => {
+    expect(cleanPixelQuery("Loja Nova")).toBe("Loja Nova");
+    expect(cleanPixelQuery(":null")).toBeNull();
+    expect(cleanPixelQuery("pixel")).toBeNull();
+    expect(cleanPixelQuery("  ")).toBeNull();
+    expect(cleanPixelQuery(null)).toBeNull();
+  });
+});
+
 describe("stripGeoQualifier (retry de geo sem o sufixo)", () => {
   it("tira o estado após a vírgula", () => {
     expect(stripGeoQualifier("Belo Horizonte, MG")).toBe("Belo Horizonte");
@@ -969,14 +1001,3 @@ describe("stripGeoQualifier (retry de geo sem o sufixo)", () => {
   });
 });
 
-describe("copyRequiresDestinationPage (guard F2 — cópia CTWA exige a Página)", () => {
-  it("CONVERSAS (messaging) → exige a Página (único caminho page-required alcançável na cópia)", () => {
-    expect(copyRequiresDestinationPage("messaging_started")).toBe(true);
-  });
-  it("LEAD → NÃO aqui (lead-sem-pixel já é barrado pelo pré-check de pixel G1; lead-com-pixel = OFFSITE)", () => {
-    expect(copyRequiresDestinationPage("lead")).toBe(false);
-  });
-  it("VENDAS/conversão → não exige Página (usa pixel/OFFSITE)", () => {
-    expect(copyRequiresDestinationPage("purchase")).toBe(false);
-  });
-});

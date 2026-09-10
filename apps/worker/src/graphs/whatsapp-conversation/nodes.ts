@@ -878,6 +878,7 @@ export function makeConversationNodes(
               ...(typeof a["campaignName"] === "string" && a["campaignName"] ? { campaignName: a["campaignName"] as string } : {}),
               ...(typeof a["adsetName"] === "string" && a["adsetName"] ? { adsetName: a["adsetName"] as string } : {}),
               ...(typeof a["setPage"] === "string" && a["setPage"].trim().length > 0 ? { setPage: a["setPage"].trim() } : {}),
+              ...(typeof a["setPixel"] === "string" && a["setPixel"].trim().length > 0 ? { setPixel: a["setPixel"].trim() } : {}),
               ...(Array.isArray(a["removeGeo"]) ? { removeGeo: a["removeGeo"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["addGeo"]) ? { addGeo: a["addGeo"].filter((x): x is string => typeof x === "string") } : {}),
               ...(typeof a["ageMin"] === "number" ? { ageMin: a["ageMin"] as number } : {}),
@@ -1023,6 +1024,7 @@ export function makeConversationNodes(
                 ...(fill === "agent" || fill === "only_picked" ? { fillRemaining: fill } : {}),
                 ...(typeof args["link"] === "string" && args["link"].trim().length > 0 ? { link: args["link"].trim() } : {}),
                 ...(typeof args["page"] === "string" && args["page"].trim().length > 0 ? { page: args["page"].trim() } : {}),
+                ...(typeof args["pixel"] === "string" && args["pixel"].trim().length > 0 ? { pixel: args["pixel"].trim() } : {}),
                 // C1: intent (sinal de estrutura) + override de budgetMode — o core decide a estrutura.
                 ...(isCampaignIntent(args["intent"]) ? { intent: args["intent"] } : {}),
                 ...(isBudgetMode(args["budgetMode"]) ? { budgetMode: args["budgetMode"] } : {}),

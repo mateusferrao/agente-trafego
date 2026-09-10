@@ -7,7 +7,7 @@
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { agentToolCalls, approvals, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyCreationGuardrails, buildDuplicateInput, conversionRequiresPixel, goalNounPt, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaledBudget, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyCreationGuardrails, buildDuplicateInput, goalNounPt, OBJECTIVE_REQUIRES_PAGE_REASON, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaledBudget, promotedObjectGap, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
 import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
 import type { AgentId, ApprovalId, DraftId, RunId } from "@trafego/shared";
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
@@ -195,11 +195,18 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     if (!hasRefs && (!allowed.spec.pageId || !allowed.spec.creative)) {
       return { kind: "blocked", reason: "faltou a Página ou o criativo pra criar a campanha" };
     }
-    // G1 (rede): objetivo de conversão sem pixel → a Meta recusaria o `createAdSet` no meio da saga
-    // (deixando campanha órfã). O propose já bloqueia, mas um spec proativo/legado/site pode escapar —
-    // re-checa aqui com a MESMA verdade (`conversionRequiresPixel`) e barra ANTES de criar qualquer coisa.
-    if (allowed.spec.objective && conversionRequiresPixel(allowed.spec.objective) && !allowed.spec.pixelId) {
-      return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
+    // G1 (rede): o `promoted_object` do objetivo (pixel OU Página, ciente do mecanismo) faltando → a Meta
+    // recusaria o `createAdSet` no meio da saga (deixando campanha órfã). O propose já bloqueia, mas um spec
+    // proativo/legado/site pode escapar — re-checa aqui com a MESMA verdade (`promotedObjectGap`) e barra
+    // ANTES de criar. `reusesCreatives` = cópia fiel (creative_id traz o formulário de lead sem pixel).
+    if (allowed.spec.objective) {
+      const gap = promotedObjectGap(allowed.spec.objective, {
+        reusesCreatives: hasRefs,
+        hasPixel: !!allowed.spec.pixelId,
+        hasPage: !!allowed.spec.pageId,
+      });
+      if (gap === "pixel") return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
+      if (gap === "page") return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PAGE_REASON };
     }
     // B4 (rede): idade dura com piso>25 (ou teto>25) + otimização automática = a Meta recusa o
     // createAdSet ("Invalid parameter") no meio da saga. O propose já pergunta ao dono, mas um spec do

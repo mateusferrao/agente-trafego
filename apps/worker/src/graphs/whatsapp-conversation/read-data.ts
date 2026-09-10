@@ -37,7 +37,7 @@ import { AdsPlatformError } from "@trafego/shared/ports";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, withTimeout } from "@trafego/shared";
 import { ACCOUNT_HEALTH_STATUS_LABELS } from "@trafego/shared";
-import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, MetaAccountHealthStatus, OrgId, PageInfo, PartialReason, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, MetaAccountHealthStatus, OrgId, PageInfo, PartialReason, PixelInfo, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
 import type { DraftApproval } from "@trafego/shared/ports";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -1736,6 +1736,33 @@ export async function listPagesData(
 }
 
 /**
+ * Pixels de conversão REAIS da conta (id + nome) — pra o dono ESCOLHER qual usar na criação quando há N,
+ * ou só conferir os que tem. Best-effort: falha/timeout → nota honesta; lista vazia = a Meta não retornou
+ * pixels com o acesso do token (NUNCA prova de ausência). PURO de decisão (só IO na leitura).
+ */
+export async function listPixelsData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+): Promise<{ hasData: true; pixels: PixelInfo[] } | { hasData: false; note: string }> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return { hasData: false, note: "conta não encontrada" };
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  let pixels: PixelInfo[];
+  try {
+    pixels = await withTimeout(deps.ports.ads.listPixels(ref), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return { hasData: false, note: "não consegui buscar seus pixels agora — tenta de novo em instantes" };
+  }
+  if (pixels.length === 0)
+    return {
+      hasData: false,
+      note: "não consegui listar seus pixels agora — a Meta às vezes não retorna isso com o acesso do token, e isso NÃO quer dizer que não há pixel. A criação usa o pixel do seu anúncio que já converte; se você quer um pixel específico, me diga o nome dele.",
+    };
+  return { hasData: true, pixels };
+}
+
+/**
  * Campanhas GERENCIÁVEIS na Meta (ativa OU pausada) que ainda NÃO têm nenhuma linha em
  * `entity_analyses` — o gap de sincronização (pivô saúde): uma campanha recém-criada/ativada
  * existe de verdade na Meta mas só entra no cache curado na PRÓXIMA análise. Sem isso,
@@ -2427,6 +2454,20 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const listPixels = tool(
+    async () => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId }, "tool:list_pixels");
+      return asString(await listPixelsData(deps, ctx));
+    },
+    {
+      name: "list_pixels",
+      description:
+        "Lista os PIXELS de conversão da conta — id + nome. Use quando o dono perguntar 'quais pixels eu tenho' ou quando houver VÁRIOS e ele precisar escolher qual usar na criação. Por padrão a criação já usa o pixel que converte (do melhor anúncio); isto é pra ESCOLHER outro. Nunca invente um pixel — use os que aparecem aqui.",
+      schema: z.object({}),
+    },
+  );
+
   const getAdsBreakdown = tool(
     async ({
       periodDays,
@@ -2506,5 +2547,6 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getAdsBreakdown,
     listAudiences,
     listPages,
+    listPixels,
   ];
 }

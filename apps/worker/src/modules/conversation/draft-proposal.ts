@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, assessCreativePick, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, creativeSourceForIntent, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, hasHardFatigue, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type CreativeCritique, type CreativeIntent, type CreativePickSignals, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, assessCreativePick, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, creativeSourceForIntent, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, hasHardFatigue, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, promotedObjectGap, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type CreativeCritique, type CreativeIntent, type CreativePickSignals, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
@@ -37,6 +37,7 @@ import {
   type CreativeSourceStrategy,
   type DraftId,
   type PageInfo,
+  type PixelInfo,
   type ResolvedAudienceSnapshot,
   type TargetingSpec,
   withTimeout,
@@ -801,18 +802,6 @@ export const COPY_MISSING_DESTINATION_PAGE_REASON =
   "essa campanha leva as conversas pro WhatsApp de uma Página, mas eu não consegui ler essa Página de destino da campanha-base agora — sem ela a Meta não deixa criar o conjunto. Tenta de novo em instantes, ou crie a nova campanha pela análise/site (lá dá pra escolher a Página).";
 
 /**
- * A cópia deste objetivo EXIGE a Página no `promoted_object` da fonte pra não ser recusada? PURA.
- * Só CONVERSAS (CTWA / `messaging_started`): a Meta sempre resolve pra `CONVERSATIONS` + `promoted_object.
- * page_id` (nunca pelo ramo de pixel), e o objetivo NÃO exige pixel — então é o único caminho onde a
- * Página faltante escapa das outras redes e é recusada só no apply. LEAD sem pixel também exigiria a
- * Página (LEAD_GENERATION), mas o pré-check de pixel (`conversionRequiresPixel` ⊇ {lead}, apply-draft)
- * já barra lead-sem-pixel ANTES — então cobrir lead aqui seria inerte; lead-com-pixel/venda resolvem por
- * OFFSITE_CONVERSIONS (não precisam de Página). Fonte única do guard F2. */
-export function copyRequiresDestinationPage(goal: ConversionGoal): boolean {
-  return isMessagingGoal(goal);
-}
-
-/**
  * Ajusta o nº de anúncios PRESERVANDO os existentes: aumentar duplica o último (copy + criativo
  * próprio); diminuir corta os últimos (mín 1). Clampado ao teto. Não regenera copy nem apaga edições.
  */
@@ -1229,6 +1218,10 @@ export interface RefineDraftPatch {
    *  dono disse — resolvido determinístico contra as Páginas da conta; ambíguo/não-achado → bloqueia
    *  honesto (lista as opções). Em campanha de conversas muda pra qual WhatsApp o clique leva. */
   readonly setPage?: string;
+  /** TROCAR o pixel de conversão do rascunho (B — escolher entre N): NOME que o dono disse — resolvido
+   *  determinístico contra os pixels da conta; ambíguo/não-achado → bloqueia honesto (lista as opções);
+   *  conta com 1 pixel → usa ele. Só em objetivo de conversão (conversas não usam pixel). */
+  readonly setPixel?: string;
   /** ADICIONAR conjunto(s) ao teste de público (P2 — paridade com adicionar anúncio). Cada segmento
    *  carrega o público COMPLETO (P7: idade/gênero/geo/interesses/comportamentos/públicos/raio),
    *  resolvido como na criação de 1 conjunto. Rascunho de 1 conjunto → vira teste multi-conjunto (o
@@ -1304,7 +1297,7 @@ export function patchTouchesSinglePublico(patch: RefineDraftPatch): boolean {
 export function patchHasNonLinkAction(patch: RefineDraftPatch): boolean {
   return (
     patch.advantage !== undefined || hasValue(patch.budgetMode) || hasValue(patch.activation) || patch.budgetReais != null ||
-    hasValue(patch.objective) || hasValue(patch.campaignName) || hasValue(patch.adsetName) || hasValue(patch.setPage) ||
+    hasValue(patch.objective) || hasValue(patch.campaignName) || hasValue(patch.adsetName) || hasValue(patch.setPage) || hasValue(patch.setPixel) ||
     patch.regenerateCopy === true || patch.variantsCount != null || hasValue(patch.copyEdits) || hasValue(patch.setAdCreative) ||
     hasValue(patch.distinctCreatives) || hasValue(patch.mediaPreference) || hasValue(patch.addSegment) || hasValue(patch.removeSegment) ||
     hasValue(patch.resolveAgeConflict) ||
@@ -1312,11 +1305,12 @@ export function patchHasNonLinkAction(patch: RefineDraftPatch): boolean {
   );
 }
 
-export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | "advantage" | "budgetMode" | null {
+export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | "pixelId" | "advantage" | "budgetMode" | null {
   const has = hasValue;
   if (has(patch.objective)) return "objective";
   if (has(patch.link)) return "link";
   if (has(patch.setPage)) return "pageId";
+  if (has(patch.setPixel)) return "pixelId";
   // F1a/F1b: Advantage e onde a verba mora (CBO/ABO) são da estrutura do rascunho do zero — na escala
   // vêm herdados da fonte (não editáveis ali; bloqueio honesto em vez de no-op silencioso).
   if (patch.advantage !== undefined) return "advantage";
@@ -1710,6 +1704,35 @@ export async function refineDraft(
     }
     edit.pageId = hits[0]!.pageId;
     refineNotes.push(`Página trocada pra *${pageChoiceLabel(hits[0]!)}*.`);
+  }
+
+  // Trocar o PIXEL de conversão (B): resolve o nome contra os pixels da conta. Conta com 1 pixel → usa ele;
+  // ambíguo/não-achado → bloqueia honesto listando as opções (nunca troca pelo errado). `listPixels` vazio
+  // (sem acesso) → não dá pra resolver, bloqueia dizendo pra escolher no site.
+  const setPixelQuery = cleanPixelQuery(patch.setPixel); // lixo do modelo → null → ignora
+  if (setPixelQuery) {
+    const pixels = await deps.ports.ads.listPixels(ac.ref);
+    if (pixels.length === 0) {
+      return { kind: "blocked", reason: "não consegui listar seus pixels agora pra trocar — tente de novo, ou troque pela plataforma." };
+    }
+    if (pixels.length === 1) {
+      edit.pixelId = pixels[0]!.pixelId; // 1 pixel na conta → nada a escolher, uso ele
+      refineNotes.push(`Pixel: *${pixelChoiceLabel(pixels[0]!)}*.`);
+    } else {
+      const hits = matchPixelsByQuery(pixels, setPixelQuery);
+      if (hits.length !== 1) {
+        const listPt = (hits.length === 0 ? pixels : hits).map((p) => `• ${pixelChoiceLabel(p)}`).join("\n");
+        return {
+          kind: "blocked",
+          reason:
+            hits.length === 0
+              ? `não achei um pixel que bata com "${setPixelQuery}". Seus pixels:\n${listPt}\n\nMe diz qual.`
+              : `achei mais de um pixel pra "${setPixelQuery}":\n${listPt}\n\nQual deles?`,
+        };
+      }
+      edit.pixelId = hits[0]!.pixelId;
+      refineNotes.push(`Pixel trocado pra *${pixelChoiceLabel(hits[0]!)}*.`);
+    }
   }
 
   // F1b: onde a verba mora (CBO/ABO) — POR ÚLTIMO, pra a escolha explícita do dono vencer o default
@@ -2144,32 +2167,45 @@ export function resolveCreativeFill(picked: number, adCount: number, fill: "agen
  *  código de país/DDD) case várias Páginas à toa. Um número de WhatsApp real tem bem mais que isto. */
 const MIN_PHONE_MATCH_DIGITS = 6;
 
-/** comprimento máximo plausível de um nome/número de Página dito pelo dono. Acima disso é quase
- *  sempre alucinação do modelo (raciocínio/JSON malformado que caiu no arg da tool). */
-const MAX_PAGE_QUERY_LEN = 80;
+/** comprimento máximo plausível de uma referência (nome/número) dita pelo dono pra ESCOLHER uma
+ *  entidade (Página/pixel). Acima disso é quase sempre alucinação do modelo (raciocínio/JSON malformado
+ *  que caiu no arg da tool). */
+const MAX_CHOICE_QUERY_LEN = 80;
 
-/** Valores-sentinela que o LLM emite quando NÃO há Página dita (artefato de JSON/serialização que cai
- *  no arg): `null`/`undefined`/`nil`/`none`/`n/a`/`false`/`true` e a própria palavra "página". Tratados
- *  como "sem escolha" (usa a Página padrão), nunca como um nome a casar (senão "não achei :null"). */
-const SENTINEL_PAGE_QUERIES: ReadonlySet<string> = new Set(["null", "undefined", "nil", "none", "na", "false", "true", "page", "pagina"]);
+/** Valores-sentinela que o LLM emite quando NÃO há escolha dita (artefato de JSON/serialização que cai
+ *  no arg): `null`/`undefined`/`nil`/`none`/`n/a`/`false`/`true`. Tratados como "sem escolha", nunca como
+ *  um nome a casar (senão "não achei :null"). Cada picker soma os seus (ex: "página"/"pixel"). */
+const SENTINEL_CHOICE_QUERIES: readonly string[] = ["null", "undefined", "nil", "none", "na", "false", "true"];
+const SENTINEL_PAGE_QUERIES: ReadonlySet<string> = new Set([...SENTINEL_CHOICE_QUERIES, "page", "pagina"]);
+const SENTINEL_PIXEL_QUERIES: ReadonlySet<string> = new Set([...SENTINEL_CHOICE_QUERIES, "pixel"]);
 
-/** Sanitiza a referência de Página vinda do LLM ANTES de casar/ecoar (§7/§13): colapsa pra UMA linha,
- *  tira caracteres de controle/formato, e descarta o que for vazio, longo demais (alucinação) OU um
- *  valor-sentinela/artefato (ex: `:null`, `null`, `{}`) → null. O caller trata null como "sem escolha"
- *  (usa a Página padrão), NUNCA ecoa o texto cru nem trava o dono. Incidente real: o modelo mandou
+/** Sanitiza uma referência de ESCOLHA vinda do LLM ANTES de casar/ecoar (§7/§13, fonte única Página+pixel):
+ *  colapsa pra UMA linha, tira caracteres de controle/formato, e descarta o que for vazio, longo demais
+ *  (alucinação) OU um valor-sentinela/artefato (ex: `:null`, `null`, `{}`) → null. O caller trata null como
+ *  "sem escolha" (usa o default), NUNCA ecoa o texto cru nem trava o dono. Incidente real: o modelo mandou
  *  `":null"` no campo `page` numa criação SEM Página dita e o Roy puniu ("não achei :null"). PURO. */
-export function cleanPageQuery(raw?: string | null): string | null {
+function sanitizeChoiceQuery(raw: string | undefined | null, sentinels: ReadonlySet<string>): string | null {
   if (!raw) return null;
   const oneLine = raw
     .replace(/[\p{Cc}\p{Cf}]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (oneLine.length === 0 || oneLine.length > MAX_PAGE_QUERY_LEN) return null;
+  if (oneLine.length === 0 || oneLine.length > MAX_CHOICE_QUERY_LEN) return null;
   // núcleo alfanumérico (sem pontuação/aspas/chaves/dois-pontos): vazio (`{}`, `:`) OU sentinela
   // (`:null`→"null") → não é um nome de verdade → "sem escolha".
   const core = oneLine.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
-  if (core.length === 0 || SENTINEL_PAGE_QUERIES.has(core)) return null;
+  if (core.length === 0 || sentinels.has(core)) return null;
   return oneLine;
+}
+
+/** Sanitiza a referência de Página (delegando a `sanitizeChoiceQuery` com os sentinelas de Página). PURO. */
+export function cleanPageQuery(raw?: string | null): string | null {
+  return sanitizeChoiceQuery(raw, SENTINEL_PAGE_QUERIES);
+}
+
+/** Sanitiza a referência de pixel (mesma régua da Página; sentinelas incluem "pixel"). PURO. */
+export function cleanPixelQuery(raw?: string | null): string | null {
+  return sanitizeChoiceQuery(raw, SENTINEL_PIXEL_QUERIES);
 }
 
 /** Casa a Página pela referência do dono. NOME → o MESMO matcher fuzzy das outras entidades
@@ -2192,6 +2228,21 @@ export function matchPagesByQuery(pages: readonly PageInfo[], query: string): Pa
 /** Rótulo de UMA Página pra listar na desambiguação (nome + WhatsApp quando houver). PURO. */
 export function pageChoiceLabel(p: PageInfo): string {
   return `${p.name ?? "Página do Facebook"}${p.whatsappNumber ? ` (WhatsApp +${p.whatsappNumber})` : ""}`;
+}
+
+/** Casa o pixel pela referência do dono. Só por NOME (o dono não decora o id numérico do pixel) — o
+ *  MESMO matcher fuzzy das outras entidades (`resolveNamedMatch`: typo/acento/caixa/ordem toleradas,
+ *  §13 reuso-primeiro). `one`→[1] (autoescolhe) / `ambiguous`→[N] (o caller pergunta) / `none`→[]. */
+export function matchPixelsByQuery(pixels: readonly PixelInfo[], query: string): PixelInfo[] {
+  const m = resolveNamedMatch(pixels, query, { name: (p) => p.name ?? null });
+  if (m.kind === "one") return [m.row];
+  if (m.kind === "ambiguous") return [...m.rows];
+  return [];
+}
+
+/** Rótulo de UM pixel pra listar/confirmar (nome quando houver, senão o id abreviado). PURO. */
+export function pixelChoiceLabel(p: PixelInfo): string {
+  return p.name ?? `pixel ${p.pixelId}`;
 }
 
 /** Preferência de MÍDIA que o dono pode pedir pra composição (o adapter/estratégia escolhe QUAIS). */
@@ -2550,6 +2601,11 @@ export async function proposeCreateCampaign(
      *  Resolvida determinístico p/ a Página real; ambígua/não-achada → pergunta (nunca chuta). Vazia →
      *  usa a Página do anúncio-base (`defaults.pageId`, comportamento anterior). */
     readonly page?: string;
+    /** PIXEL de rastreamento DESCRITO pelo dono por nome (B — quando a conta tem N pixels). Resolvido
+     *  determinístico p/ o pixel real; ambíguo/não-achado → pergunta (nunca chuta); conta com 1 pixel →
+     *  usa ele. Vazio → o pixel INFERIDO do melhor anúncio (`defaults.pixelId`); quando há >1 pixel, o eco
+     *  NOMEIA o inferido (transparência). */
+    readonly pixel?: string;
     /** SINAL de estrutura extraído da fala (C1, decisão #1): o core `resolveStructure` decide a
      *  estrutura-default do playbook a partir daqui; ausência = "create" (genérico). */
     readonly intent?: CampaignIntent;
@@ -2596,7 +2652,46 @@ export async function proposeCreateCampaign(
   // "objetivo"). A alternativa nativa (mensagens no WhatsApp) não precisa de pixel. Mesma verdade do refino.
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
-  if (conversionRequiresPixel(goal) && !defaults.pixelId) {
+
+  // PIXEL (B): o default é INFERIDO em silêncio (`defaults.pixelId` = pixel do melhor anúncio). O dono só
+  // ESCOLHE quando NOMEIA um ("usa o pixel X"): resolvo determinístico; 1 acerto seta; conta com 1 pixel →
+  // uso ele (nada a escolher); 0/N → PERGUNTO listando (§8 nunca chuto). Sem escolha → sigo no inferido; a
+  // transparência do inferido (quando há >1 pixel) entra abaixo, já com o `auto` conhecido.
+  let pixelId = defaults.pixelId;
+  let pixelChoiceNote: string | undefined;
+  const pixelQuery = cleanPixelQuery(args.pixel);
+  if (pixelQuery) {
+    const pixels = await deps.ports.ads.listPixels(ac.ref);
+    if (pixels.length === 1) {
+      pixelId = pixels[0]!.pixelId; // 1 pixel na conta → nada a escolher, uso ele
+      pixelChoiceNote = `Pixel: *${pixelChoiceLabel(pixels[0]!)}*.`;
+    } else {
+      const hits = matchPixelsByQuery(pixels, pixelQuery);
+      if (hits.length === 1) {
+        pixelId = hits[0]!.pixelId;
+        pixelChoiceNote = `Pixel escolhido: *${pixelChoiceLabel(hits[0]!)}*.`;
+      } else if (pixels.length === 0) {
+        // não consegui listar (sem acesso) → uso o pixel do anúncio-base, honesto.
+        pixelChoiceNote = `Não consegui listar seus pixels agora, então usei o pixel do seu anúncio-base.`;
+      } else {
+        // 0 matches OU N matches → pergunta, listando o que a conta tem (§8: nunca escolho sozinho).
+        const listPt = pixels.map((p) => `• ${pixelChoiceLabel(p)}`).join("\n");
+        return {
+          kind: "ask",
+          echo:
+            hits.length === 0
+              ? `Não achei um pixel que bata com "${pixelQuery}". Seus pixels:\n${listPt}\n\nQual você quer usar?`
+              : `Achei mais de um pixel pra "${pixelQuery}":\n${hits.map((p) => `• ${pixelChoiceLabel(p)}`).join("\n")}\n\nQual deles?`,
+        };
+      }
+    }
+  }
+
+  // Criar do zero NÃO reusa criativo (não gera formulário de lead) → lead segue exigindo pixel. Só ajo no
+  // gap de PIXEL aqui (§7 clareza — o pixel decide se a campanha pode nascer); a Página é resolvida abaixo
+  // (picker) e tem a própria rede no apply, então não bloqueio por ela cedo. Usa o `pixelId` já resolvido
+  // (a escolha do dono vence o inferido).
+  if (promotedObjectGap(goal, { reusesCreatives: false, hasPixel: !!pixelId, hasPage: !!defaults.pageId }) === "pixel") {
     return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
   }
 
@@ -2636,6 +2731,16 @@ export async function proposeCreateCampaign(
   // AUTÔNOMO (proativo, Fatia 8): ambíguo/inexistente é DESCARTADO (nunca pergunta — não há humano
   // no loop) e anotado no eco/rationale. Interativo (chat): ambíguo→pergunta, como sempre.
   const auto = opts.autonomous === true;
+  // Transparência do inferido (B, Opção 2): pixel NÃO escolhido + objetivo que usa pixel + conta com >1
+  // pixel → o eco NOMEIA o pixel que vou usar (o dono corrige antes de aprovar, sem eu perguntar). Só
+  // interativo (proativo não fala sozinho); 1 pixel → nada a decidir → sem linha.
+  if (!auto && !pixelQuery && pixelId && conversionRequiresPixel(goal)) {
+    const pixels = await deps.ports.ads.listPixels(ac.ref);
+    if (pixels.length > 1) {
+      const inferred = pixels.find((p) => p.pixelId === pixelId);
+      pixelChoiceNote = `Rastreando pelo pixel *${inferred ? pixelChoiceLabel(inferred) : pixelId}* — você tem outros; me diz se quer trocar.`;
+    }
+  }
   const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? [], auto);
   if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
   // Autônomo que EXIGE público específico (ex: remarketing): se nenhum público de inclusão resolveu,
@@ -2810,6 +2915,7 @@ export async function proposeCreateCampaign(
     );
   }
   if (pageChoiceNote) compositionNotes.push(pageChoiceNote); // W2: eco da Página escolhida (ou da degradação honesta)
+  if (pixelChoiceNote) compositionNotes.push(pixelChoiceNote); // B: eco do pixel escolhido OU do inferido (transparência, >1 pixel)
   // pool DISTINTO priorizado (o melhor `chosen` primeiro), deduplicado por mídia, filtrado por preferência.
   // Mantém os candidatos DESCRITOS (não só o ref): a decomposição de visão do líder aterra a copy.
   // pool inclui vídeos SEM capa guardada (o dono pode ESCOLHER um que a lista mostrou — o apply
@@ -3018,12 +3124,12 @@ export async function proposeCreateCampaign(
       ...(reuseVideoId ? { metaVideoId: reuseVideoId } : {}),
     },
     pageId,
-    ...(defaults.pixelId ? { pixelId: defaults.pixelId } : {}),
+    ...(pixelId ? { pixelId } : {}),
     ...(resolvedLinkUrl ? { linkUrl: resolvedLinkUrl } : {}),
   };
   // Piso de alcance (Fatia 8): no AUTÔNOMO, não cria (nem propõe) público estreito demais — degrada
   // honesto pra revisão humana. Best-effort: estimativa indisponível NÃO bloqueia (não inventa risco).
-  if (auto && opts.minMonthlyReach != null && (await reachBelowFloor(deps, ac.ref, targeting, goal, opts.minMonthlyReach, defaults.pixelId))) {
+  if (auto && opts.minMonthlyReach != null && (await reachBelowFloor(deps, ac.ref, targeting, goal, opts.minMonthlyReach, pixelId))) {
     return { kind: "blocked", reason: PROACTIVE_REACH_FLOOR_REASON };
   }
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin);
@@ -3074,7 +3180,7 @@ export async function proposeCreateCampaign(
     // G14: sem id cru (jargão pro não-técnico, §13) — a Página vem do seu anúncio ativo; o pixel,
     // quando há, é o de conversão da conta. O id técnico não ajuda o dono a decidir.
     // C1: orçamento em linguagem de negócio (nunca a sigla CBO/ABO crua) — onde a verba mora.
-    `Gasto novo: ${budgetPhrase}, orçamento ${budgetModeLabel(budgetMode)} · usa a sua Página do Facebook${defaults.pixelId ? " e o pixel de conversão da conta" : ""} · ${activationPhrase(spec.activation)}.`,
+    `Gasto novo: ${budgetPhrase}, orçamento ${budgetModeLabel(budgetMode)} · usa a sua Página do Facebook${pixelId ? " e o pixel de conversão da conta" : ""} · ${activationPhrase(spec.activation)}.`,
   );
   // C1: piso da Meta — recomenda subir, nunca trava (INVARIANTE: a palavra final é do dono).
   if (belowFloor) {
@@ -3113,7 +3219,7 @@ export async function proposeCreateCampaign(
   if (droppedNames.length > 0) lines.push(`Deixei de fora (não achei ou ambíguo na conta): ${droppedNames.join(", ")}.`);
   // alcance combinado (delivery_estimate ao vivo) quando o dono indicou público; superior ao
   // por-público → substitui o `sizeWarnings`, que fica de fallback quando a estimativa não vem.
-  const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, defaults.pixelId) : null;
+  const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, pixelId) : null;
   if (reachNote) lines.push(reachNote);
   else for (const w of aud.sizeWarnings) lines.push(w);
   // S5 — o especialista crítico (o "não só faz"): quando o criativo escolhido tem uma fraqueza real
@@ -3288,13 +3394,14 @@ export async function proposeCopyCampaign(
   }
 
   const goal = structure.objective;
-  // Guard honesto (bug prod CTWA): a Meta EXIGE `promoted_object.page_id` num conjunto de CONVERSAS
-  // (sempre) e de LEAD sem pixel. Se a fonte é desses E a leitura não capturou a Página, barra ANTES
-  // de tentar criar (senão o conjunto é recusado no apply e sobra campanha órfã). Mesmo padrão do
-  // pré-check de pixel (G1). Base com pixel resolve por OFFSITE_CONVERSIONS (não precisa de Página).
-  if (copyRequiresDestinationPage(goal) && !structure.pageId) {
-    return { kind: "blocked", reason: COPY_MISSING_DESTINATION_PAGE_REASON };
-  }
+  // Guard honesto (bug prod CTWA + lead-formulário): o `promoted_object` que a cópia precisa depende do
+  // MECANISMO (`promotedObjectGap`). A cópia SEMPRE reusa o criativo da fonte (`creative_id`) → o formulário
+  // de lead vem junto SEM pixel (destravado). Falta a Página lida (conversas / lead-formulário) → barra com a
+  // mensagem de Página; falta o pixel (venda/lead-site cuja leitura falhou) → mensagem de pixel. Barrar ANTES
+  // de criar evita o conjunto recusado no apply + a campanha órfã. Base com pixel resolve por OFFSITE.
+  const promotedGap = promotedObjectGap(goal, { reusesCreatives: true, hasPixel: !!structure.pixelId, hasPage: !!structure.pageId });
+  if (promotedGap === "page") return { kind: "blocked", reason: COPY_MISSING_DESTINATION_PAGE_REASON };
+  if (promotedGap === "pixel") return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
   const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
   // P0.2 (subfatia 2): structure.targeting JÁ é o AudienceProfile da fonte (readCampaignStructure
   // leu — sem chamada extra); só falta cachear+ecoar. Diferente de proposeCreateCampaign, aqui a

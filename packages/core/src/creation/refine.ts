@@ -37,6 +37,38 @@ export const REQUIRES_PIXEL: ReadonlySet<ConversionGoal> = new Set<ConversionGoa
 
 export const conversionRequiresPixel = (goal: ConversionGoal): boolean => REQUIRES_PIXEL.has(goal);
 
+/** O que falta no `promoted_object` do conjunto pra este objetivo poder nascer — `"pixel"`, `"page"`
+ *  ou `null` (nada falta). Insumos de conta/rascunho, não vocabulário Meta. */
+export type PromotedObjectGap = "pixel" | "page" | null;
+
+/**
+ * Requisito de `promoted_object` CIENTE DO MECANISMO (fonte única, subsume a antiga `copyRequiresDestinationPage`).
+ * Fato de DOMÍNIO (neutro; o adapter realiza como `promoted_object`, `resolveAdSetConversion`):
+ * - **conversas** (`messaging_started`) → exige a **Página** (o clique leva pro WhatsApp dela) — sem pixel.
+ * - **lead** tem 2 mecanismos: **site** (pixel → OFFSITE) e **formulário** (Página → LEAD_GENERATION, sem
+ *   pixel). O formulário só é viável REUSANDO o criativo (o form vem pelo `creative_id`) — criar do zero não
+ *   gera formulário. Então: tem pixel → ok (site); senão, reusa criativo E tem Página → ok (formulário);
+ *   senão falta — na cópia falta a **Página** (a base era formulário e não a li), na criação falta o **pixel**
+ *   (não dá pra gerar formulário do zero).
+ * - **demais objetivos de conversão** (`REQUIRES_PIXEL`) → exigem **pixel**.
+ * - **app/tráfego** → nada.
+ * PURO. `reusesCreatives` = o spec reusa `creative_id` da base (cópia fiel); `hasPixel`/`hasPage` = a conta/
+ * fonte tem cada um resolvido.
+ */
+export function promotedObjectGap(
+  goal: ConversionGoal,
+  ctx: { readonly reusesCreatives: boolean; readonly hasPixel: boolean; readonly hasPage: boolean },
+): PromotedObjectGap {
+  if (isMessagingGoal(goal)) return ctx.hasPage ? null : "page";
+  if (goal === "lead") {
+    if (ctx.hasPixel) return null; // mecanismo de site (OFFSITE)
+    if (ctx.reusesCreatives && ctx.hasPage) return null; // mecanismo de formulário (reuso do creative_id)
+    return ctx.reusesCreatives ? "page" : "pixel"; // cópia de formulário sem Página lida × criação sem pixel
+  }
+  if (conversionRequiresPixel(goal)) return ctx.hasPixel ? null : "pixel";
+  return null; // app_install / tráfego — sem requisito de promoted_object
+}
+
 /**
  * Faixa de idade que a Meta HONRA como restrição DURA sob otimização automática (advantage_audience):
  * só dentro de 18-25. Um piso acima disso (ex: 45+), ou qualquer teto acima disso, a Meta RECUSA como
@@ -88,6 +120,14 @@ export function normalizeLinkUrl(raw: string | undefined | null): string | null 
  */
 export const OBJECTIVE_REQUIRES_PIXEL_REASON =
   "esse objetivo precisa do rastreamento de conversões (pixel) configurado na conta, e ela ainda não tem — dá pra configurar o pixel no Gerenciador de Eventos da Meta, ou eu crio uma campanha de mensagens no WhatsApp (que não precisa de pixel)";
+
+/**
+ * Motivo NEUTRO (§13) da rede do apply quando o objetivo exige uma Página de destino (conversas → WhatsApp
+ * da Página; formulário de lead → formulário da Página) e o rascunho não tem uma resolvida. Genérico (o
+ * chat tem versões mais específicas por caminho — cópia/criação); aqui é a última rede antes de criar.
+ */
+export const OBJECTIVE_REQUIRES_PAGE_REASON =
+  "essa campanha precisa de uma Página de destino (é pra onde as conversas/leads vão) e eu não consegui identificar uma agora — tenta de novo em instantes, ou crie pela análise/site (lá dá pra escolher a Página)";
 
 /**
  * Motivo/pergunta ÚNICO (§13/§8) quando a idade fixa colide com a otimização automática — o dono

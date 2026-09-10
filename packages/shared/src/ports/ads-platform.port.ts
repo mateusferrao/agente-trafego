@@ -20,6 +20,7 @@ import type {
   TargetingSpec,
   WhatsappDestination,
   PageInfo,
+  PixelInfo,
 } from "../types/index.js";
 
 /** Referência opaca a uma conta já resolvida (token + accountId internos ao adapter). */
@@ -318,6 +319,10 @@ export interface AdsPlatformPort {
    *  resolver o nome de uma Página. Fonte: páginas do NEGÓCIO dono da conta (owned + client_pages),
    *  confiável. Sem negócio/acesso → lista vazia (honesto). `number` não vem daqui (best-effort só no nó). */
   listPages(account: AdAccountRef): Promise<PageInfo[]>;
+  /** Pixels de rastreamento de conversões da conta (id + nome) — pra o dono ESCOLHER qual usar quando
+   *  há N e pra nomear o inferido. Best-effort: sem acesso/pixel → lista vazia (honesto, o caller cai no
+   *  pixel inferido/padrão). Fonte: `{account}/adspixels`. */
+  listPixels(account: AdAccountRef): Promise<PixelInfo[]>;
   /** Lista os custom/saved audiences da conta (Fatia 7) — remarketing/exclusões reais. */
   listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;
   /** Busca geo (país/região/cidade) por texto — Fase 1 (subfatia 3), targeting explícito por

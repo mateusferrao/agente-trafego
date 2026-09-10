@@ -276,6 +276,14 @@ export interface PageInfo {
   readonly whatsappNumber?: string;
 }
 
+/** Pixel de rastreamento de conversões da conta (id + nome) — taxonomia neutra. Pra o dono ESCOLHER
+ *  qual pixel usar quando a conta tem N, e pra mostrar qual foi inferido. O adapter Meta resolve via
+ *  `{account}/adspixels`; outros providers mapeiam pro mesmo tipo. */
+export interface PixelInfo {
+  readonly pixelId: string;
+  readonly name?: string;
+}
+
 // ─── Público salvo / custom audience (Fatia 7, genérico) ──────────────────
 /** Custom/saved audience da conta — taxonomia neutra (vocabulário Meta só no adapter). */
 export interface CustomAudience {

@@ -19,6 +19,7 @@ import type {
   MetaAccountHealthStatus,
   WhatsappDestination,
   PageInfo,
+  PixelInfo,
 } from "@trafego/shared/types";
 import type {
   AdAccountRef,
@@ -536,6 +537,10 @@ export class MetaAdsAdapter implements AdsPlatformPort {
 
   async listPages(account: AdAccountRef): Promise<PageInfo[]> {
     return this.whatsapp.listAccountPages(account);
+  }
+
+  async listPixels(account: AdAccountRef): Promise<PixelInfo[]> {
+    return this.creation.listPixels(account);
   }
 
   async listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]> {

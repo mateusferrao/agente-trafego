@@ -992,6 +992,26 @@ describe("MetaCreationService.inferCreationDefaults", () => {
   });
 });
 
+describe("MetaCreationService.listPixels — pixels da conta (id+nome, best-effort)", () => {
+  it("mapeia {id,name} do /adspixels pra PixelInfo (vocabulário Meta só aqui)", async () => {
+    const spy = vi.fn(async (_input: string | URL | Request) =>
+      new Response(JSON.stringify({ data: [{ id: "PX1", name: "Loja Nova" }, { id: "PX2" }] }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", spy);
+    const out = await svc().listPixels(account);
+    expect(out).toEqual([{ pixelId: "PX1", name: "Loja Nova" }, { pixelId: "PX2" }]);
+    expect(decodeURIComponent(String(spy.mock.calls[0]?.[0] ?? ""))).toContain("/adspixels");
+  });
+
+  it("sem acesso/pixel (400) → lista vazia (honesto, o caller cai no inferido)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: { message: "no access", code: 100 } }), { status: 400, headers: { "content-type": "application/json" } })),
+    );
+    expect(await svc().listPixels(account)).toEqual([]);
+  });
+});
+
 describe("MetaCreationService.getAdMetrics — gasto/resultados por anúncio (inline, best-effort)", () => {
   it("extrai gasto + resultados de cada anúncio (reusa metricsOf) e valida o window no fields", async () => {
     const spy = vi.fn(async (_input: string | URL | Request) => new Response(JSON.stringify({ data: [

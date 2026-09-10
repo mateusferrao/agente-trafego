@@ -1,6 +1,6 @@
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { describe, expect, it } from "vitest";
-import { advantageAgeConflict, applyDraftEdit, conversionRequiresPixel, flipBudgetLevel, normalizeLinkUrl, removeAdsetsAt, seedAdsetFromSingle } from "./refine.js";
+import { advantageAgeConflict, applyDraftEdit, conversionRequiresPixel, flipBudgetLevel, normalizeLinkUrl, promotedObjectGap, removeAdsetsAt, seedAdsetFromSingle } from "./refine.js";
 import type { AdsetSpec, TargetingSpec } from "@trafego/shared";
 
 describe("normalizeLinkUrl (URL de destino — fonte única chat+site)", () => {
@@ -54,6 +54,40 @@ describe("conversionRequiresPixel", () => {
     expect(conversionRequiresPixel("lead")).toBe(true);
     expect(conversionRequiresPixel("messaging_started")).toBe(false);
     expect(conversionRequiresPixel("app_install")).toBe(false);
+  });
+});
+
+describe("promotedObjectGap — requisito de promoted_object ciente do mecanismo", () => {
+  it("conversas: exige Página (sem pixel)", () => {
+    expect(promotedObjectGap("messaging_started", { reusesCreatives: true, hasPixel: false, hasPage: true })).toBeNull();
+    expect(promotedObjectGap("messaging_started", { reusesCreatives: true, hasPixel: false, hasPage: false })).toBe("page");
+    // pixel não substitui a Página em conversas
+    expect(promotedObjectGap("messaging_started", { reusesCreatives: true, hasPixel: true, hasPage: false })).toBe("page");
+  });
+
+  it("lead-site: pixel satisfaz (OFFSITE), sem depender de Página", () => {
+    expect(promotedObjectGap("lead", { reusesCreatives: false, hasPixel: true, hasPage: false })).toBeNull();
+    expect(promotedObjectGap("lead", { reusesCreatives: true, hasPixel: true, hasPage: false })).toBeNull();
+  });
+
+  it("lead-formulário: só viável REUSANDO criativo + Página (nunca do zero)", () => {
+    // cópia (reusa creative_id) com Página → formulário ok, sem pixel
+    expect(promotedObjectGap("lead", { reusesCreatives: true, hasPixel: false, hasPage: true })).toBeNull();
+    // cópia de formulário mas a Página não foi lida → falta a Página
+    expect(promotedObjectGap("lead", { reusesCreatives: true, hasPixel: false, hasPage: false })).toBe("page");
+    // criar do zero (não reusa) sem pixel → não dá pra gerar formulário → falta o pixel
+    expect(promotedObjectGap("lead", { reusesCreatives: false, hasPixel: false, hasPage: true })).toBe("pixel");
+    expect(promotedObjectGap("lead", { reusesCreatives: false, hasPixel: false, hasPage: false })).toBe("pixel");
+  });
+
+  it("demais objetivos de conversão exigem pixel (Página não substitui)", () => {
+    expect(promotedObjectGap("purchase", { reusesCreatives: true, hasPixel: true, hasPage: false })).toBeNull();
+    expect(promotedObjectGap("purchase", { reusesCreatives: true, hasPixel: false, hasPage: true })).toBe("pixel");
+    expect(promotedObjectGap("registration", { reusesCreatives: false, hasPixel: false, hasPage: false })).toBe("pixel");
+  });
+
+  it("app/tráfego: sem requisito de promoted_object", () => {
+    expect(promotedObjectGap("app_install", { reusesCreatives: false, hasPixel: false, hasPage: false })).toBeNull();
   });
 });
 
