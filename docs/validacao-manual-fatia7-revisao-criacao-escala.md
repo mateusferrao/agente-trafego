@@ -81,6 +81,13 @@ Legenda: 🟢 caminho feliz · 🔴 caminho triste (estresse).
 - 🟢 "escala o vencedor" cujo budget novo passa do teto de gasto novo → o eco mostra "(você pediu R$X, mas seu teto é R$Y)". No site (card de duplicata) → "(você pediu X — cortei pro seu teto)".
 - 🔴 Sem clamp (dentro do teto) → sem a nota.
 
+## Slice 6 — copiar campanha de CONVERSAS (CTWA) preserva a Página (bug prod 2026-09-10)
+
+- 🟢 **Precisa de token real (BM Automato).** Numa conta com uma campanha de **conversas** (destino WhatsApp) ativa: "@Roy duplica a campanha X". Aprove. **Esperado:** o conjunto é criado COM a Página de destino (`promoted_object.page_id`) — **sem** a recusa "A Página é necessária no objeto promovido para o tipo de destino do WhatsApp". Antes: falhava determinístico + deixava campanha órfã.
+- 🟢 **Unit (sem token):** `readCampaignStructure` de fonte messaging captura `structure.pageId` (`campaign-structure.test.ts`); conversão com pixel → `pixelId`, sem `pageId` (OFFSITE não exige Página). `resolveAdSetConversion("messaging_started", {pageId})` → `promoted_object.page_id` (`meta-conversion-map.test.ts`).
+- 🟢 **Guard honesto (`copyRequiresDestinationPage`):** cópia de conversas (sempre) ou lead-sem-pixel + Página não lida → o Roy BLOQUEIA com o próximo passo ("não consegui ler a Página de destino… tenta de novo, ou crie pela análise/site") em vez de tentar e deixar órfã. Vendas/conversão-com-pixel → não exige Página.
+- 🔴 Copiar campanha de **vendas com pixel** → segue por `pixelId`/OFFSITE, sem exigir Página (sem regressão).
+
 ---
 
 ## Roteiro E2E docker (resumo executável)
