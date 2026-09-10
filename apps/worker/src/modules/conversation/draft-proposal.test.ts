@@ -81,7 +81,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       { limit: [{ campaignId: "C1", adsetId: "AS1" }] }, // ad_creatives: campanha/adset do anúncio-fonte
       { direct: [{ curatedJson: { isCBO: true, healthSignals: [] } }] }, // entity_analyses: sem creative_fatigue
     ]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING)).creative;
     expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
   });
 
@@ -92,24 +92,24 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] }, // biblioteca por recência
       { direct: [] }, // visão cacheada (vazia)
     ]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING)).creative;
     expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando, sem match → biblioteca por recência (mais recente)", async () => {
     const deps = fakeDeps([{ id: "asset_9", imageHash: "HLIB", videoId: null }]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).creative;
     expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando + vídeo na biblioteca → usa metaVideoId", async () => {
     const deps = fakeDeps([{ id: "asset_v", imageHash: null, videoId: "VID1" }]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).creative;
     expect(out).toEqual({ videoId: "VID1", assetId: "asset_v", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando + biblioteca vazia → null", async () => {
-    expect(await chooseCreative(fakeDeps([]), ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).toBeNull();
+    expect((await chooseCreative(fakeDeps([]), ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).creative).toBeNull();
   });
 
   it("CONTEXT-AWARE: com match + descrições, o matcher escolhe pelo CONTEXTO (não recência)", async () => {
@@ -127,7 +127,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       ],
       1,
     );
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING, MATCH);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING, MATCH)).creative;
     expect(llm.completeStructured).toHaveBeenCalledOnce(); // consultou o contexto
     expect(out?.assetId).toBe("b"); // escolheu pelo contexto (index 1), não a recência (a)
     expect(out?.source).toBe("library");
@@ -157,7 +157,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
 
   it("veiculando em vídeo, sem fadiga → escolhe o vídeo veiculado", async () => {
     const deps = fakeDepsSeq([{ limit: [{ campaignId: "C2", adsetId: "AS2" }] }, { direct: [{ curatedJson: { isCBO: true, healthSignals: [] } }] }]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING);
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING)).creative;
     expect(out).toEqual({ videoId: "SVID", assetId: "ad_2", origin: "reuse", source: "serving" });
   });
 
@@ -169,7 +169,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] },
       { direct: [] }, // visão cacheada vazia → cai na recência da biblioteca
     ]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "remarketing" });
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "remarketing" })).creative;
     expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
   });
 
@@ -178,7 +178,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
       { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [], audience: { stage: "remarketing" } } }] },
     ]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "remarketing" });
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "remarketing" })).creative;
     expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
   });
 
@@ -187,8 +187,30 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
       { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [], audience: { stage: "prospecting" } } }] },
     ]);
-    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "unknown" });
+    const out = (await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "unknown" })).creative;
     expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
+  });
+
+  it("S5 — vencedor AGING (ainda entrega) NÃO é rebaixado, mas volta com crítica caveat (prepare o próximo)", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: ["creative_aging"] } }] },
+    ]);
+    const outcome = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    expect(outcome.creative).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
+    expect(outcome.critique.verdict).toBe("caveat");
+    expect(outcome.critique.reason).toBe("aging_winner");
+    expect(outcome.critique.ressalva?.code).toBe("weak_creative_pick");
+  });
+
+  it("S5 — pick provado limpo → crítica solid (sem ressalva, respeita o fluxo)", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [] } }] },
+    ]);
+    const outcome = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    expect(outcome.critique.verdict).toBe("solid");
+    expect(outcome.critique.ressalva).toBeUndefined();
   });
 });
 

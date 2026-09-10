@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, creativeSourceForIntent, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type CreativeIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, assessCreativePick, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, creativeSourceForIntent, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type CreativeCritique, type CreativeIntent, type CreativePickSignals, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { isLookalikeName, MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
@@ -1795,10 +1795,21 @@ function summarizeWinnerCopy(variants: readonly { readonly primaryText?: string;
   return text.length > WINNER_COPY_MAX_CHARS ? `${text.slice(0, WINNER_COPY_MAX_CHARS)}…` : text;
 }
 
+/** Nota do especialista crítico (S5) pro eco do chat: o "porém + recomendação" quando o pick tem
+ *  fraqueza real (caveat) ou nada casa bem (recommend_new). `solid` → sem nota (respeita o fluxo).
+ *  Voz honesta do Roy: opina sem travar (a palavra final é do dono). */
+function creativeCritiqueNote(critique: CreativeCritique): string | undefined {
+  if (critique.verdict === "solid" || !critique.recommendation) return undefined;
+  return `Sobre o criativo: ${critique.recommendation}`;
+}
+
 /** Diagnóstico do anúncio-fonte "provado" (S3): fadiga + estágio de público de ORIGEM. */
 interface ServingSourceAssessment {
-  /** o criativo veiculando já está desgastado (não reusar automaticamente). */
+  /** o criativo veiculando já está desgastado (fadiga DURA ou aging) — sinal p/ a crítica S5. */
   readonly fatigued: boolean;
+  /** o desgaste é do tipo AGING (ainda entrega, mas desgastando) — distingue "prepare o próximo"
+   *  (caveat, reusa com ressalva) de fadiga DURA (já caiu → cai na biblioteca). */
+  readonly aging: boolean;
   /** estágio do público onde o anúncio-fonte RODOU (do snapshot curado) — `unknown` se sem dado. */
   readonly stage: AudienceStage;
 }
@@ -1828,20 +1839,24 @@ async function assessServingSource(
     .limit(1);
   // ordem [adset, campanha]: o adset (mais específico) decide o estágio quando ambos têm dado.
   const orderedIds = [ad?.adsetId, ad?.campaignId].filter((id): id is string => Boolean(id));
-  if (orderedIds.length === 0) return { fatigued: false, stage: "unknown" };
+  if (orderedIds.length === 0) return { fatigued: false, aging: false, stage: "unknown" };
   const rows = await deps.db
     .select({ entityId: entityAnalyses.entityId, curatedJson: entityAnalyses.curatedJson })
     .from(entityAnalyses)
     .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, orderedIds)));
   const byId = new Map(rows.map((r) => [r.entityId, r.curatedJson]));
   const fatigued = rows.some((r) => isFatigued(r.curatedJson?.healthSignals));
+  // aging só conta como "desgaste que ainda entrega" quando NÃO há fadiga DURA junto (a dura vence:
+  // some da reutilização). Se qualquer entidade tem fadiga dura, o pick não é "aging benigno".
+  const anyHard = rows.some((r) => isFatigued(r.curatedJson?.healthSignals) && !isAging(r.curatedJson?.healthSignals));
+  const aging = !anyHard && rows.some((r) => isAging(r.curatedJson?.healthSignals));
   // 1º estágio conhecido na ordem adset→campanha (o resto do array é o fallback).
   let stage: AudienceStage = "unknown";
   for (const id of orderedIds) {
     const s = byId.get(id)?.audience?.stage;
     if (s && s !== "unknown") { stage = s; break; }
   }
-  return { fatigued, stage };
+  return { fatigued, aging, stage };
 }
 
 /**
@@ -1853,6 +1868,28 @@ async function assessServingSource(
  * um criativo que você subiu mas nunca veiculou também é candidato (antes era ignorado). O
  * picker manual segue podendo forçar qualquer asset. `null` = nenhum criativo em lugar nenhum.
  */
+/** Resultado da escolha de criativo (S5): a ref + a CRÍTICA-estrategista do pick (o "não só faz").
+ *  A crítica é determinística sobre os sinais que a própria seleção já computou (fadiga/aging/estágio
+ *  do vencedor + prova da visão cacheada do pick da biblioteca) — custo LLM zero. */
+export interface ChosenCreativeOutcome {
+  readonly creative: ChosenCreative | null;
+  readonly critique: CreativeCritique;
+}
+
+/** Sinais de crítica de um pick da BIBLIOTECA (prova/persuasão vêm da visão cacheada; estágio/fadiga
+ *  são desconhecidos p/ um upload que nunca veiculou → neutros). */
+function libraryPickSignals(c: DescribedCandidate, campaignStage: AudienceStage): CreativePickSignals {
+  return {
+    fatigued: false,
+    aging: false,
+    stageMismatch: false,
+    campaignStage,
+    ...(c.proofStrength ? { proofStrength: c.proofStrength } : {}),
+    ...(c.persuasionSignals != null ? { persuasionSignals: c.persuasionSignals } : {}),
+    poolHasNoAcceptableFit: false,
+  };
+}
+
 export async function chooseCreative(
   deps: WorkerDeps,
   orgId: string,
@@ -1862,36 +1899,49 @@ export async function chooseCreative(
   serving: { imageHash?: string; videoId?: string; sourceAdId?: string },
   strategy: CreativeSourceStrategy,
   match?: MatchContext & { readonly model: string },
-): Promise<ChosenCreative | null> {
+): Promise<ChosenCreativeOutcome> {
   const campaignStage = match?.campaignStage ?? "unknown";
-  const servingRef = async (): Promise<ChosenCreative | null> => {
+  // pick VEICULANDO + os sinais da fonte (pra a crítica S5). `null` = não há veiculando OU foi
+  // rebaixado (fadiga dura / cross-stage), caindo na biblioteca.
+  const servingPick = async (): Promise<{ ref: ChosenCreative; src: ServingSourceAssessment } | null> => {
     if (!serving.imageHash && !serving.videoId) return null;
+    let src: ServingSourceAssessment = { fatigued: false, aging: false, stage: "unknown" };
     if (serving.sourceAdId) {
-      const src = await assessServingSource(deps, orgId, accountId, agentId, serving.sourceAdId);
-      // gap real corrigido (pivô saúde): não reusar automaticamente um anúncio "provado" cujo
-      // criativo já está fatigado (mesmo princípio de `rankCreatives.excludeFatigued`, adaptado
-      // à granularidade real disponível — fadiga é sinal de campanha/adset, não de anúncio individual).
-      if (src.fatigued) return null;
-      // S3 (o caso que o dono levantou): o vencedor cru é de um estágio de público OPOSTO ao da
-      // campanha nova (prospecção fria → campanha de remarketing, ou vice-versa). A mensagem que
-      // converte no frio raramente é a que converte no quente → não herda automaticamente; cai na
-      // biblioteca por contexto (matcher enriquecido com o estágio). `isOppositeStage` (core puro)
-      // só dispara com AMBOS conhecidos e realmente opostos (unknown é neutro, nunca penaliza).
+      src = await assessServingSource(deps, orgId, accountId, agentId, serving.sourceAdId);
+      // fadiga DURA (já caiu) → não reusa (cai na biblioteca por contexto). AGING (ainda entrega) é
+      // MANTIDO — a crítica S5 anexa um "prepare o próximo" (caveat/Ressalva), não descarta o pick.
+      if (src.fatigued && !src.aging) return null;
+      // S3 (o caso que o dono levantou): vencedor de estágio de público OPOSTO ao da campanha nova
+      // (prospecção fria → remarketing, ou vice-versa) → não herda automático; cai na biblioteca.
       if (isOppositeStage(campaignStage, src.stage)) return null;
     }
-    return {
+    const chosenRef: ChosenCreative = {
       ...(serving.imageHash ? { imageHash: serving.imageHash } : {}),
       ...(serving.videoId ? { videoId: serving.videoId } : {}),
       assetId: serving.sourceAdId ?? "reuse",
       origin: "reuse",
       source: "serving",
     };
+    return { ref: chosenRef, src };
   };
+
+  const servingOutcome = (sp: { ref: ChosenCreative; src: ServingSourceAssessment }): ChosenCreativeOutcome => ({
+    creative: sp.ref,
+    // vencedor provado: fadiga só entra aqui como AGING (a dura já foi rebaixada) → caveat "prepare o
+    // próximo". Estágio nunca é oposto aqui (cross-stage foi rebaixado). Sem prova de visão (é provado
+    // por desempenho, não por decomposição de criativo).
+    critique: assessCreativePick({ fatigued: sp.src.fatigued, aging: sp.src.aging, stageMismatch: false, campaignStage, poolHasNoAcceptableFit: false }),
+  });
+  const libraryOutcome = (c: DescribedCandidate | null): ChosenCreativeOutcome =>
+    c
+      ? { creative: c.ref, critique: assessCreativePick(libraryPickSignals(c, campaignStage)) }
+      : { creative: null, critique: assessCreativePick({ fatigued: false, aging: false, stageMismatch: false, campaignStage, poolHasNoAcceptableFit: true }) };
 
   // MODO PADRÃO (serving.best_performing = comportamento de hoje): reusa o melhor veiculando (provado
   // por desempenho, determinístico, SEM LLM); sem veiculando (ou fatigado), cai na biblioteca por contexto.
   if (strategy.mode === "serving" && (strategy.servingPick ?? "best_performing") === "best_performing") {
-    return (await servingRef()) ?? (await chooseLibraryByContext(deps, orgId, accountId, match));
+    const sp = await servingPick();
+    return sp ? servingOutcome(sp) : libraryOutcome(await chooseLibraryByContext(deps, orgId, accountId, match));
   }
 
   // MODOS COM LLM (serving.agent / library / both): monta o POOL de candidatos DESCRITOS por visão
@@ -1906,7 +1956,9 @@ export async function chooseCreative(
   }
   if (pool.length === 0) {
     // pediu veiculando mas não há candidato descrito → cai no melhor veiculando; senão nada.
-    return strategy.mode === "library" ? null : await servingRef();
+    if (strategy.mode === "library") return libraryOutcome(null);
+    const sp = await servingPick();
+    return sp ? servingOutcome(sp) : libraryOutcome(null);
   }
 
   let chosen = pool[0]!; // fallback: ordem (veiculando recentes primeiro, depois biblioteca)
@@ -1920,7 +1972,7 @@ export async function chooseCreative(
     );
     if (picked) chosen = pool.find((c) => c.key === picked) ?? chosen;
   }
-  return chosen.ref;
+  return libraryOutcome(chosen);
 }
 
 /** Um candidato a criativo com descrição (pro matcher) + a ref concreta (pro spec). Sinais de
@@ -1945,13 +1997,14 @@ function toLibraryCandidate(c: DescribedCandidate): { assetId: string; descripti
   };
 }
 
-/** Escolha na BIBLIOTECA por contexto (o caminho de hoje quando não há veiculando). `null` = vazia. */
+/** Escolha na BIBLIOTECA por contexto (o caminho de hoje quando não há veiculando). Devolve o
+ *  CANDIDATO escolhido (não só a ref) pra a crítica S5 ler os sinais de prova/persuasão. `null` = vazia. */
 async function chooseLibraryByContext(
   deps: WorkerDeps,
   orgId: string,
   accountId: string,
   match?: MatchContext & { readonly model: string },
-): Promise<ChosenCreative | null> {
+): Promise<DescribedCandidate | null> {
   const pool = await describeLibraryCandidates(deps, orgId, accountId);
   if (pool.length === 0) return null;
   let chosen = pool[0]!; // recência
@@ -1965,7 +2018,7 @@ async function chooseLibraryByContext(
     );
     if (picked) chosen = pool.find((c) => c.key === picked) ?? chosen;
   }
-  return chosen.ref;
+  return chosen;
 }
 
 /** Chave de identidade de um criativo p/ dedupe entre anúncios (mídia distinta). */
@@ -2638,8 +2691,11 @@ export async function proposeCreateCampaign(
   // Criativo: FORÇADO (o que o usuário mandou no WhatsApp, Slice 7) OU pool único — melhor
   // veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR CASA com o contexto
   // (objetivo + negócio + orientações + estágio de público + tema do vencedor) via matcher LLM barato.
-  const chosen = args.forcedCreativeAssetId
-    ? await loadForcedCreative(deps, ctx.orgId, ctx.adAccountId, args.forcedCreativeAssetId)
+  // O criativo escolhido vem com a CRÍTICA-estrategista (S5): o "não só faz" — quando o pick tem uma
+  // fraqueza real (vencedor cansando/prova fraca/nada casa), o Roy OPINA + recomenda (Ressalva no
+  // rascunho, que trava o auto-apply e aparece no card). Forçado pelo dono = sem crítica (foi escolha dele).
+  const chosenOutcome = args.forcedCreativeAssetId
+    ? { creative: await loadForcedCreative(deps, ctx.orgId, ctx.adAccountId, args.forcedCreativeAssetId), critique: { verdict: "solid" as const } }
     : await chooseCreative(
         deps,
         ctx.orgId,
@@ -2662,6 +2718,8 @@ export async function proposeCreateCampaign(
           ...(args.creativeAngle ? { angle: args.creativeAngle } : {}),
         },
       );
+  const chosen = chosenOutcome.creative;
+  const creativeCritique = chosenOutcome.critique;
   // Página é obrigatória (object_story_spec). Vem do anúncio veiculando (ou da escolha do dono, W2);
   // conta sem NENHUM anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria.
   if (!pageId || !chosen) {
@@ -3038,6 +3096,10 @@ export async function proposeCreateCampaign(
   const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, defaults.pixelId) : null;
   if (reachNote) lines.push(reachNote);
   else for (const w of aud.sizeWarnings) lines.push(w);
+  // S5 — o especialista crítico (o "não só faz"): quando o criativo escolhido tem uma fraqueza real
+  // (vencedor cansando/prova fraca), o Roy OPINA + recomenda, sem travar (a palavra final é do dono).
+  const critiqueNote = creativeCritiqueNote(creativeCritique);
+  if (critiqueNote) lines.push(critiqueNote);
   lines.push(`Confirma? (você pode trocar o criativo no site antes de aprovar)`);
   return { kind: "draft", echo: joinBalloons(lines), approvalId, draftId };
 }
