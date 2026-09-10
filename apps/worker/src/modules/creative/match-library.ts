@@ -29,6 +29,9 @@ export interface MatchContext {
   /** copy do anúncio VENCEDOR da conta (S3) — dá o TEMA/OFERTA de referência pro matcher alinhar a
    *  mensagem do criativo escolhido; nunca é ordem de copiar, só contexto de encaixe. */
   readonly winnerCopy?: string | null;
+  /** ÂNGULO que o dono pediu destacar (S4) — ex: "preço/oferta", "prova social", "benefício",
+   *  "novidade", "urgência", ou livre. Prioriza criativos que comunicam ISSO (fit continua liderando). */
+  readonly angle?: string | null;
 }
 
 /** Rótulo PT do estágio pro prompt (o LLM lê linguagem de negócio, não a taxonomia). */
@@ -66,6 +69,7 @@ function buildMessages(ctx: MatchContext, candidates: readonly LibraryCandidate[
     stageLabel ? `Estágio do público: ${stageLabel}.` : "",
     ctx.businessContext ? `Contexto do negócio: ${ctx.businessContext}` : "",
     ctx.guidance ? `Orientações: ${ctx.guidance}` : "",
+    ctx.angle ? `Ângulo que o dono quer destacar: ${ctx.angle} — priorize criativos que comunicam isso.` : "",
     ctx.winnerCopy ? `Tema/oferta de referência (do anúncio que mais converte): ${ctx.winnerCopy}` : "",
     "",
     "Criativos disponíveis (índice + descrição):",

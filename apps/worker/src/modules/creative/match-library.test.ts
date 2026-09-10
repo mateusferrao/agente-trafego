@@ -106,6 +106,14 @@ describe("pickLibraryCreativeByContext", () => {
       expect(sent).toContain("50% off na primeira sessão");
       expect(sent).toMatch(/refer[êe]ncia/i);
     });
+
+    it("ângulo pedido pelo dono (S4) entra no prompt priorizando criativos que o comunicam", async () => {
+      const llm = mockLlm(0);
+      await pickLibraryCreativeByContext(llm as never, "m", { ...CTX, angle: "prova social" }, cands);
+      const sent = llm.completeStructured.mock.calls[0]![0].messages[1]!.content;
+      expect(sent).toMatch(/[ÂA]ngulo.*prova social/);
+      expect(sent).toMatch(/priorize/i);
+    });
   });
 });
 

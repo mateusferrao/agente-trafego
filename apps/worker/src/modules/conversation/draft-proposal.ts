@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, creativeSourceForIntent, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type CreativeIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { isLookalikeName, MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
@@ -2483,6 +2483,12 @@ export async function proposeCreateCampaign(
     /** OVERRIDE do dono de onde mora a verba (C1): vence o default do playbook. Ausente = o
      *  recomendado pra intenção. */
     readonly budgetMode?: BudgetMode;
+    /** FOCO do criativo declarado pelo dono (S4): ângulo a destacar (preço/prova/benefício/…) —
+     *  guia a ESCOLHA do criativo via o matcher. Ausente = escolha só por contexto/desempenho. */
+    readonly creativeAngle?: string;
+    /** INTENÇÃO de criativo do dono (S4): reusar o que converte × testar algo novo. Presente →
+     *  override da estratégia de fonte (`creativeSourceForIntent`); ausente = a config do agente. */
+    readonly creativeIntent?: CreativeIntent;
     /** OVERRIDE explícito do dono do Advantage (C3): "liga o Advantage" = true; "tira" = false.
      *  Vence a inferência. Ausente = infere de `localBusiness` (ou não mexe). */
     readonly advantage?: boolean;
@@ -2625,6 +2631,9 @@ export async function proposeCreateCampaign(
   // tema/oferta do vencedor pro matcher (S3): a 1ª variante de copy do anúncio provado, achatada em
   // texto legível (headline + corpo). Contexto de encaixe, nunca ordem de copiar.
   const winnerCopyText = summarizeWinnerCopy(defaults.winnerCopy);
+  // S4: FOCO declarado pelo dono — a intenção (reusar × testar) sobrepõe a estratégia de fonte
+  // configurada; ausente = a config do agente (comportamento anterior). O ângulo entra no matcher.
+  const creativeStrategy = args.creativeIntent ? creativeSourceForIntent(args.creativeIntent) : ac.creativeSource;
 
   // Criativo: FORÇADO (o que o usuário mandou no WhatsApp, Slice 7) OU pool único — melhor
   // veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR CASA com o contexto
@@ -2642,7 +2651,7 @@ export async function proposeCreateCampaign(
           ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
           ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
         },
-        ac.creativeSource,
+        creativeStrategy,
         {
           goal,
           businessContext: ac.businessContext,
@@ -2650,6 +2659,7 @@ export async function proposeCreateCampaign(
           model: ac.model,
           campaignStage,
           ...(winnerCopyText ? { winnerCopy: winnerCopyText } : {}),
+          ...(args.creativeAngle ? { angle: args.creativeAngle } : {}),
         },
       );
   // Página é obrigatória (object_story_spec). Vem do anúncio veiculando (ou da escolha do dono, W2);
@@ -2727,7 +2737,7 @@ export async function proposeCreateCampaign(
   // pool inclui vídeos SEM capa guardada (o dono pode ESCOLHER um que a lista mostrou — o apply
   // resolve a capa ao vivo); o auto-fill (poolRefs) filtra pra só o montável offline (sem padding
   // que dependa de fetch de thumbnail). Assim a ESCOLHA explícita nunca some da resolução (diz×faz §7).
-  const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, { includeCoverlessVideo: true });
+  const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, creativeStrategy, { includeCoverlessVideo: true });
   const poolRefs = pool.filter((c) => hasOfflineCover(c.ref)).map((c) => c.ref);
 
   // PICKER (Slice 3): o dono ESCOLHEU criativos por nome ("o campeão", "o vídeo da praia"). Resolve

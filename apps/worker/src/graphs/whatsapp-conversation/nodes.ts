@@ -26,7 +26,9 @@ import {
   resolveDisambiguationChoice,
   riskForAction,
   CAMPAIGN_INTENTS,
+  CREATIVE_INTENTS,
   type CampaignIntent,
+  type CreativeIntent,
   type EchoItem,
   type GuardrailContext,
   type RevertEchoItem,
@@ -132,6 +134,11 @@ function isCampaignIntent(v: unknown): v is CampaignIntent {
 /** Guard: `v` é um modo de orçamento válido (C1) — cbo/abo. */
 function isBudgetMode(v: unknown): v is BudgetMode {
   return typeof v === "string" && (BUDGET_MODES as readonly string[]).includes(v);
+}
+
+/** Guard: `v` é uma intenção de criativo válida (S4) — reuse/test. */
+function isCreativeIntent(v: unknown): v is CreativeIntent {
+  return typeof v === "string" && (CREATIVE_INTENTS as readonly string[]).includes(v);
 }
 
 /** Normaliza os copyEdits vindos do LLM (índice + campos de texto), filtrando entradas inválidas. */
@@ -1019,6 +1026,11 @@ export function makeConversationNodes(
                 // C1: intent (sinal de estrutura) + override de budgetMode — o core decide a estrutura.
                 ...(isCampaignIntent(args["intent"]) ? { intent: args["intent"] } : {}),
                 ...(isBudgetMode(args["budgetMode"]) ? { budgetMode: args["budgetMode"] } : {}),
+                // S4: FOCO de criativo declarado pelo dono — ângulo (o que destacar) + intenção
+                // (reusar o que converte × testar algo novo). Só steia quando o dono declara; ausente
+                // = a estratégia configurada do agente + escolha por contexto.
+                ...(typeof args["creativeAngle"] === "string" && args["creativeAngle"].trim().length > 0 ? { creativeAngle: args["creativeAngle"].trim() } : {}),
+                ...(isCreativeIntent(args["creativeIntent"]) ? { creativeIntent: args["creativeIntent"] } : {}),
                 // C3: Advantage (override explícito) + sinal de negócio local (inferência).
                 ...(typeof args["advantage"] === "boolean" ? { advantage: args["advantage"] } : {}),
                 ...(typeof args["localBusiness"] === "boolean" ? { localBusiness: args["localBusiness"] } : {}),

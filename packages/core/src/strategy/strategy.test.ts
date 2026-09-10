@@ -9,6 +9,7 @@ import {
   nextStepContextFromEntities,
   budgetModeLabel,
   resolveBudgetFloorMinor,
+  creativeSourceForIntent,
   type CampaignIntent,
   type NextStepContext,
 } from "./index.js";
@@ -190,5 +191,14 @@ describe("nextStepSuggestion — linha proativa (1-2 linhas, negócio, sem jarg�
       // sem travessão dramático como conector (cara de IA)
       expect(line).not.toContain(" — ");
     }
+  });
+});
+
+describe("creativeSourceForIntent (S4 — foco de criativo → estratégia de fonte)", () => {
+  it("'reuse' (reusar o que converte) → melhor veiculando, provado por desempenho", () => {
+    expect(creativeSourceForIntent("reuse")).toEqual({ mode: "serving", servingPick: "best_performing" });
+  });
+  it("'test' (testar algo novo) → pool amplo (veiculando + biblioteca) pro fit favorecer o novo", () => {
+    expect(creativeSourceForIntent("test")).toEqual({ mode: "both" });
   });
 });

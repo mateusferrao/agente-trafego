@@ -3,12 +3,28 @@
 // Advantage por negócio. Reusado pela CRIAÇÃO (defaults + eco honesto), pelo PLANO (S2) e
 // espelhado no prompt. INVARIANTE: tudo aqui é RECOMENDAÇÃO — a palavra final é do dono.
 
-import type { BudgetMode, EntitySummary, HealthSignal } from "@trafego/shared";
+import type { BudgetMode, CreativeSourceStrategy, EntitySummary, HealthSignal } from "@trafego/shared";
 
 /** Intenção de estrutura que o dono expressa (ou que o Roy infere da conversa). Tupla = fonte
  *  única do tipo + do guard/enum (§13). */
 export const CAMPAIGN_INTENTS = ["test", "scale", "isolated_test", "audience_test", "create"] as const;
 export type CampaignIntent = (typeof CAMPAIGN_INTENTS)[number];
+
+/** Intenção de CRIATIVO que o dono declara no foco (S4): reusar o que já converte (exploit) ×
+ *  testar algo novo/da biblioteca (explore). Tupla = fonte única do tipo + enum. */
+export const CREATIVE_INTENTS = ["reuse", "test"] as const;
+export type CreativeIntent = (typeof CREATIVE_INTENTS)[number];
+
+/**
+ * Traduz a intenção de criativo do dono numa estratégia de FONTE (S4). PURO.
+ *  - `reuse`  → o melhor veiculando, provado por desempenho (exploit determinístico).
+ *  - `test`   → pool amplo (veiculando + biblioteca): o fit + o matcher favorecem um criativo novo/
+ *               fresco, com o veiculando como rede se a biblioteca estiver vazia (nunca trava).
+ * Só se aplica quando o dono DECLARA o foco; ausência = a estratégia configurada do agente.
+ */
+export function creativeSourceForIntent(intent: CreativeIntent): CreativeSourceStrategy {
+  return intent === "reuse" ? { mode: "serving", servingPick: "best_performing" } : { mode: "both" };
+}
 
 export interface StructureRecommendation {
   /** onde mora a verba: campanha (CBO) × conjunto (ABO). */
