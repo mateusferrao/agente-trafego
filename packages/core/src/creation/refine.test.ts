@@ -1,7 +1,7 @@
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { describe, expect, it } from "vitest";
-import { applyDraftEdit, conversionRequiresPixel, flipBudgetLevel, normalizeLinkUrl, removeAdsetsAt, seedAdsetFromSingle } from "./refine.js";
-import type { AdsetSpec } from "@trafego/shared";
+import { advantageAgeConflict, applyDraftEdit, conversionRequiresPixel, flipBudgetLevel, normalizeLinkUrl, removeAdsetsAt, seedAdsetFromSingle } from "./refine.js";
+import type { AdsetSpec, TargetingSpec } from "@trafego/shared";
 
 describe("normalizeLinkUrl (URL de destino — fonte única chat+site)", () => {
   it("aceita http/https absoluto (normaliza)", () => {
@@ -54,6 +54,33 @@ describe("conversionRequiresPixel", () => {
     expect(conversionRequiresPixel("lead")).toBe(true);
     expect(conversionRequiresPixel("messaging_started")).toBe(false);
     expect(conversionRequiresPixel("app_install")).toBe(false);
+  });
+});
+
+describe("advantageAgeConflict — idade fixa × otimização automática (§8: dono decide)", () => {
+  const explicit = (age: { ageMin?: number; ageMax?: number }): TargetingSpec => ({ kind: "explicit", geo: [], ...age });
+
+  it("advantage OFF → nunca conflita (a idade fixa é honrada normalmente)", () => {
+    expect(advantageAgeConflict({ targeting: explicit({ ageMin: 45, ageMax: 65 }) }, false)).toBe(false);
+  });
+  it("advantage ON + piso acima da faixa (45+) → conflita (o caso real do log)", () => {
+    expect(advantageAgeConflict({ targeting: explicit({ ageMin: 45 }) }, true)).toBe(true);
+  });
+  it("advantage ON + teto acima da faixa (até 65) → conflita", () => {
+    expect(advantageAgeConflict({ targeting: explicit({ ageMax: 65 }) }, true)).toBe(true);
+  });
+  it("advantage ON + idade dentro de 18-25 → NÃO conflita (a Meta trava nessa faixa)", () => {
+    expect(advantageAgeConflict({ targeting: explicit({ ageMin: 18, ageMax: 24 }) }, true)).toBe(false);
+  });
+  it("advantage ON + sem idade explícita (advantage_plus) → não conflita", () => {
+    expect(advantageAgeConflict({ targeting: { kind: "advantage_plus" } }, true)).toBe(false);
+  });
+  it("multi-conjunto: conflita se QUALQUER conjunto tem idade acima da faixa sob advantage", () => {
+    const adsets: readonly AdsetSpec[] = [
+      { name: "A", targeting: { kind: "advantage_plus" } },
+      { name: "B", targeting: explicit({ ageMin: 45 }) },
+    ];
+    expect(advantageAgeConflict({ adsets }, true)).toBe(true);
   });
 });
 

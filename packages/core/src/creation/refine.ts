@@ -38,6 +38,29 @@ export const REQUIRES_PIXEL: ReadonlySet<ConversionGoal> = new Set<ConversionGoa
 export const conversionRequiresPixel = (goal: ConversionGoal): boolean => REQUIRES_PIXEL.has(goal);
 
 /**
+ * Faixa de idade que a Meta HONRA como restrição DURA sob otimização automática (advantage_audience):
+ * só dentro de 18-25. Um piso acima disso (ex: 45+), ou qualquer teto acima disso, a Meta RECUSA como
+ * trava — aceita a idade só como "sugestão" (outro mecanismo). Fato de PLATAFORMA confirmado em produção
+ * (age_min:45 + advantage_audience:1 → "Invalid parameter" / "adicione uma idade mínima maior como
+ * sugestão"). Neutro (número de política, não vocabulário de provider).
+ */
+export const ADVANTAGE_HARD_AGE_MAX = 25;
+
+/**
+ * A idade EXPLÍCITA do conjunto conflita com a otimização automática? `true` quando ela está ligada E
+ * há um piso OU teto de idade acima da faixa 18-25 que a Meta trava (§7/§8: a resolução é do DONO —
+ * travar a idade com a otimização desligada, OU manter a otimização e deixar a idade livre; nunca
+ * decide sozinho). PURO — fonte única do gate (propose no chat + rede do apply).
+ */
+export function advantageAgeConflict(spec: Pick<CampaignDraftSpec, "targeting" | "adsets">, advantageOn: boolean): boolean {
+  if (!advantageOn) return false;
+  const conflicts = (t?: TargetingSpec): boolean =>
+    t?.kind === "explicit" &&
+    ((t.ageMin !== undefined && t.ageMin > ADVANTAGE_HARD_AGE_MAX) || (t.ageMax !== undefined && t.ageMax > ADVANTAGE_HARD_AGE_MAX));
+  return conflicts(spec.targeting) || (spec.adsets ?? []).some((a) => conflicts(a.targeting));
+}
+
+/**
  * URL de destino informada pelo dono → normalizada (http/https absoluto) ou `null` se não for uma
  * URL válida. Aceita "loja.com" (prefixa https://) e REJEITA esquema não-http(s) (`javascript:`,
  * `data:`, `ftp:`) e host sem ponto. Fonte ÚNICA (§13) do chat E do site — a Meta exige link
@@ -65,6 +88,13 @@ export function normalizeLinkUrl(raw: string | undefined | null): string | null 
  */
 export const OBJECTIVE_REQUIRES_PIXEL_REASON =
   "esse objetivo precisa do rastreamento de conversões (pixel) configurado na conta, e ela ainda não tem — dá pra configurar o pixel no Gerenciador de Eventos da Meta, ou eu crio uma campanha de mensagens no WhatsApp (que não precisa de pixel)";
+
+/**
+ * Motivo/pergunta ÚNICO (§13/§8) quando a idade fixa colide com a otimização automática — o dono
+ * DECIDE (nunca o Roy). Erro = o quê + as duas saídas concretas. Reusado na rede do apply e no chat.
+ */
+export const ADVANTAGE_AGE_CONFLICT_REASON =
+  "você escolheu uma faixa de idade fixa, mas a otimização automática de público não trava a idade na Meta — as duas não vão juntas. Como você prefere? Me diga: *travar a idade* (eu desligo a otimização e mantenho a sua faixa) ou *manter a otimização* (eu deixo a idade livre pra ela escolher)";
 
 /** Patch NEUTRO de edição — campos já RESOLVIDOS pela casca (audience→targeting, asset/serving→
  *  creative, geração/add/remover→copyVariants). O núcleo só faz o merge + as regras de negócio. */

@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
@@ -2914,12 +2914,12 @@ export async function proposeCreateCampaign(
   if (advantageOn !== undefined) {
     lines.push(advantageEchoLine(advantageOn));
   }
-  // B1 (honestidade diz×faz): com a otimização automática ligada a Meta só aceita a idade como MÍNIMO
-  // (o adapter tira o teto). Se o dono pôs uma faixa com teto, avisa que virou "X+" — e oferece a
-  // alternativa (desligar a otimização pra manter a faixa fixa). A palavra final é dele.
-  const hasAgeCap = (t: CampaignDraftSpec["targeting"] | undefined): boolean => t?.kind === "explicit" && t.ageMax !== undefined;
-  if (advantageOn === true && (hasAgeCap(spec.targeting) || (specAdsets ?? []).some((a) => hasAgeCap(a.targeting)))) {
-    lines.push("Como a otimização automática está ligada, a idade vira um mínimo (a Meta pode mostrar pra pessoas mais velhas também). Se preferir a faixa de idade fixa, é só me pedir pra desligar a otimização.");
+  // B4 (§8 dono decide): idade fixa (piso/teto fora de 18-25) + otimização automática NÃO vão juntas na
+  // Meta (recusa "Invalid parameter") — o antigo aviso "vira um mínimo" era falso (o age_min:45 é
+  // RECUSADO, não relaxado). PERGUNTA honesta as duas saídas ANTES de criar; a rede do apply barra se
+  // escapar. `advantageAgeConflict` é a fonte única (mesmo detector do apply).
+  if (advantageAgeConflict(spec, advantageOn === true)) {
+    lines.push(`⚠️ ${ADVANTAGE_AGE_CONFLICT_REASON} — me diz qual antes de eu criar.`);
   }
   // destino do clique (só quando há link — objetivo de site/tráfego/conversão): honesto sobre pra
   // onde o anúncio leva. `args.link` explícito é "você indicou"; herdado é "o mesmo do anúncio-base".

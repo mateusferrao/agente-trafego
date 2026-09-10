@@ -371,20 +371,22 @@ Dois bugs batidos pelo dono no chat do Roy, cada um com causa-raiz distinta. Fix
 recusa da Meta), B3 (traduzir a recusa pra voz do Roy), B2 (não deixar campanha órfã) e Bug A (o Roy
 não fala de link quando o pedido é outro).
 
-### M1. Advantage + faixa de idade com teto → cria SEM recusa (B1)
-- **Ação:** no chat, criar um teste de conversas com um conjunto "Mulheres 45+" (ou qualquer faixa com
-  teto de idade) e **Advantage ligado** → aprovar.
-- **Esperado:** a Meta **aceita** o conjunto (o `age_max` é omitido sob Advantage+ audience — a idade
-  vira o mínimo-sugestão que a Meta aceita; `age_min` é mantido). Nada de "você pode adicionar uma idade
-  mínima maior como sugestão".
-- **Contra-prova (Advantage OFF):** o mesmo teste com Advantage desligado mantém a faixa fixa (`age_min`
-  **e** `age_max`).
+### M1. Idade fixa (45+) + Advantage → Roy PERGUNTA (não cria sozinho) (B4)
+- **Ação:** no chat, criar um teste com um conjunto "Mulheres 45+" (piso 45, ou qualquer faixa fora de
+  18-25) e **Advantage ligado**.
+- **Esperado:** o eco inclui a **pergunta** (⚠️): "as duas não vão juntas — *travar a idade* (desligo a
+  otimização) ou *manter a otimização* (deixo a idade livre)?". O Roy **não** afirma que a idade "vira um
+  mínimo" (o log provou que a Meta RECUSA `age_min:45` + `advantage_audience:1`, não relaxa). A palavra
+  final é do dono (§8).
+- **Contra-prova (dentro de 18-25):** idade 18-24 + Advantage → sem pergunta (a Meta trava nessa faixa).
+- **Contra-prova (Advantage OFF):** "Mulheres 45-65" sem Advantage → cria com a faixa fixa, sem pergunta.
 
-### M2. Eco honesto da idade sob Advantage (B1)
-- **Ação:** montar/refinar um rascunho com teto de idade **e** Advantage ligado.
-- **Esperado:** nota curta e honesta de que, com a otimização automática ligada, a idade vira um mínimo
-  (a Meta pode mostrar pra mais velhas) + o caminho pra faixa fixa ("me peça pra desligar a otimização").
-  Reativo, sem gate — a palavra final é do dono.
+### M2. Resolução da pergunta (B4)
+- **"trava a idade":** o Roy desliga a otimização e mantém a faixa (45+ vira restrição dura) → cria.
+- **"mantém a otimização":** o Roy deixa a idade livre pra otimização → cria.
+- **Rede do apply:** se um rascunho conflitante escapar (site/proativo/legado) e chegar a aprovar, o
+  apply **barra ANTES de criar** (sem tentativa falha nem campanha órfã) e devolve a mesma pergunta —
+  nunca manda `age_min>25 + advantage_audience:1` pra Meta.
 
 ### M3. Falha determinística na criação → campanha NÃO fica órfã (B2)
 - **Ação:** simular/forçar uma recusa **determinística** da Meta na criação do-zero (adset recusado)

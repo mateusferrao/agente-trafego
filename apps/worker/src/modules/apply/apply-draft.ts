@@ -7,7 +7,7 @@
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { agentToolCalls, approvals, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { applyCreationGuardrails, buildDuplicateInput, conversionRequiresPixel, goalNounPt, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaledBudget, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyCreationGuardrails, buildDuplicateInput, conversionRequiresPixel, goalNounPt, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaledBudget, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
 import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
 import type { AgentId, ApprovalId, DraftId, RunId } from "@trafego/shared";
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
@@ -200,6 +200,13 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     // re-checa aqui com a MESMA verdade (`conversionRequiresPixel`) e barra ANTES de criar qualquer coisa.
     if (allowed.spec.objective && conversionRequiresPixel(allowed.spec.objective) && !allowed.spec.pixelId) {
       return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
+    }
+    // B4 (rede): idade fixa (piso/teto fora de 18-25) + otimização automática = a Meta recusa o
+    // createAdSet ("Invalid parameter") no meio da saga. O propose já pergunta ao dono, mas um spec do
+    // site/proativo/legado pode escapar — barra ANTES de criar (sem tentativa falha nem órfã) e devolve
+    // a MESMA pergunta (§8: o dono decide travar a idade OU manter a otimização).
+    if (advantageAgeConflict(allowed.spec, allowed.spec.advantageAudience ?? false)) {
+      return { kind: "blocked", reason: ADVANTAGE_AGE_CONFLICT_REASON };
     }
   }
 
