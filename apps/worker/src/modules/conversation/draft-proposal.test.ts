@@ -969,17 +969,14 @@ describe("stripGeoQualifier (retry de geo sem o sufixo)", () => {
   });
 });
 
-describe("copyRequiresDestinationPage (guard F2 — cópia CTWA/lead-sem-pixel exige a Página)", () => {
-  it("CONVERSAS (messaging) → SEMPRE exige a Página (com ou sem pixel)", () => {
-    expect(copyRequiresDestinationPage("messaging_started", false)).toBe(true);
-    expect(copyRequiresDestinationPage("messaging_started", true)).toBe(true);
+describe("copyRequiresDestinationPage (guard F2 — cópia CTWA exige a Página)", () => {
+  it("CONVERSAS (messaging) → exige a Página (único caminho page-required alcançável na cópia)", () => {
+    expect(copyRequiresDestinationPage("messaging_started")).toBe(true);
   });
-  it("LEAD sem pixel → exige a Página (LEAD_GENERATION); com pixel → NÃO (OFFSITE resolve)", () => {
-    expect(copyRequiresDestinationPage("lead", false)).toBe(true);
-    expect(copyRequiresDestinationPage("lead", true)).toBe(false);
+  it("LEAD → NÃO aqui (lead-sem-pixel já é barrado pelo pré-check de pixel G1; lead-com-pixel = OFFSITE)", () => {
+    expect(copyRequiresDestinationPage("lead")).toBe(false);
   });
   it("VENDAS/conversão → não exige Página (usa pixel/OFFSITE)", () => {
-    expect(copyRequiresDestinationPage("purchase", false)).toBe(false);
-    expect(copyRequiresDestinationPage("purchase", true)).toBe(false);
+    expect(copyRequiresDestinationPage("purchase")).toBe(false);
   });
 });

@@ -85,7 +85,7 @@ Legenda: 🟢 caminho feliz · 🔴 caminho triste (estresse).
 
 - 🟢 **Precisa de token real (BM Automato).** Numa conta com uma campanha de **conversas** (destino WhatsApp) ativa: "@Roy duplica a campanha X". Aprove. **Esperado:** o conjunto é criado COM a Página de destino (`promoted_object.page_id`) — **sem** a recusa "A Página é necessária no objeto promovido para o tipo de destino do WhatsApp". Antes: falhava determinístico + deixava campanha órfã.
 - 🟢 **Unit (sem token):** `readCampaignStructure` de fonte messaging captura `structure.pageId` (`campaign-structure.test.ts`); conversão com pixel → `pixelId`, sem `pageId` (OFFSITE não exige Página). `resolveAdSetConversion("messaging_started", {pageId})` → `promoted_object.page_id` (`meta-conversion-map.test.ts`).
-- 🟢 **Guard honesto (`copyRequiresDestinationPage`):** cópia de conversas (sempre) ou lead-sem-pixel + Página não lida → o Roy BLOQUEIA com o próximo passo ("não consegui ler a Página de destino… tenta de novo, ou crie pela análise/site") em vez de tentar e deixar órfã. Vendas/conversão-com-pixel → não exige Página.
+- 🟢 **Guard honesto (`copyRequiresDestinationPage`, escopado a CONVERSAS):** cópia de conversas com a Página não lida → o Roy BLOQUEIA com o próximo passo ("não consegui ler a Página de destino… tenta de novo, ou crie pela análise/site") em vez de tentar e deixar órfã. Vendas/conversão-com-pixel → não exige Página; lead-sem-pixel já é barrado antes pelo pré-check de pixel (G1).
 - 🔴 Copiar campanha de **vendas com pixel** → segue por `pixelId`/OFFSITE, sem exigir Página (sem regressão).
 
 ---

@@ -801,13 +801,15 @@ export const COPY_MISSING_DESTINATION_PAGE_REASON =
   "essa campanha leva as conversas pro WhatsApp de uma Página, mas eu não consegui ler essa Página de destino da campanha-base agora — sem ela a Meta não deixa criar o conjunto. Tenta de novo em instantes, ou crie a nova campanha pela análise/site (lá dá pra escolher a Página).";
 
 /**
- * A cópia deste objetivo EXIGE a Página no `promoted_object`? PURA. A Meta exige `page_id` num conjunto
- * de CONVERSAS (CTWA, sempre) e de LEAD sem pixel (LEAD_GENERATION) — nesses casos, sem a Página lida da
- * fonte, o createAdSet é recusado. Conversão com pixel resolve por OFFSITE_CONVERSIONS (não precisa de
- * Página). `hasPixel` = a fonte trouxe um pixel (`structure.pixelId`). Fonte única do guard F2.
- */
-export function copyRequiresDestinationPage(goal: ConversionGoal, hasPixel: boolean): boolean {
-  return isMessagingGoal(goal) || (goal === "lead" && !hasPixel);
+ * A cópia deste objetivo EXIGE a Página no `promoted_object` da fonte pra não ser recusada? PURA.
+ * Só CONVERSAS (CTWA / `messaging_started`): a Meta sempre resolve pra `CONVERSATIONS` + `promoted_object.
+ * page_id` (nunca pelo ramo de pixel), e o objetivo NÃO exige pixel — então é o único caminho onde a
+ * Página faltante escapa das outras redes e é recusada só no apply. LEAD sem pixel também exigiria a
+ * Página (LEAD_GENERATION), mas o pré-check de pixel (`conversionRequiresPixel` ⊇ {lead}, apply-draft)
+ * já barra lead-sem-pixel ANTES — então cobrir lead aqui seria inerte; lead-com-pixel/venda resolvem por
+ * OFFSITE_CONVERSIONS (não precisam de Página). Fonte única do guard F2. */
+export function copyRequiresDestinationPage(goal: ConversionGoal): boolean {
+  return isMessagingGoal(goal);
 }
 
 /**
@@ -3290,7 +3292,7 @@ export async function proposeCopyCampaign(
   // (sempre) e de LEAD sem pixel. Se a fonte é desses E a leitura não capturou a Página, barra ANTES
   // de tentar criar (senão o conjunto é recusado no apply e sobra campanha órfã). Mesmo padrão do
   // pré-check de pixel (G1). Base com pixel resolve por OFFSITE_CONVERSIONS (não precisa de Página).
-  if (copyRequiresDestinationPage(goal, Boolean(structure.pixelId)) && !structure.pageId) {
+  if (copyRequiresDestinationPage(goal) && !structure.pageId) {
     return { kind: "blocked", reason: COPY_MISSING_DESTINATION_PAGE_REASON };
   }
   const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
