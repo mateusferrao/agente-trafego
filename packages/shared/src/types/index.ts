@@ -561,9 +561,10 @@ export type ActionSource = "playbook" | "llm";
 export type RiskLevel = "low" | "medium" | "high";
 
 /**
- * Códigos das ressalvas de ESCALA (fonte única do tipo + zod). Cada um é um sinal de risco
- * detectado por um passe puro nível-Action (packages/core/analysis-guards) sobre uma ação de
- * escalar/reativar. Adicionar um novo passe = 1 entrada aqui.
+ * Códigos das ressalvas de RISCO (fonte única do tipo + zod). Cada um é um sinal detectado por um passe
+ * puro nível-Action (packages/core) — sobre uma ação de escalar/reativar (os 5 primeiros) OU sobre a
+ * escolha de criativo na criação (`weak_creative_pick`, aterrado no método do squad). Todos travam o
+ * auto-apply mas mantêm a ação APROVÁVEL. Adicionar um novo passe = 1 entrada aqui.
  */
 export const RESSALVA_CODES = [
   "no_significance",
@@ -571,6 +572,7 @@ export const RESSALVA_CODES = [
   "audience_ceiling",
   "creative_fatigue",
   "unconfirmed_hypothesis",
+  "weak_creative_pick",
 ] as const;
 export type RessalvaCode = (typeof RESSALVA_CODES)[number];
 
