@@ -6,8 +6,8 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
-import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, flipBudgetLevel, goalNounPt, isAging, isFatigued, isMessagingGoal, isOppositeStage, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, removeAdsetsAt, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, seedAdsetFromSingle, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { isLookalikeName, MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -24,6 +24,7 @@ import {
   minorToMajor,
   type Action,
   type AgentId,
+  type AudienceStage,
   type CreationActivation,
   type AudienceProfile,
   type CampaignDraftSpec,
@@ -390,7 +391,7 @@ export interface DisambiguationFreeze {
 }
 
 type AudiencePrep =
-  | { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[]; readonly sizeWarnings: string[]; readonly dropped: string[] }
+  | { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[]; readonly sizeWarnings: string[]; readonly dropped: string[]; readonly includeWarm: boolean }
   | { readonly kind: "blocked"; readonly reason: string; readonly disambiguation?: DisambiguationFreeze };
 
 /**
@@ -407,10 +408,10 @@ async function prepareAudiences(
   excludeQueries: readonly string[],
   autonomous = false,
 ): Promise<AudiencePrep> {
-  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [] };
+  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [], includeWarm: false };
   const audiences = await loadAccountAudiences(deps, ctx, ref);
   if (audiences.length === 0) {
-    if (autonomous) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [...includeQueries, ...excludeQueries] };
+    if (autonomous) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [...includeQueries, ...excludeQueries], includeWarm: false };
     return { kind: "blocked", reason: "não achei públicos salvos nessa conta — confere no Gerenciador ou rode uma análise que eu cacheio os públicos" };
   }
   const byId = new Map(audiences.map((a) => [a.id, a]));
@@ -465,7 +466,11 @@ async function prepareAudiences(
       sizeWarnings.push(`⚠️ o público *${a.name}* é pequeno (~${a.approximateCount} pessoas) — pode entregar pouco.`);
     }
   }
-  return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings, dropped };
+  // S3: estágio de público da campanha — QUENTE se algum público de INCLUSÃO é custom audience
+  // não-lookalike (mesma regra de `audienceFromTargeting`, vocabulário Meta isolado em `isLookalikeName`).
+  // Só-lookalike/interesses = frio (prospecção). Alimenta o fit + o matcher enriquecido.
+  const includeWarm = includeIds.some((id) => !isLookalikeName(byId.get(id)?.name));
+  return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings, dropped, includeWarm };
 }
 
 /** Rótulo PT do tipo de geo (vocabulário Meta fica no adapter — aqui só o kind neutro). */
@@ -1777,36 +1782,66 @@ async function loadForcedCreative(
   };
 }
 
+/** Máx. de chars do tema/oferta do vencedor no prompt do matcher (compacto — é contexto, não copy). */
+const WINNER_COPY_MAX_CHARS = 240;
+
+/** Achata a 1ª variante da copy do vencedor em texto legível (headline + corpo) pro matcher (S3).
+ *  Vazio/ausente → undefined (nunca injeta placeholder). PURA. */
+function summarizeWinnerCopy(variants: readonly { readonly primaryText?: string; readonly headline?: string }[] | undefined): string | undefined {
+  const first = variants?.[0];
+  if (!first) return undefined;
+  const text = [first.headline?.trim(), first.primaryText?.trim()].filter(Boolean).join(" — ");
+  if (!text) return undefined;
+  return text.length > WINNER_COPY_MAX_CHARS ? `${text.slice(0, WINNER_COPY_MAX_CHARS)}…` : text;
+}
+
+/** Diagnóstico do anúncio-fonte "provado" (S3): fadiga + estágio de público de ORIGEM. */
+interface ServingSourceAssessment {
+  /** o criativo veiculando já está desgastado (não reusar automaticamente). */
+  readonly fatigued: boolean;
+  /** estágio do público onde o anúncio-fonte RODOU (do snapshot curado) — `unknown` se sem dado. */
+  readonly stage: AudienceStage;
+}
+
 /**
- * O anúncio-fonte "provado" (melhor por desempenho) está com o criativo fatigado? Fadiga é
- * detectada por CAMPANHA/ADSET (`entity_analyses.flags`), não por anúncio individual — então
- * resolve a campanha/adset do anúncio (`ad_creatives`) e checa se algum dos dois tem sinal DURO de
- * desgaste na última análise (`isFatigued`: creative_fatigue OU creative_aging OU weak_hook — fonte
- * única). Sem dado nenhum (nunca analisado) → assume não-desgastado (nunca bloqueia por ausência).
+ * Diagnóstico do anúncio-fonte "provado" (melhor por desempenho). Fadiga + público são detectados
+ * por CAMPANHA/ADSET (`entity_analyses.curated_json`), não por anúncio individual — resolve a
+ * campanha/adset do anúncio (`ad_creatives`) e lê a última análise curada:
+ *  - `fatigued` (`isFatigued`: creative_fatigue OU creative_aging OU weak_hook — fonte única): reusar
+ *    um criativo desgastando queima verba igual → cai na biblioteca por contexto.
+ *  - `stage` (`audience.stage`, S3): o estágio de público onde o vencedor performou. Serve pra a
+ *    camada de cima NÃO herdar um criativo de prospecção fria numa campanha de remarketing (ou
+ *    vice-versa) sem crítica. Sem dado nenhum (nunca analisado) → `unknown` (nunca bloqueia por ausência).
+ * O adset (pai imediato do anúncio) tem prioridade sobre a campanha pra o estágio (mais específico).
  */
-async function isSourceFatigued(
+async function assessServingSource(
   deps: WorkerDeps,
   orgId: string,
   accountId: string,
   agentId: string,
   sourceAdId: string,
-): Promise<boolean> {
+): Promise<ServingSourceAssessment> {
   const [ad] = await deps.db
     .select({ campaignId: adCreatives.campaignId, adsetId: adCreatives.adsetId })
     .from(adCreatives)
     .where(and(eq(adCreatives.orgId, orgId), eq(adCreatives.adAccountId, accountId), eq(adCreatives.adId, sourceAdId)))
     .limit(1);
-  const ids = [ad?.adsetId, ad?.campaignId].filter((id): id is string => Boolean(id));
-  if (ids.length === 0) return false;
+  // ordem [adset, campanha]: o adset (mais específico) decide o estágio quando ambos têm dado.
+  const orderedIds = [ad?.adsetId, ad?.campaignId].filter((id): id is string => Boolean(id));
+  if (orderedIds.length === 0) return { fatigued: false, stage: "unknown" };
   const rows = await deps.db
-    .select({ curatedJson: entityAnalyses.curatedJson })
+    .select({ entityId: entityAnalyses.entityId, curatedJson: entityAnalyses.curatedJson })
     .from(entityAnalyses)
-    .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, ids)));
-  // Fonte única `isFatigued` (curated_json), NÃO uma flag (flags é cpa_acima_da_meta/
-  // roas_abaixo_da_meta/anomalia:* — outro conjunto, bug corrigido). Cobre creative_fatigue E
-  // creative_aging: reusar um criativo desgastando (mesmo que ainda entregue) queima verba igual —
-  // cai na biblioteca por contexto em vez de auto-reusar o anúncio cansando.
-  return rows.some((r) => isFatigued(r.curatedJson?.healthSignals));
+    .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, orderedIds)));
+  const byId = new Map(rows.map((r) => [r.entityId, r.curatedJson]));
+  const fatigued = rows.some((r) => isFatigued(r.curatedJson?.healthSignals));
+  // 1º estágio conhecido na ordem adset→campanha (o resto do array é o fallback).
+  let stage: AudienceStage = "unknown";
+  for (const id of orderedIds) {
+    const s = byId.get(id)?.audience?.stage;
+    if (s && s !== "unknown") { stage = s; break; }
+  }
+  return { fatigued, stage };
 }
 
 /**
@@ -1828,14 +1863,21 @@ export async function chooseCreative(
   strategy: CreativeSourceStrategy,
   match?: MatchContext & { readonly model: string },
 ): Promise<ChosenCreative | null> {
+  const campaignStage = match?.campaignStage ?? "unknown";
   const servingRef = async (): Promise<ChosenCreative | null> => {
     if (!serving.imageHash && !serving.videoId) return null;
-    // gap real corrigido (pivô saúde): não reusar automaticamente um anúncio "provado" cujo
-    // criativo já está fatigado (mesmo princípio de `rankCreatives.excludeFatigued`, adaptado
-    // à granularidade real disponível — fadiga é sinal de campanha/adset, não de anúncio
-    // individual). Sem sourceAdId (ex: picker manual) → nada pra checar, segue.
-    if (serving.sourceAdId && (await isSourceFatigued(deps, orgId, accountId, agentId, serving.sourceAdId))) {
-      return null;
+    if (serving.sourceAdId) {
+      const src = await assessServingSource(deps, orgId, accountId, agentId, serving.sourceAdId);
+      // gap real corrigido (pivô saúde): não reusar automaticamente um anúncio "provado" cujo
+      // criativo já está fatigado (mesmo princípio de `rankCreatives.excludeFatigued`, adaptado
+      // à granularidade real disponível — fadiga é sinal de campanha/adset, não de anúncio individual).
+      if (src.fatigued) return null;
+      // S3 (o caso que o dono levantou): o vencedor cru é de um estágio de público OPOSTO ao da
+      // campanha nova (prospecção fria → campanha de remarketing, ou vice-versa). A mensagem que
+      // converte no frio raramente é a que converte no quente → não herda automaticamente; cai na
+      // biblioteca por contexto (matcher enriquecido com o estágio). `isOppositeStage` (core puro)
+      // só dispara com AMBOS conhecidos e realmente opostos (unknown é neutro, nunca penaliza).
+      if (isOppositeStage(campaignStage, src.stage)) return null;
     }
     return {
       ...(serving.imageHash ? { imageHash: serving.imageHash } : {}),
@@ -2575,9 +2617,18 @@ export async function proposeCreateCampaign(
     behaviorPrep.interests.length > 0 ||
     areas.radiusAreas.length > 0;
 
+  // S3: estágio de público da campanha NOVA — QUENTE se incluiu custom audience não-lookalike;
+  // FRIO se há segmentação explícita sem público quente; senão desconhecido (neutro no fit).
+  // Alimenta o matcher enriquecido + a demoção do vencedor cross-stage em `chooseCreative`.
+  const campaignStage: AudienceStage =
+    aud.includeIds.length > 0 ? (aud.includeWarm ? "remarketing" : "prospecting") : hasExplicitPrimitive ? "prospecting" : "unknown";
+  // tema/oferta do vencedor pro matcher (S3): a 1ª variante de copy do anúncio provado, achatada em
+  // texto legível (headline + corpo). Contexto de encaixe, nunca ordem de copiar.
+  const winnerCopyText = summarizeWinnerCopy(defaults.winnerCopy);
+
   // Criativo: FORÇADO (o que o usuário mandou no WhatsApp, Slice 7) OU pool único — melhor
   // veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR CASA com o contexto
-  // (objetivo + negócio + orientações) via matcher LLM barato.
+  // (objetivo + negócio + orientações + estágio de público + tema do vencedor) via matcher LLM barato.
   const chosen = args.forcedCreativeAssetId
     ? await loadForcedCreative(deps, ctx.orgId, ctx.adAccountId, args.forcedCreativeAssetId)
     : await chooseCreative(
@@ -2592,7 +2643,14 @@ export async function proposeCreateCampaign(
           ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
         },
         ac.creativeSource,
-        { goal, businessContext: ac.businessContext, guidance: ac.guidance, model: ac.model },
+        {
+          goal,
+          businessContext: ac.businessContext,
+          guidance: ac.guidance,
+          model: ac.model,
+          campaignStage,
+          ...(winnerCopyText ? { winnerCopy: winnerCopyText } : {}),
+        },
       );
   // Página é obrigatória (object_story_spec). Vem do anúncio veiculando (ou da escolha do dono, W2);
   // conta sem NENHUM anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria.

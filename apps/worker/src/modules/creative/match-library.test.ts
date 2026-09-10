@@ -82,6 +82,31 @@ describe("pickLibraryCreativeByContext", () => {
       expect(system).not.toMatch(/maior pontuação|maior score/i);
     });
   });
+
+  describe("contexto enriquecido (S3 — estágio de público + tema do vencedor)", () => {
+    it("estágio da campanha aparece no prompt (em linguagem de negócio, não a taxonomia crua)", async () => {
+      const llm = mockLlm(0);
+      await pickLibraryCreativeByContext(llm as never, "m", { ...CTX, campaignStage: "remarketing" }, cands);
+      const sent = llm.completeStructured.mock.calls[0]![0].messages[1]!.content;
+      expect(sent).toMatch(/Estágio do público:.*remarketing/);
+      expect(sent).toMatch(/quente/);
+    });
+
+    it("estágio unknown → não injeta linha de estágio (não afirma o que não sabe)", async () => {
+      const llm = mockLlm(0);
+      await pickLibraryCreativeByContext(llm as never, "m", { ...CTX, campaignStage: "unknown" }, cands);
+      const sent = llm.completeStructured.mock.calls[0]![0].messages[1]!.content;
+      expect(sent).not.toContain("Estágio do público:");
+    });
+
+    it("tema/oferta do vencedor entra como referência (contexto de encaixe, não ordem de copiar)", async () => {
+      const llm = mockLlm(0);
+      await pickLibraryCreativeByContext(llm as never, "m", { ...CTX, winnerCopy: "50% off na primeira sessão" }, cands);
+      const sent = llm.completeStructured.mock.calls[0]![0].messages[1]!.content;
+      expect(sent).toContain("50% off na primeira sessão");
+      expect(sent).toMatch(/refer[êe]ncia/i);
+    });
+  });
 });
 
 describe("pickCreativeByReference (Slice 3 — busca por descrição)", () => {

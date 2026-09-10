@@ -160,6 +160,36 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
     const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING);
     expect(out).toEqual({ videoId: "SVID", assetId: "ad_2", origin: "reuse", source: "serving" });
   });
+
+  it("S3 — vencedor de estágio OPOSTO (prospecção → campanha de remarketing) NÃO herda automático, cai pra biblioteca", async () => {
+    // o anúncio-fonte rodou em público FRIO (prospecting); a campanha nova é remarketing (match.campaignStage).
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [], audience: { stage: "prospecting" } } }] },
+      { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] },
+      { direct: [] }, // visão cacheada vazia → cai na recência da biblioteca
+    ]);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "remarketing" });
+    expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
+  });
+
+  it("S3 — vencedor do MESMO estágio (remarketing → campanha de remarketing) é herdado normalmente", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [], audience: { stage: "remarketing" } } }] },
+    ]);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "remarketing" });
+    expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
+  });
+
+  it("S3 — estágio da campanha desconhecido (unknown) → nunca demote (neutro), herda o vencedor", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ entityId: "AS1", curatedJson: { isCBO: true, healthSignals: [], audience: { stage: "prospecting" } } }] },
+    ]);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING, { ...MATCH, campaignStage: "unknown" });
+    expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
+  });
 });
 
 describe("hasOfflineCover (capa conhecida offline p/ montar anúncio de vídeo)", () => {

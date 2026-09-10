@@ -3,6 +3,7 @@
 // (visão feita no upload) qual criativo MELHOR CASA — não é ranking genérico/aleatório. Texto
 // only (usa o cache, não re-analisa visão) → barato. Falha/sem descrição → cai na recência.
 
+import type { AudienceStage } from "@trafego/shared";
 import type { LLMProviderPort, LLMMessage, LLMCallMeta } from "@trafego/shared/ports";
 import { LLMProviderError } from "@trafego/shared/ports";
 
@@ -22,7 +23,20 @@ export interface MatchContext {
   readonly goal: string;
   readonly businessContext?: string | null;
   readonly guidance?: string | null;
+  /** estágio do público da campanha NOVA (S3) — a mensagem que casa com frio ≠ a que casa com quente.
+   *  Neutro (o adapter derivou do targeting); `unknown`/ausente = não pontua estágio no prompt. */
+  readonly campaignStage?: AudienceStage;
+  /** copy do anúncio VENCEDOR da conta (S3) — dá o TEMA/OFERTA de referência pro matcher alinhar a
+   *  mensagem do criativo escolhido; nunca é ordem de copiar, só contexto de encaixe. */
+  readonly winnerCopy?: string | null;
 }
+
+/** Rótulo PT do estágio pro prompt (o LLM lê linguagem de negócio, não a taxonomia). */
+const STAGE_PROMPT_LABEL: Readonly<Record<AudienceStage, string>> = {
+  prospecting: "prospecção (público frio, ainda não conhece o negócio)",
+  remarketing: "remarketing (público quente, já interagiu/conhece)",
+  unknown: "",
+};
 
 const MATCH_TEMPERATURE = 0.2;
 const MATCH_MAX_TOKENS = 200;
@@ -46,10 +60,13 @@ function buildMessages(ctx: MatchContext, candidates: readonly LibraryCandidate[
     "sinal extra, não critério sozinho: só desempatam entre candidatos de fit equivalente — nunca vencem " +
     "um encaixe melhor. Responda só o índice (0-based) do melhor.";
   const list = candidates.map((c, i) => `[${i}] ${describeCandidateForPrompt(c)}`).join("\n");
+  const stageLabel = ctx.campaignStage ? STAGE_PROMPT_LABEL[ctx.campaignStage] : "";
   const parts = [
     `Objetivo da campanha: ${ctx.goal}.`,
+    stageLabel ? `Estágio do público: ${stageLabel}.` : "",
     ctx.businessContext ? `Contexto do negócio: ${ctx.businessContext}` : "",
     ctx.guidance ? `Orientações: ${ctx.guidance}` : "",
+    ctx.winnerCopy ? `Tema/oferta de referência (do anúncio que mais converte): ${ctx.winnerCopy}` : "",
     "",
     "Criativos disponíveis (índice + descrição):",
     list,
