@@ -563,8 +563,11 @@ export type RiskLevel = "low" | "medium" | "high";
 /**
  * Códigos das ressalvas de RISCO (fonte única do tipo + zod). Cada um é um sinal detectado por um passe
  * puro nível-Action (packages/core) — sobre uma ação de escalar/reativar (os 5 primeiros) OU sobre a
- * escolha de criativo na criação (`weak_creative_pick`, aterrado no método do squad). Todos travam o
- * auto-apply mas mantêm a ação APROVÁVEL. Adicionar um novo passe = 1 entrada aqui.
+ * escolha de criativo na criação (`weak_creative_pick`, aterrado no método do squad). Os 5 primeiros
+ * ANEXAM à `Action` e travam o auto-apply (`isAutoApplicable`) mantendo-a APROVÁVEL. `weak_creative_pick`
+ * é hoje só a MENSAGEM honesta do eco de criação (a criação-do-zero SEMPRE exige aprovação — nasce
+ * pausada + 2ª aprovação — então o auto-apply já é travado pelo modelo de rascunho, não por esta
+ * ressalva); anexá-la a uma ação de auto-create futura ligaria o gate literal. Adicionar um passe = 1 entrada aqui.
  */
 export const RESSALVA_CODES = [
   "no_significance",

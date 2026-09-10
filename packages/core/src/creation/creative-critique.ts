@@ -2,12 +2,14 @@
 // escolher o melhor disponível, ISTO decide se o Roy OPINA e RECOMENDA. Determinístico sobre os sinais
 // já computados (fit S1 + fadiga + decomposição de visão em cache). Três vereditos, mapeados no MESMO
 // modelo de honestidade que já governa a escala (§8/Fatia A):
-//   - solid       → o pick é bom → respeita a autonomia (aplica sozinho em act_full).
-//   - caveat      → o pick serve MAS tem fraqueza real → anexa uma `Ressalva` (trava o auto-apply mesmo
-//                   em act_full; mantém aprovável) com o "porém + recomendação".
-//   - recommend_new → nada casa bem / o pick já morreu → é `human_direction` (nunca auto-cria).
-// A prosa aterrada no squad (`CREATIVE_CRITIQUE_KNOWLEDGE`) é enriquecida na casca; aqui mora o veredito
-// + a mensagem determinística (o backbone honesto, como `computeScaleRessalvas`).
+//   - solid       → o pick é bom → sem crítica (respeita o fluxo).
+//   - caveat      → o pick serve MAS tem fraqueza real → devolve uma `Ressalva` (o "porém + recomendação").
+//   - recommend_new → nada casa bem / o pick já morreu → recomenda criar um novo (nunca auto-cria).
+// Onde a Ressalva do `caveat` ENTRA hoje: na criação-do-zero ela é a MENSAGEM honesta do eco (o auto-apply
+// já é travado pelo modelo de rascunho — criação SEMPRE exige aprovação, nasce pausada + 2ª aprovação; ver
+// RESSALVA_CODES). Anexá-la a uma `Action` de auto-create futura ligaria o gate literal do `isAutoApplicable`
+// (mesma régua da Fatia A). A prosa aterrada no squad (`CREATIVE_CRITIQUE_KNOWLEDGE`) é enriquecida na casca;
+// aqui mora o veredito + a mensagem determinística (o backbone honesto, como `computeScaleRessalvas`).
 
 import type { AudienceStage, CreativeProofStrength, Ressalva } from "@trafego/shared";
 
