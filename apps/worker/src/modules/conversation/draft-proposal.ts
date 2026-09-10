@@ -1220,6 +1220,10 @@ export interface RefineDraftPatch {
    *  campanha (a Meta distribui entre os conjuntos), `"abo"` = por conjunto. Num teste multi-conjunto,
    *  trocar MOVE a verba de nível (spend-preserving, `flipBudgetLevel`). Ausente = não mexe. */
   readonly budgetMode?: BudgetMode;
+  /** Resolução do conflito idade×otimização (B4, só from_scratch): `"lock_age"` desliga o Advantage e
+   *  mantém a faixa; `"drop_age"` mantém o Advantage e LIMPA a idade dura de todos os conjuntos. É a
+   *  resposta determinística à pergunta do conflito (o LLM não tem como zerar a idade sozinho). */
+  readonly resolveAgeConflict?: "lock_age" | "drop_age";
 }
 
 export type RefineResult =
@@ -1279,6 +1283,7 @@ export function patchHasNonLinkAction(patch: RefineDraftPatch): boolean {
     hasValue(patch.objective) || hasValue(patch.campaignName) || hasValue(patch.adsetName) || hasValue(patch.setPage) ||
     patch.regenerateCopy === true || patch.variantsCount != null || hasValue(patch.copyEdits) || hasValue(patch.setAdCreative) ||
     hasValue(patch.distinctCreatives) || hasValue(patch.mediaPreference) || hasValue(patch.addSegment) || hasValue(patch.removeSegment) ||
+    hasValue(patch.resolveAgeConflict) ||
     patchTouchesSinglePublico(patch)
   );
 }
@@ -1335,6 +1340,9 @@ export async function refineDraft(
     edit.advantageAudience = patch.advantage;
     edit.advantageCreative = patch.advantage;
   }
+  // B4: resolução determinística do conflito idade×otimização (o dono respondeu à pergunta). O core
+  // aplica (`lock_age` desliga o Advantage; `drop_age` limpa a idade de todos os conjuntos).
+  if (kind === "from_scratch" && patch.resolveAgeConflict) edit.resolveAgeConflict = patch.resolveAgeConflict;
   if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
   if (kind === "from_scratch" && patch.adsetName != null) edit.adsetName = patch.adsetName;
   // OBJETIVO (só from_scratch, paridade com o site §13): re-resolve o pixel DA CONTA (não de
@@ -1697,6 +1705,25 @@ export async function refineDraft(
 
   const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel });
   if (!result.ok) return { kind: "blocked", reason: refineErrorReason(result.error) };
+
+  // DIAGNÓSTICO (B4): quando o dono resolve o conflito idade×otimização, registra o estado da idade
+  // no rascunho DEPOIS de aplicar — prova que `drop_age` REMOVEU a idade (ou `lock_age` desligou o
+  // Advantage) antes do apply. Pareado com o log de payload do createAdSet, fecha a certeza.
+  if (edit.resolveAgeConflict) {
+    const ageOf = (t: CampaignDraftSpec["targeting"] | undefined) => (t?.kind === "explicit" ? { ageMin: t.ageMin, ageMax: t.ageMax } : null);
+    const s = result.value.spec;
+    deps.logger.info(
+      {
+        draftId,
+        resolveAgeConflict: edit.resolveAgeConflict,
+        advantageAudience: s.advantageAudience,
+        baseAge: ageOf(s.targeting),
+        conjuntoAges: (s.adsets ?? []).map((a) => ({ name: a.name, age: ageOf(a.targeting) })),
+        conflitoResidual: advantageAgeConflict(s, s.advantageAudience ?? false),
+      },
+      "draft-proposal:resolução conflito idade×otimização",
+    );
+  }
 
   const persisted = await persistDraftSpec(deps.db, { orgId: ctx.orgId, draftId, adAccountId: ctx.adAccountId }, result.value.spec);
   if (!persisted) return { kind: "blocked", reason: NOT_OPEN_REASON };

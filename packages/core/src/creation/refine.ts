@@ -130,6 +130,10 @@ export interface DraftEdit {
    *  da conta. Só faz sentido em objetivo de site/tráfego/conversão; a casca já filtra em
    *  `messaging_started` (leva pro WhatsApp). `""` (string vazia) NÃO chega aqui — a casca omite. */
   readonly linkUrl?: string;
+  /** Resolução DETERMINÍSTICA do conflito idade×otimização (B4, §8 o dono decide): `lock_age` desliga a
+   *  otimização e mantém a faixa; `drop_age` mantém a otimização e REMOVE a idade dura de TODOS os
+   *  conjuntos. Ausente = não mexe. Fecha o buraco do "tirar a faixa" (o LLM não tinha como limpar idade). */
+  readonly resolveAgeConflict?: "lock_age" | "drop_age";
   // ─── só duplicate ───
   readonly suffixLabel?: string;
 }
@@ -166,7 +170,16 @@ const FROM_SCRATCH_ONLY: readonly (keyof DraftEdit)[] = [
   "copyVariants",
   "linkUrl",
   "pageId",
+  "resolveAgeConflict",
 ];
+
+/** Remove a idade dura (ageMin/ageMax) de um targeting explícito; mantém geo/gênero/interesses.
+ *  Não-explícito passa direto. PURO — usado na resolução `drop_age` do conflito idade×otimização. */
+function stripExplicitAge(t: TargetingSpec): TargetingSpec {
+  if (t.kind !== "explicit") return t;
+  const { ageMin: _min, ageMax: _max, ...rest } = t;
+  return rest;
+}
 
 function clampBudget(requestedMinor: number, capMinor: number | null | undefined): { dailyBudgetMinor: number; clampedByCap: boolean } {
   const dailyBudgetMinor = capMinor != null ? Math.min(requestedMinor, capMinor) : requestedMinor;
@@ -294,13 +307,27 @@ export function applyDraftEdit(
     ...(edit.linkUrl !== undefined ? { linkUrl: edit.linkUrl } : {}),
   };
 
+  // B4: resolução DETERMINÍSTICA do conflito idade×otimização (o dono escolheu). `lock_age` desliga a
+  // otimização e mantém a faixa; `drop_age` mantém a otimização e LIMPA a idade dura de TODOS os
+  // conjuntos (single + adsets) — fecha o buraco em que o LLM não conseguia zerar a idade sozinho.
+  const resolved: CampaignDraftSpec =
+    edit.resolveAgeConflict === "lock_age"
+      ? { ...next, advantageAudience: false, advantageCreative: false }
+      : edit.resolveAgeConflict === "drop_age"
+        ? {
+            ...next,
+            ...(next.targeting ? { targeting: stripExplicitAge(next.targeting) } : {}),
+            ...(next.adsets ? { adsets: next.adsets.map((a) => (a.targeting ? { ...a, targeting: stripExplicitAge(a.targeting) } : a)) } : {}),
+          }
+        : next;
+
   // GATE ÚNICO de destino (§7): objetivo de conversas no WhatsApp leva pro WhatsApp, não pra um site
   // → o link nunca vai pro anúncio. Cobre também o flip de objetivo PÓS-criação (site/chat trocam só
   // o objetivo mantendo um link antigo) — as bordas barram link NOVO; aqui limpa o link OBSOLETO.
-  if (next.linkUrl !== undefined && isMessagingGoal(next.objective)) {
-    const { linkUrl: _dropped, ...withoutLink } = next;
+  if (resolved.linkUrl !== undefined && isMessagingGoal(resolved.objective)) {
+    const { linkUrl: _dropped, ...withoutLink } = resolved;
     return ok({ spec: withoutLink, clampedByCap });
   }
 
-  return ok({ spec: next, clampedByCap });
+  return ok({ spec: resolved, clampedByCap });
 }

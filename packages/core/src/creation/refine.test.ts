@@ -88,6 +88,61 @@ describe("advantageAgeConflict — idade fixa × otimização automática (§8: 
   });
 });
 
+describe("applyDraftEdit — resolução determinística do conflito idade×otimização (B4)", () => {
+  const single: CampaignDraftSpec = {
+    ...fromScratch,
+    advantageAudience: true,
+    advantageCreative: true,
+    targeting: { kind: "explicit", geo: [], ageMin: 45, ageMax: 65, genders: [2] },
+  };
+  const multi: CampaignDraftSpec = {
+    ...fromScratch,
+    advantageAudience: true,
+    advantageCreative: true,
+    adsets: [
+      { name: "Mulheres 45+", targeting: { kind: "explicit", geo: [], ageMin: 45, ageMax: 65 } },
+      { name: "Mulheres no geral", targeting: { kind: "advantage_plus" } },
+    ],
+  };
+
+  it("lock_age: desliga a otimização e MANTÉM a faixa de idade", () => {
+    const r = applyDraftEdit("from_scratch", single, { resolveAgeConflict: "lock_age" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.spec.advantageAudience).toBe(false);
+    expect(r.value.spec.advantageCreative).toBe(false);
+    expect(r.value.spec.targeting).toMatchObject({ ageMin: 45, ageMax: 65 });
+    expect(advantageAgeConflict(r.value.spec, r.value.spec.advantageAudience ?? false)).toBe(false);
+  });
+
+  it("drop_age (single): LIMPA a idade e mantém a otimização → sem conflito", () => {
+    const r = applyDraftEdit("from_scratch", single, { resolveAgeConflict: "drop_age" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const t = r.value.spec.targeting as Extract<TargetingSpec, { kind: "explicit" }>;
+    expect(t.ageMin).toBeUndefined();
+    expect(t.ageMax).toBeUndefined();
+    expect(t.genders).toEqual([2]); // preserva o resto do público
+    expect(r.value.spec.advantageAudience).toBe(true);
+    expect(advantageAgeConflict(r.value.spec, true)).toBe(false);
+  });
+
+  it("drop_age (multi-conjunto): limpa a idade de TODOS os conjuntos", () => {
+    const r = applyDraftEdit("from_scratch", multi, { resolveAgeConflict: "drop_age" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(advantageAgeConflict(r.value.spec, true)).toBe(false);
+    const a0 = r.value.spec.adsets?.[0]?.targeting as Extract<TargetingSpec, { kind: "explicit" }>;
+    expect(a0.ageMin).toBeUndefined();
+    expect(a0.ageMax).toBeUndefined();
+  });
+
+  it("duplicate: resolveAgeConflict não é editável (herdado)", () => {
+    const r = applyDraftEdit("duplicate", duplicate, { resolveAgeConflict: "drop_age" }, noCap);
+    expect(r.ok).toBe(false);
+  });
+});
+
 describe("applyDraftEdit — merge puro do rascunho", () => {
   it("from_scratch: edita nomes + ativação e mantém o resto", () => {
     const r = applyDraftEdit("from_scratch", fromScratch, { campaignName: "Nova", adsetName: "Conj", activation: "active" }, noCap);
