@@ -89,8 +89,25 @@ criativo; `create_campaign` ligado (ações permitidas); escrita conversacional 
    conjunto não reescreve a lista — não clobba uma edição concorrente do chat).
 4. `tokens:check` verde (sem cor hardcoded); `ng build` verde (validação de template real).
 
+## S3/S4/S5 — Escolha de criativo estratégica (fit + foco + crítica)
+Pré: conta com anúncio ativo (pra herdar Página/criativo) + `TRAFEGO_CHAT_ADS_WRITES=on`.
+1. **Foco perguntado (S4).** "cria uma campanha de vendas pra SP". → o Roy PERGUNTA o foco do criativo
+   numa mensagem só: o ângulo (o que destacar) + reusar o que converte × testar algo novo. Responda
+   "destaca a prova social e reusa o que funciona" → ele monta reusando o vencedor, sem re-perguntar.
+   Se você JÁ disser tudo no 1º pedido ("cria... reusando o campeão, foco em oferta"), ele NÃO re-pergunta.
+   "tanto faz, você escolhe" → ele segue sem travar (escolhe por contexto/desempenho).
+2. **Fit cross-stage (S3).** Numa conta cujo melhor anúncio rodou em PROSPECÇÃO fria, peça uma campanha
+   de REMARKETING ("cria uma campanha pro meu público de clientes"). → o Roy NÃO herda cru o vencedor
+   frio; cai na biblioteca por contexto (o eco mostra o criativo escolhido). O inverso (vencedor de
+   remarketing → campanha de prospecção) também. Estágio desconhecido → herda o vencedor (neutro).
+3. **Crítica "não só faz" (S5).** Quando o melhor criativo está AGING (desgastando mas ainda entrega),
+   o Roy PROPÕE reusando + adiciona a nota "Sobre o criativo: ...ainda entrega, mas já dá sinais de
+   desgaste — vale deixar o próximo pronto...". Ele NÃO trava e a criação segue aprovável. Pick limpo
+   (provado, sem fadiga) → SEM nota de crítica (não polui). Nada casa bem → recomenda criar um novo.
+4. `pnpm --filter @trafego/core --filter @trafego/worker test` verde; `typecheck` verde.
+
 ## Invariantes a confirmar em TODOS os cenários
-- Toda estrutura/Advantage/próximo passo é RECOMENDAÇÃO; o dono sobrepõe e a palavra final é dele.
+- Toda estrutura/Advantage/próximo passo/CRIATIVO é RECOMENDAÇÃO; o dono sobrepõe e a palavra final é dele.
 - Eco+confirma antes de QUALQUER escrita; nada aplica sem "sim"; criação nasce pausada + 2ª aprovação.
 - NUNCA a sigla técnica CBO/ABO no que vai pro dono (chat E site).
 - Sem cara de IA: sem travessão dramático como conector nas mensagens.
