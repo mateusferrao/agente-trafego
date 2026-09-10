@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, copyRequiresDestinationPage, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
 import type { PageInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
@@ -966,5 +966,20 @@ describe("stripGeoQualifier (retry de geo sem o sufixo)", () => {
     expect(stripGeoQualifier("Belo Horizonte")).toBeUndefined();
     expect(stripGeoQualifier(", MG")).toBeUndefined();
     expect(stripGeoQualifier("")).toBeUndefined();
+  });
+});
+
+describe("copyRequiresDestinationPage (guard F2 — cópia CTWA/lead-sem-pixel exige a Página)", () => {
+  it("CONVERSAS (messaging) → SEMPRE exige a Página (com ou sem pixel)", () => {
+    expect(copyRequiresDestinationPage("messaging_started", false)).toBe(true);
+    expect(copyRequiresDestinationPage("messaging_started", true)).toBe(true);
+  });
+  it("LEAD sem pixel → exige a Página (LEAD_GENERATION); com pixel → NÃO (OFFSITE resolve)", () => {
+    expect(copyRequiresDestinationPage("lead", false)).toBe(true);
+    expect(copyRequiresDestinationPage("lead", true)).toBe(false);
+  });
+  it("VENDAS/conversão → não exige Página (usa pixel/OFFSITE)", () => {
+    expect(copyRequiresDestinationPage("purchase", false)).toBe(false);
+    expect(copyRequiresDestinationPage("purchase", true)).toBe(false);
   });
 });

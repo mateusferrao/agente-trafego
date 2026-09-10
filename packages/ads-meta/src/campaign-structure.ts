@@ -10,9 +10,12 @@ import { objectiveFromAdSet, objectiveFromCampaign, type RawPromotedObject } fro
 /**
  * Lê a estrutura NEUTRA de uma campanha existente p/ CÓPIA FIEL (Fatia 7) — escopado à
  * campanha (nunca account-wide, ao contrário de `inferCreationDefaults`). Vocabulário Meta
- * (CBO via budget na campanha, optimization_goal, promoted_object) isolado aqui. O destino
- * WhatsApp NÃO precisa ser lido: a cópia reusa o `creative_id` por referência, o que preserva
- * o `object_story_spec`/CTA/destino automaticamente.
+ * (CBO via budget na campanha, optimization_goal, promoted_object) isolado aqui. O reuso do
+ * `creative_id` por referência preserva o `object_story_spec`/CTA/link do CRIATIVO — MAS o
+ * `promoted_object.page_id` do CONJUNTO é um campo à parte, exigido pela Meta em CONVERSAS
+ * (CTWA)/LEAD-sem-pixel, que o creative reuse NÃO preserva: por isso capturamos `pixelId` E
+ * `pageId` do adset-fonte e threadamos pro createAdSet da cópia (bug de prod: cópia de conversas
+ * recusada sem a Página).
  */
 export const COPY_STRUCTURE_ADSET_LIMIT = 25;
 export const COPY_STRUCTURE_AD_LIMIT = 50;
@@ -129,6 +132,10 @@ export class MetaCampaignStructureService {
       specialAdCategories: campaign.special_ad_categories ?? [],
       // pixel da fonte → threaded no createAdSet da cópia (senão conversão falha sem promoted_object).
       ...(source?.promoted_object?.pixel_id ? { pixelId: source.promoted_object.pixel_id } : {}),
+      // Página de destino da fonte (`promoted_object.page_id`) → threaded no createAdSet da cópia. A Meta
+      // EXIGE a Página no promoted_object de CONVERSAS (CTWA)/LEAD-sem-pixel; sem capturar aqui, a cópia
+      // de campanha de conversas era recusada ("A Página é necessária no objeto promovido…").
+      ...(source?.promoted_object?.page_id ? { pageId: source.promoted_object.page_id } : {}),
       sourceAdsetId: source?.id ?? "",
       targeting,
       creativeRefs,

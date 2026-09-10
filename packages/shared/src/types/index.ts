@@ -1356,6 +1356,11 @@ export interface CampaignStructure {
   /** pixel do promoted_object da fonte (Fatia 7) — sem ele, copiar campanha de conversão
    *  falha no createAdSet (OFFSITE_CONVERSIONS sem promoted_object). Ausente em mensagens. */
   readonly pixelId?: string;
+  /** Página de destino do conjunto da fonte (`promoted_object.page_id`) — a Meta EXIGE a Página no
+   *  `promoted_object` de campanha de CONVERSAS (CTWA) e de LEAD sem pixel; sem ela o createAdSet da
+   *  cópia é recusado ("A Página é necessária no objeto promovido para o tipo de destino do WhatsApp").
+   *  Threadada até `spec.pageId` na cópia. Ausente quando a fonte não tem destino que exija Página. */
+  readonly pageId?: string;
   /** conjunto representativo (a cópia é 1-1-N): id + targeting neutro + destino WhatsApp. */
   readonly sourceAdsetId: string;
   readonly targeting: AudienceProfile;

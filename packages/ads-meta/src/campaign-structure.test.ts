@@ -69,4 +69,36 @@ describe("MetaCampaignStructureService.read", () => {
     expect(s.budgetMode).toBe("abo");
     expect(s.dailyBudgetMinor).toBe(8000);
   });
+
+  it("CONVERSAS (CTWA): captura a Página de destino do promoted_object → structure.pageId (bug prod: sem ela a cópia era recusada)", async () => {
+    stubGraph({
+      campaign: { name: "Conversas WA", objective: "OUTCOME_ENGAGEMENT" },
+      adsets: {
+        data: [
+          {
+            id: "SET_WA",
+            effective_status: "ACTIVE",
+            optimization_goal: "CONVERSATIONS",
+            promoted_object: { page_id: "PAGE_123" },
+            daily_budget: "5000",
+          },
+        ],
+      },
+      ads: { data: [{ id: "AD1", effective_status: "ACTIVE", creative: { id: "CR1" } }] },
+    });
+    const s = await makeService().read(account, "CMP_WA", "act_123");
+    expect(s.pageId).toBe("PAGE_123");
+    expect(s.pixelId).toBeUndefined();
+  });
+
+  it("conversão com pixel → captura pixelId, sem pageId (OFFSITE não exige Página)", async () => {
+    stubGraph({
+      campaign: { name: "Vendas", objective: "OUTCOME_SALES", daily_budget: "10000", special_ad_categories: [] },
+      adsets: { data: [{ id: "S1", effective_status: "ACTIVE", optimization_goal: "OFFSITE_CONVERSIONS", promoted_object: { pixel_id: "PX_9" } }] },
+      ads: { data: [{ id: "A1", effective_status: "ACTIVE", creative: { id: "C1" } }] },
+    });
+    const s = await makeService().read(account, "CMP_S", "act_123");
+    expect(s.pixelId).toBe("PX_9");
+    expect(s.pageId).toBeUndefined();
+  });
 });

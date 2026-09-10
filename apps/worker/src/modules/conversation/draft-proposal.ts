@@ -794,6 +794,22 @@ export const PROACTIVE_REACH_FLOOR_REASON = "público estreito demais para veicu
  *  público de inclusão resolveu — degrada pra recomendação humana em vez de criar amplo às cegas. */
 export const PROACTIVE_AUDIENCE_UNRESOLVED_REASON = "não consegui resolver o público específico para criar sozinho";
 
+/** Bloqueio honesto (§13) quando a base é campanha de CONVERSAS (ou lead sem pixel) mas eu não consegui
+ *  ler a Página de destino da fonte — a Meta EXIGE a Página no objeto promovido; sem ela o conjunto seria
+ *  recusado no apply e deixaria campanha órfã. Melhor barrar antes com o próximo passo. */
+export const COPY_MISSING_DESTINATION_PAGE_REASON =
+  "essa campanha leva as conversas pro WhatsApp de uma Página, mas eu não consegui ler essa Página de destino da campanha-base agora — sem ela a Meta não deixa criar o conjunto. Tenta de novo em instantes, ou crie a nova campanha pela análise/site (lá dá pra escolher a Página).";
+
+/**
+ * A cópia deste objetivo EXIGE a Página no `promoted_object`? PURA. A Meta exige `page_id` num conjunto
+ * de CONVERSAS (CTWA, sempre) e de LEAD sem pixel (LEAD_GENERATION) — nesses casos, sem a Página lida da
+ * fonte, o createAdSet é recusado. Conversão com pixel resolve por OFFSITE_CONVERSIONS (não precisa de
+ * Página). `hasPixel` = a fonte trouxe um pixel (`structure.pixelId`). Fonte única do guard F2.
+ */
+export function copyRequiresDestinationPage(goal: ConversionGoal, hasPixel: boolean): boolean {
+  return isMessagingGoal(goal) || (goal === "lead" && !hasPixel);
+}
+
 /**
  * Ajusta o nº de anúncios PRESERVANDO os existentes: aumentar duplica o último (copy + criativo
  * próprio); diminuir corta os últimos (mín 1). Clampado ao teto. Não regenera copy nem apaga edições.
@@ -3270,6 +3286,13 @@ export async function proposeCopyCampaign(
   }
 
   const goal = structure.objective;
+  // Guard honesto (bug prod CTWA): a Meta EXIGE `promoted_object.page_id` num conjunto de CONVERSAS
+  // (sempre) e de LEAD sem pixel. Se a fonte é desses E a leitura não capturou a Página, barra ANTES
+  // de tentar criar (senão o conjunto é recusado no apply e sobra campanha órfã). Mesmo padrão do
+  // pré-check de pixel (G1). Base com pixel resolve por OFFSITE_CONVERSIONS (não precisa de Página).
+  if (copyRequiresDestinationPage(goal, Boolean(structure.pixelId)) && !structure.pageId) {
+    return { kind: "blocked", reason: COPY_MISSING_DESTINATION_PAGE_REASON };
+  }
   const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
   // P0.2 (subfatia 2): structure.targeting JÁ é o AudienceProfile da fonte (readCampaignStructure
   // leu — sem chamada extra); só falta cachear+ecoar. Diferente de proposeCreateCampaign, aqui a
@@ -3320,8 +3343,11 @@ export async function proposeCopyCampaign(
     sourceCampaignId: args.sourceCampaignId,
     budgetMode: structure.budgetMode,
     specialAdCategories: structure.specialAdCategories,
-    // pixel da fonte → o createAdSet monta o promoted_object (conversão não falha). Mensagens não tem.
+    // pixel da fonte → o createAdSet monta o promoted_object (conversão OFFSITE não falha). Mensagens
+    // não usam pixel, mas EXIGEM a Página no promoted_object → threadamos a Página da fonte também
+    // (senão a Meta recusa o conjunto de conversas: "A Página é necessária no objeto promovido…").
     ...(structure.pixelId ? { pixelId: structure.pixelId } : {}),
+    ...(structure.pageId ? { pageId: structure.pageId } : {}),
     name,
   };
   // Piso de alcance (Fatia 8) — igual ao create: autônomo não replica pra público estreito demais.
