@@ -76,7 +76,7 @@ import { latestAnalysisAsOf, renderWhatsappNumber, resolveWhatsappNumber } from 
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
 import { runReallocationSaga } from "../../modules/apply/reallocation-saga.js";
-import { buildRefineEcho, CREATIVE_SOURCE_PINS, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type CreativeSourcePin, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft, type RefineDraftPatch, type SegmentPublicoInput } from "../../modules/conversation/draft-proposal.js";
+import { buildRefineEcho, CREATIVE_SOURCE_PINS, describeExplicitAudience, MEDIA_PREFERENCES, proposeAttachCreative, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type CreativeSourcePin, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft, type RefineDraftPatch, type SegmentPublicoInput } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext, reallocKindPeriod, type BudgetPeriodKind } from "../../modules/apply/write-context.js";
 import { adHasNoBudgetMessage, resolveMisplacedBudgetMessage } from "./budget-location.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
@@ -965,6 +965,23 @@ export function makeConversationNodes(
               "on_demand",
               scaleChoice,
             )
+          : createCall.name === "attach_creative_to_campaign"
+            ? await (async () => {
+                const co = args["copyOverride"];
+                const cov = co && typeof co === "object" ? (co as { primaryText?: unknown; headline?: unknown }) : {};
+                const copyOverride = {
+                  ...(typeof cov.primaryText === "string" ? { primaryText: cov.primaryText } : {}),
+                  ...(typeof cov.headline === "string" ? { headline: cov.headline } : {}),
+                };
+                return proposeAttachCreative(deps, dctx, {
+                  ...(typeof args["campaignName"] === "string" ? { campaignName: args["campaignName"] as string } : {}),
+                  ...(typeof args["campaignId"] === "string" ? { campaignId: args["campaignId"] as string } : {}),
+                  ...(typeof args["adsetId"] === "string" ? { adsetId: args["adsetId"] as string } : {}),
+                  ...(typeof args["asset"] === "string" ? { asset: args["asset"] as string } : {}),
+                  ...(typeof args["assetId"] === "string" ? { assetId: args["assetId"] as string } : {}),
+                  ...(Object.keys(copyOverride).length > 0 ? { copyOverride } : {}),
+                });
+              })()
           : createCall.name === "copy_campaign"
             ? await (async () => {
                 const inc = strList(args["includeAudiences"]);

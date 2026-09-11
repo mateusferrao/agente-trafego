@@ -60,6 +60,12 @@ export function describeActionOutcome(action: Action, detail: OutcomeDetail): st
 /** "uma campanha de vendas, R$ 50,00/dia · 2 variação(ões) de copy" ou "a duplicata do seu
  *  vencedor, R$ 80,00/dia". Sem jargão (§UX) — objetivo em PT, valor formatado. PURA. */
 export function describeCreatedDraft(kind: DraftKind, spec: CampaignDraftSpec): string {
+  // Anexar NÃO cria campanha nem gasto novo (o anúncio herda o orçamento do conjunto) → sem valor
+  // de orçamento (o sentinel interno não é um budget real). Nomeia a campanha-alvo quando conhecida.
+  if (kind === "attach") {
+    const where = spec.targetCampaignName ? ` em ${spec.targetCampaignName}` : "";
+    return `um anúncio novo${where}, com o criativo que você escolheu`;
+  }
   const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: spec.currency }).format(minorToMajor(spec.dailyBudgetMinor, spec.currency));
   if (kind === "duplicate") return `a duplicata do seu vencedor, ${money}/dia`;
   const goal = spec.objective ? goalNounPt(spec.objective) : "campanha";

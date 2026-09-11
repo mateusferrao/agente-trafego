@@ -1112,7 +1112,7 @@ export interface GuardrailConfig {
 // targeting) fica isolado no adapter (`meta-conversion-map`). Trocar de plataforma =
 // novo adapter mapeando este mesmo contrato.
 
-export const DRAFT_KINDS = ["from_scratch", "duplicate"] as const;
+export const DRAFT_KINDS = ["from_scratch", "duplicate", "attach"] as const;
 export type DraftKind = (typeof DRAFT_KINDS)[number];
 
 // ─── Estratégia de fonte do criativo na criação (config por-agente, Fatia 7 Slice 10) ──
@@ -1347,6 +1347,19 @@ export interface CampaignDraftSpec {
   /** rótulo do sufixo aplicado ao nome do vencedor no `/copies` (`<vencedor> — <rótulo>`).
    *  Ausente → "escala". NÃO é o nome inteiro (o `/copies` só ANEXA). */
   readonly suffixLabel?: string;
+  // ─── só `attach` (anexar asset da biblioteca a campanha existente) ───
+  /** campanha/conjunto ALVO (já existentes) onde o anúncio novo entra. */
+  readonly targetCampaignId?: string;
+  /** nome da campanha-alvo (só p/ o resumo do desfecho — sem jargão/orçamento falso). */
+  readonly targetCampaignName?: string;
+  readonly targetAdsetId?: string;
+  /** anúncio-MOLDE do conjunto: seu object_story_spec é clonado e a mídia trocada (preserva
+   *  destino/CTA/página/formulário). */
+  readonly templateAdId?: string;
+  /** asset da biblioteca (creative_assets.id) a anexar — resolvido pra image_hash/video_id no apply. */
+  readonly assetId?: string;
+  /** sobrescrita opcional da copy do molde (senão herda). */
+  readonly copyOverride?: { readonly primaryText?: string; readonly headline?: string };
 }
 
 /** Otimização de orçamento (neutro): campanha (CBO) × conjunto (ABO). Tupla = fonte única do

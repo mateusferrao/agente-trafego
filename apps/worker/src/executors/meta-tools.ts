@@ -276,6 +276,9 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     const target: ActionTarget | undefined =
       args.target ?? (rootId ? { level: "campaign", id: String(rootId) } : undefined);
     if (!target) return { reverted: false, reason: "não achei a campanha criada pra reverter" };
+    // substantivo do que se desmonta, na voz do dono (§13): campanha (from_scratch/duplicate) OU
+    // anúncio (attach — só o ad novo). Sem jargão de nível.
+    const entityNoun = target.level === "ad" ? "esse anúncio" : target.level === "adset" ? "esse conjunto" : "essa campanha";
 
     const undoKey = `${toolCall.id}:${UNDO_TOOL_KEY}`;
     const [existing] = await db
@@ -290,7 +293,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     const existingMode: "pause" | "archive" = (existing?.args as { mode?: "pause" | "archive" } | undefined)?.mode ?? "pause";
     const isEscalation = Boolean(existing) && existingMode === "pause" && mode === "archive";
     if (existing && !isEscalation) {
-      return { reverted: true, reason: existingMode === "archive" ? "essa campanha já estava arquivada" : "essa campanha já estava pausada" };
+      return { reverted: true, reason: existingMode === "archive" ? `já arquivei ${entityNoun} antes` : `já pausei ${entityNoun} antes` };
     }
 
     const status = mode === "archive" ? "ARCHIVED" : "PAUSED";
@@ -308,7 +311,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
       result = await ports.ads.mutate(account, action, { dryRun: false });
     } catch (error) {
       logger.error({ err: error, toolCallId: toolCall.id, mode }, "revertCreation:mutate falhou");
-      return { reverted: false, reason: mode === "archive" ? "não consegui arquivar a campanha na Meta" : "não consegui pausar a campanha na Meta" };
+      return { reverted: false, reason: mode === "archive" ? `não consegui arquivar ${entityNoun} na Meta` : `não consegui pausar ${entityNoun} na Meta` };
     }
 
     const targetLabel = entityKeyOf(target);

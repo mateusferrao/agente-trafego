@@ -40,6 +40,14 @@ describe("describeCreatedDraft", () => {
   it("duplicate → resumo da duplicata com valor formatado", () => {
     expect(describeCreatedDraft("duplicate", dupSpec)).toContain("duplicata do seu vencedor");
   });
+  it("attach → anúncio novo na campanha-alvo, SEM orçamento falso (não vaza o sentinel)", () => {
+    const attachSpec: CampaignDraftSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 1, activation: "paused", targetCampaignName: "D.A leads" };
+    const out = describeCreatedDraft("attach", attachSpec);
+    expect(out).toContain("um anúncio novo");
+    expect(out).toContain("D.A leads");
+    expect(out).not.toContain("campanha de campanha");
+    expect(out).not.toContain("R$"); // sem valor de orçamento (herda o do conjunto)
+  });
 });
 
 describe("describeDraftOutcome", () => {

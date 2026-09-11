@@ -518,6 +518,28 @@ export function makeConversationTools(
     }),
   });
 
+  const attachCreativeToCampaign = tool(proposeOnly, {
+    name: "attach_creative_to_campaign",
+    description:
+      "Propõe ANEXAR um criativo da BIBLIOTECA (asset que o dono subiu, ex: um vídeo mandado no WhatsApp) a uma campanha JÁ EXISTENTE — cria um anúncio novo no conjunto ativo dela, herdando texto/destino/página de um anúncio que já roda no conjunto (molde). " +
+      "Use quando o dono disser 'coloca/põe esse criativo na campanha X', 'adiciona esse vídeo na campanha Y'. É DIFERENTE de create_campaign (que cria campanha nova) — aqui o alvo é uma campanha que já existe. Descubra a campanha por nome (eu resolvo e pergunto se ambíguo); se ela tiver mais de um conjunto ativo, eu pergunto qual. O criativo é o da biblioteca, por descrição/nome (pro recém-enviado, descreva: 'o vídeo que mandei'). Nasce PAUSADO; requer eco+confirma + 2º ok pra ativar.",
+    schema: z.object({
+      campaignName: z.string().nullable().optional().describe("NOME da campanha-alvo (ex: 'D.A leads') — eu resolvo fuzzy e pergunto se ambíguo."),
+      campaignId: z.string().nullable().optional().describe("id da campanha-alvo, quando já conhecido (de list_campaigns/campaign_status)."),
+      adsetId: z.string().nullable().optional().describe("id do conjunto-alvo, quando o dono já escolheu (resposta à minha pergunta de >1 conjunto ativo)."),
+      asset: z.string().nullable().optional().describe("criativo da BIBLIOTECA por NOME/descrição (ex: 'o vídeo que acabei de mandar', 'o depoimento da Ana') — eu resolvo pro asset e pergunto se ambíguo."),
+      assetId: z.string().nullable().optional().describe("id do asset da biblioteca, quando conhecido."),
+      copyOverride: z
+        .object({
+          primaryText: z.string().max(COPY_TEXT_MAX).nullable().optional().describe("texto próprio pro anúncio novo (senão herda o do molde)"),
+          headline: z.string().max(COPY_TEXT_MAX).nullable().optional().describe("título próprio (senão herda)"),
+        })
+        .nullable()
+        .optional()
+        .describe("copy própria pro anúncio; ausente = herda a do anúncio-molde do conjunto."),
+    }),
+  });
+
   // CÓPIA FIEL de uma campanha específica (Fatia 7): lê a estrutura da campanha-base e propõe
   // uma cópia (mesmos criativos por referência, CBO/ABO e objetivo preservados), trocando só o
   // público quando pedido. Requer eco+confirma. Descubra o campaignId antes (get_campaign_analysis).
@@ -960,7 +982,7 @@ export function makeConversationTools(
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, editAudience, reallocateBudget, revertAction, confirmWrite, cancelWrite];
-  const createTools = [scaleWinner, createCampaign, copyCampaign, adjustDraft, regenerateCopy];
+  const createTools = [scaleWinner, createCampaign, attachCreativeToCampaign, copyCampaign, adjustDraft, regenerateCopy];
   return [
     ...readTools,
     triggerAnalysis,
@@ -1248,7 +1270,7 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 ]);
 
 /** Tools de CRIAÇÃO (Fatia 7) — gasto novo, sempre eco+confirma → rascunho/aprovação. */
-export const CREATE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["scale_winner", "create_campaign", "copy_campaign"]);
+export const CREATE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["scale_winner", "create_campaign", "attach_creative_to_campaign", "copy_campaign"]);
 /** Tools de REFINAMENTO do rascunho pendente (mutam o pendingDraft, não criam novo). */
 export const REFINE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["adjust_draft", "regenerate_copy"]);
 

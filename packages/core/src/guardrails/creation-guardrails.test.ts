@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CampaignDraft, CampaignDraftSpec, DraftKind, GuardrailConfig } from "@trafego/shared";
 import { GUARDRAIL_DEFAULTS } from "@trafego/shared";
-import { applyCreationGuardrails } from "./index.js";
+import { applyAttachGuardrails, applyCreationGuardrails } from "./index.js";
 
 function draft(over: Partial<CampaignDraftSpec> = {}, kind: DraftKind = "from_scratch"): CampaignDraft {
   return {
@@ -66,5 +66,27 @@ describe("applyCreationGuardrails", () => {
     const res = applyCreationGuardrails(draft({ dailyBudgetMinor: 8000 }), bare);
     expect(res.allowed?.spec.dailyBudgetMinor).toBe(GUARDRAIL_DEFAULTS.maxNewDailyBudgetMinor);
     expect(res.clampedFromMinor).toBe(8000);
+  });
+});
+
+describe("applyAttachGuardrails — anexar não usa cap de campanhas nem clamp de budget", () => {
+  const attachCfg: GuardrailConfig = { ...GUARDRAIL_DEFAULTS, maxEntitiesPerDay: 3 };
+
+  it("kill switch barra o anexo", () => {
+    const res = applyAttachGuardrails({ ...attachCfg, killSwitch: true }, { attachedToday: 0 });
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toContain("kill");
+  });
+
+  it("barra ao atingir o teto de entidades novas/dia (não o de campanhas)", () => {
+    const res = applyAttachGuardrails(attachCfg, { attachedToday: 3 });
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toContain("entidades");
+  });
+
+  it("passa dentro do teto de entidades/dia", () => {
+    const res = applyAttachGuardrails(attachCfg, { attachedToday: 2 });
+    expect(res.allowed).toBe(true);
+    expect(res.reason).toBeNull();
   });
 });

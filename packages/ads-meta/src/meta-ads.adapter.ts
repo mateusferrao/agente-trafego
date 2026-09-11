@@ -719,6 +719,18 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     return this.writeThroughGovernor(account, () => this.creation.createAd(account, input));
   }
 
+  async readAdSetAds(account: AdAccountRef, adsetId: string) {
+    try {
+      return await this.creation.readAdSetAds(account, adsetId);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async createAdCreativeFromTemplate(account: AdAccountRef, input: Parameters<AdsPlatformPort["createAdCreativeFromTemplate"]>[1]) {
+    return this.writeThroughGovernor(account, () => this.creation.createAdCreativeFromTemplate(account, input));
+  }
+
   async inferCreationDefaults(account: AdAccountRef) {
     try {
       return await this.creation.inferCreationDefaults(account);

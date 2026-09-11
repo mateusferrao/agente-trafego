@@ -4,13 +4,13 @@
 // audit_log + metering → marca campaign_drafts.status. Reusa o padrão de
 // apply-confirmed-action / meta-tools. O EFEITO no chamador (resolver approval / push).
 
-import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
-import { agentToolCalls, approvals, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
+import { and, count, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { agentToolCalls, approvals, auditLog, campaignDrafts, creativeAssets, guardrailConfigs } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyCreationGuardrails, buildDuplicateInput, goalNounPt, OBJECTIVE_REQUIRES_PAGE_REASON, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaledBudget, promotedObjectGap, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
+import { ADVANTAGE_AGE_CONFLICT_REASON, advantageAgeConflict, applyAttachGuardrails, applyCreationGuardrails, buildDuplicateInput, goalNounPt, OBJECTIVE_REQUIRES_PAGE_REASON, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaledBudget, promotedObjectGap, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
 import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
 import type { AgentId, ApprovalId, DraftId, RunId } from "@trafego/shared";
-import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
+import { AdsPlatformError, type AdAccountRef, type AttachMedia } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
@@ -19,8 +19,17 @@ import { permanentMetaReason } from "../../lib/meta-failure.js";
 
 const ACTOR_AGENT = "agent";
 const USAGE_TYPE_CAMPAIGN_CREATED = "campaign_created";
+/** Metering do anexar (§11): dimensão própria — anexar NÃO cria campanha nem gasto novo. */
+const USAGE_TYPE_CREATIVE_ATTACHED = "creative_attached";
 const TOOL_KEY_DUPLICATE = "duplicate_scale";
 const TOOL_KEY_CREATE = "create_campaign";
+/** anexar criativo da biblioteca a campanha existente — tool_call/audit próprios, contados sob
+ *  o cap GENÉRICO de entidades/dia (não o de campanhas novas). O BINDING (capacidade ligada) do
+ *  attach reusa `create_campaign` (decisão MVP); esta chave é só do REGISTRO/contagem + roteamento
+ *  do revert (teardown de CRIAÇÃO — pausa o ad, sem before_state; ver `revert-action.ts`). */
+export const TOOL_KEY_ATTACH = "attach_creative";
+/** Nome derivado do anúncio novo do anexo (o dono não nomeia — o card fala em linguagem de negócio). */
+const ATTACH_AD_NAME = "CaquiAI — anúncio novo";
 /** Categoria especial default (§7): sem categoria; override por-agente = fast-follow. */
 const DEFAULT_SPECIAL_AD_CATEGORIES: readonly string[] = [];
 /** Janela do cap de campanhas novas/dia (rolling 24h — igual ao contexto de tool diário). */
@@ -83,6 +92,77 @@ export async function countCreationsLast24h(
     .from(campaignDrafts)
     .where(and(eq(campaignDrafts.adAccountId, input.adAccountId), eq(campaignDrafts.status, "creating")));
   return appliedToday + inFlight;
+}
+
+/**
+ * Conta os anexos (attach) do agente na janela rolante 24h — cap GENÉRICO de entidades/dia
+ * (`maxEntitiesPerDay`). Pelo APPLY-TIME real (`agent_tool_calls` com a chave do attach), mesma
+ * lógica cross-run do cap de criação; exclui dry-run. Soma o EM-VOO (attach `creating` do mesmo
+ * agente) fora do dry-run — sem isso, dois applies de anexos DIFERENTES concorrentes lêem o mesmo
+ * N e podem estourar o cap transitoriamente (o tool_call só grava no FIM da saga).
+ */
+export async function countAttachesLast24h(
+  db: Database,
+  input: { readonly agentId: string; readonly adAccountId: string; readonly dryRun: boolean },
+): Promise<number> {
+  const since = new Date(Date.now() - CREATION_DAY_MS);
+  const [{ n: appliedToday } = { n: 0 }] = await db
+    .select({ n: count() })
+    .from(agentToolCalls)
+    .where(
+      and(
+        eq(agentToolCalls.agentId, input.agentId),
+        eq(agentToolCalls.toolKey, TOOL_KEY_ATTACH),
+        gte(agentToolCalls.createdAt, since),
+        sql`(${agentToolCalls.args} ->> 'dryRun') IS DISTINCT FROM 'true'`,
+      ),
+    );
+  if (input.dryRun) return appliedToday;
+  const [{ n: inFlight } = { n: 0 }] = await db
+    .select({ n: count() })
+    .from(campaignDrafts)
+    .where(and(eq(campaignDrafts.adAccountId, input.adAccountId), eq(campaignDrafts.status, "creating"), eq(campaignDrafts.kind, "attach")));
+  return appliedToday + inFlight;
+}
+
+/** Estado da mídia do asset a anexar (reload fresco no apply). `processing` = vídeo ainda
+ *  transcodificando na Meta (raro no apply, mas possível) → o apply devolve `limited` honesto. */
+type AttachAssetState = { readonly status: "ready" | "processing"; readonly media: AttachMedia };
+
+/**
+ * Recarrega o asset da biblioteca (por id, org+conta, não-arquivado) e resolve a mídia neutra a
+ * anexar. Vídeo `pending` (tem `metaVideoId`, ainda processando) → `processing`. Sem mídia
+ * utilizável / `error` / não encontrado → `null` (o apply degrada honesto). Vocabulário Meta
+ * (image_hash/video_id) fica no adapter; aqui é só o par neutro `AttachMedia`.
+ */
+export async function loadAttachMedia(
+  db: Database,
+  input: { readonly orgId: string; readonly adAccountId: string; readonly assetId: string },
+): Promise<AttachAssetState | null> {
+  const [asset] = await db
+    .select({ status: creativeAssets.status, metaImageHash: creativeAssets.metaImageHash, metaVideoId: creativeAssets.metaVideoId })
+    .from(creativeAssets)
+    .where(
+      and(
+        eq(creativeAssets.id, input.assetId),
+        eq(creativeAssets.orgId, input.orgId),
+        eq(creativeAssets.adAccountId, input.adAccountId),
+        isNull(creativeAssets.archivedAt),
+      ),
+    )
+    .limit(1);
+  if (!asset) return null;
+  const media: AttachMedia | null = asset.metaVideoId
+    ? { kind: "video", videoId: asset.metaVideoId }
+    : asset.metaImageHash
+      ? { kind: "image", imageHash: asset.metaImageHash }
+      : null;
+  if (!media) return null;
+  if (asset.status === "ready") return { status: "ready", media };
+  // vídeo ainda processando na Meta → o anúncio não pode ser criado agora (a Meta recusaria o
+  // creative). Só `pending` de vídeo vira `processing`; `error`/outro → não-utilizável (null).
+  if (media.kind === "video" && asset.status === "pending") return { status: "processing", media };
+  return null;
 }
 
 /** Aprovação TTL — reusa a mesma janela da aprovação de criação (24h, §8). */
@@ -177,16 +257,44 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     .where(and(eq(guardrailConfigs.agentId, row.agentId), eq(guardrailConfigs.orgId, input.orgId)))
     .limit(1);
   const cfg = toGuardrailConfig(guardrailRow);
-  // Cap rolling 24h de campanhas novas/dia — pelo APPLY-TIME real (P0.4, ver countCreationsLast24h).
-  const n = await countCreationsLast24h(db, { agentId: row.agentId, adAccountId: row.adAccountId, dryRun: cfg.dryRun });
 
-  const check = applyCreationGuardrails(draft, cfg, { createdCampaignsToday: n });
-  if (!check.allowed) {
-    // teto/killswitch é CORRIGÍVEL → NÃO marca o rascunho `failed` (fica `proposed`, reaprovável);
-    // devolve `limited` (o card fica + reabilita, sem sumir como um bloqueio terminal).
-    return { kind: "limited", reason: check.dropped?.reason ?? "barrado pelo guardrail de gasto novo" };
+  // ANEXAR (attach) tem guardrail PRÓPRIO: não cria campanha nem gasto novo (anúncio nasce PAUSADO +
+  // 2ª ativação) → NÃO usa o cap de campanhas novas/dia nem o clamp de budget; a rede é kill-switch +
+  // o cap GENÉRICO de entidades/dia (`maxEntitiesPerDay`, contado pelos anexos do agente em 24h).
+  let allowed: CampaignDraft;
+  if (draft.kind === "attach") {
+    const attachedToday = await countAttachesLast24h(db, { agentId: row.agentId, adAccountId: row.adAccountId, dryRun: cfg.dryRun });
+    const guard = applyAttachGuardrails(cfg, { attachedToday });
+    if (!guard.allowed) return { kind: "limited", reason: guard.reason ?? "barrado pelo guardrail de entidades/dia" };
+    allowed = draft;
+  } else {
+    // Cap rolling 24h de campanhas novas/dia — pelo APPLY-TIME real (P0.4, ver countCreationsLast24h).
+    const n = await countCreationsLast24h(db, { agentId: row.agentId, adAccountId: row.adAccountId, dryRun: cfg.dryRun });
+    const check = applyCreationGuardrails(draft, cfg, { createdCampaignsToday: n });
+    if (!check.allowed) {
+      // teto/killswitch é CORRIGÍVEL → NÃO marca o rascunho `failed` (fica `proposed`, reaprovável);
+      // devolve `limited` (o card fica + reabilita, sem sumir como um bloqueio terminal).
+      return { kind: "limited", reason: check.dropped?.reason ?? "barrado pelo guardrail de gasto novo" };
+    }
+    allowed = check.allowed;
   }
-  const allowed = check.allowed;
+
+  // ANEXAR: reload FRESCO do asset (pré-claim) + gate de `ready`. Vídeo ainda processando na Meta
+  // (raro no apply — a confirmação humana costuma dar tempo) → `limited` honesto: o card fica
+  // `proposed` (reaprovável) e o dono confirma de novo em instantes. Auto-reenfileirar-no-ready =
+  // fast-follow (ROADMAP). dry-run não recarrega (simula). O media resolvido segue pra saga.
+  let attachMedia: AttachMedia | null = null;
+  if (allowed.kind === "attach" && !cfg.dryRun) {
+    if (!allowed.spec.assetId || !allowed.spec.templateAdId || !allowed.spec.targetAdsetId) {
+      return { kind: "blocked", reason: "faltou o criativo, o molde ou o conjunto pra anexar o anúncio" };
+    }
+    const loaded = await loadAttachMedia(db, { orgId: input.orgId, adAccountId: row.adAccountId, assetId: allowed.spec.assetId });
+    if (!loaded) return { kind: "blocked", reason: "esse criativo não está disponível pra usar (arquivado ou com erro no processamento)" };
+    if (loaded.status === "processing") {
+      return { kind: "limited", reason: "o vídeo ainda tá terminando de processar — confirme de novo em instantes que eu crio o anúncio." };
+    }
+    attachMedia = loaded.media;
+  }
 
   // valida pré-requisitos do criar-do-zero: OU reuso de criativos por referência (cópia fiel,
   // Fatia 7 — não precisa de Page/criativo, o creative_id já traz tudo), OU Page + criativo novo.
@@ -249,7 +357,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   }
 
   const dryRun = cfg.dryRun;
-  const toolKey = pausedDraft.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
+  const toolKey = pausedDraft.kind === "duplicate" ? TOOL_KEY_DUPLICATE : pausedDraft.kind === "attach" ? TOOL_KEY_ATTACH : TOOL_KEY_CREATE;
   // createdIds parte do que já foi criado (retomada) e é PERSISTIDO a cada passo — um retry
   // após falha parcial pula o que já existe. `/copies`/`create*` não têm idempotência nativa,
   // então a persistência incremental É a idempotência. LIMITAÇÃO conhecida: um crash na janela
@@ -295,6 +403,9 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
           await persist({ budgetApplied: true });
         }
       }
+    } else if (pausedDraft.kind === "attach") {
+      // attachMedia foi resolvido/gated (ready) pré-claim; nunca é null aqui fora de dry-run.
+      await runAttachSaga(ports.ads, pausedDraft, ref, createdIds, persist, attachMedia!);
     } else {
       await runFromScratchSaga(ports.ads, pausedDraft, ref, createdIds, persist);
     }
@@ -348,13 +459,23 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
             ...(pausedDraft.sourceRef?.name ? { name: pausedDraft.sourceRef.name } : {}),
           }
         : undefined
-      : createdIds["campaignId"]
-        ? {
-            level: "campaign" as const,
-            id: createdIds["campaignId"] as string,
-            ...(pausedDraft.spec.campaignName ? { name: pausedDraft.spec.campaignName } : {}),
-          }
-        : undefined;
+      : row.kind === "attach"
+        ? // anexar cria só um ANÚNCIO novo — a reversão pausa/remove esse ad (não mexe na campanha/
+          // conjunto-alvo, que são do dono). O rótulo herda o nome da campanha-alvo (sourceRef).
+          createdIds["adId"]
+          ? {
+              level: "ad" as const,
+              id: createdIds["adId"] as string,
+              ...(pausedDraft.sourceRef?.name ? { name: pausedDraft.sourceRef.name } : {}),
+            }
+          : undefined
+        : createdIds["campaignId"]
+          ? {
+              level: "campaign" as const,
+              id: createdIds["campaignId"] as string,
+              ...(pausedDraft.spec.campaignName ? { name: pausedDraft.spec.campaignName } : {}),
+            }
+          : undefined;
 
   await db
     .insert(agentToolCalls)
@@ -381,9 +502,11 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   });
 
   if (!dryRun) {
+    // Anexar NÃO é campanha nova — dimensão de metering própria (§11: `type` é a base do markup,
+    // não pode super-contar campanhas). from_scratch/duplicate seguem em `campaign_created`.
     await ports.metering.record({
       orgId: input.orgId as OrgId,
-      type: USAGE_TYPE_CAMPAIGN_CREATED,
+      type: row.kind === "attach" ? USAGE_TYPE_CREATIVE_ATTACHED : USAGE_TYPE_CAMPAIGN_CREATED,
       payload: { draftId: row.id, kind: row.kind },
       adAccountId: row.adAccountId,
     });
@@ -657,5 +780,43 @@ export async function runFromScratchSaga(
     });
     adIds[i] = adId;
     await persist({ adIds: [...adIds] });
+  }
+}
+
+/**
+ * Saga de ANEXAR (attach): clona o object_story_spec do anúncio-MOLDE do conjunto-alvo trocando só
+ * a mídia (→ AdCreative novo) → cria o anúncio PAUSADO no conjunto. RETOMÁVEL: `persist` grava
+ * `creativeId` e depois `adId` — um retry pula o que já existe (a persistência incremental É a
+ * idempotência; `create*` não têm idempotência nativa). O molde/conjunto/copy vêm do spec; a mídia
+ * (`AttachMedia` neutro) foi resolvida + gated (`ready`) na casca. Nasce PAUSADO (2ª ativação, P0.1).
+ */
+export async function runAttachSaga(
+  ads: WorkerDeps["ports"]["ads"],
+  draft: CampaignDraft,
+  ref: AdAccountRef,
+  state: Record<string, unknown>,
+  persist: (patch: Record<string, unknown>) => Promise<void>,
+  media: AttachMedia,
+): Promise<void> {
+  const spec = draft.spec;
+  const templateAdId = spec.templateAdId!;
+  const adsetId = spec.targetAdsetId!;
+  // 1) AdCreative novo = molde clonado + mídia trocada (+copy sobrescrita se o dono pediu). O
+  //    vocabulário Meta (object_story_spec/lead_gen_form) fica no adapter.
+  let creativeId = state["creativeId"] as string | undefined;
+  if (!creativeId) {
+    const r = await ads.createAdCreativeFromTemplate(ref, {
+      templateAdId,
+      media,
+      name: ATTACH_AD_NAME,
+      ...(spec.copyOverride ? { copyOverride: spec.copyOverride } : {}),
+    });
+    creativeId = r.creativeId;
+    await persist({ creativeId });
+  }
+  // 2) anúncio PAUSADO no conjunto-alvo (a ativação é o 2º OK).
+  if (!state["adId"]) {
+    const { adId } = await ads.createAd(ref, { adsetId, creativeId, name: ATTACH_AD_NAME, status: spec.activation });
+    await persist({ adId });
   }
 }

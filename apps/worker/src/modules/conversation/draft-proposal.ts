@@ -51,6 +51,7 @@ import { loadEnabledTools } from "../tools/enabled.js";
 import { generateCopy } from "../copy/generate-copy.js";
 import { createVisionResolver, creativeContentHash, servingVisionKey } from "../vision/resolver.js";
 import { pickCreativeByReference, pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
+import { pickAttachTemplate, resolveAdsetChoice } from "./attach-plan.js";
 import { joinBalloons } from "../notify/split.js";
 import { assembleExplicitTargeting, hasExplicitContent, type ExplicitTargetingParts } from "./explicit-targeting.js";
 
@@ -363,7 +364,7 @@ export async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalConte
 async function persistDraftAndApproval(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
-  kind: "duplicate" | "from_scratch",
+  kind: "duplicate" | "from_scratch" | "attach",
   spec: CampaignDraftSpec,
   origin: DraftOrigin,
   sourceRef?: { level: "campaign" | "adset"; id: string; name?: string },
@@ -1868,6 +1869,34 @@ async function loadForcedCreative(
   };
 }
 
+/** Asset resolvido pro ANEXAR — TOLERA `pending` de vídeo (tem `metaVideoId`, ainda processando na
+ *  Meta): o producer PROPÕE mesmo assim (a confirmação humana costuma dar tempo de ficar `ready`); o
+ *  apply rechecka fresco e devolve `limited` honesto se ainda processar (decisão MVP pragmático). */
+interface AttachAsset {
+  readonly assetId: string;
+  readonly media: "image" | "video";
+  readonly processing: boolean;
+}
+async function loadAttachAsset(deps: WorkerDeps, orgId: string, accountId: string, assetId: string): Promise<AttachAsset | null> {
+  const [asset] = await deps.db
+    .select({
+      id: creativeAssets.id,
+      status: creativeAssets.status,
+      metaImageHash: creativeAssets.metaImageHash,
+      metaVideoId: creativeAssets.metaVideoId,
+    })
+    .from(creativeAssets)
+    .where(and(eq(creativeAssets.id, assetId), eq(creativeAssets.orgId, orgId), eq(creativeAssets.adAccountId, accountId), isNull(creativeAssets.archivedAt)))
+    .limit(1);
+  if (!asset) return null;
+  const media: "image" | "video" | null = asset.metaVideoId ? "video" : asset.metaImageHash ? "image" : null;
+  if (!media) return null;
+  if (asset.status === "ready") return { assetId: asset.id, media, processing: false };
+  // só vídeo `pending` (com metaVideoId) é "processando"; imagem/`error` não-utilizável → null.
+  if (media === "video" && asset.status === "pending") return { assetId: asset.id, media, processing: true };
+  return null;
+}
+
 /** Máx. de chars do tema/oferta do vencedor no prompt do matcher (compacto — é contexto, não copy). */
 const WINNER_COPY_MAX_CHARS = 240;
 
@@ -2642,6 +2671,107 @@ function visionSignalsOf(result: unknown): {
 }
 
 /** Criar do zero reusando o criativo/página/pixel da conta + copy gerada. */
+/** Attach não cria verba (o anúncio novo compartilha o orçamento do conjunto); sentinel positivo só
+ *  pra satisfazer o schema (o eco/card do attach não exibe orçamento). Budget real na UI = fast-follow. */
+const ATTACH_BUDGET_SENTINEL_MINOR = 1;
+
+/**
+ * Anexar um criativo da biblioteca a uma campanha EXISTENTE (attach): resolve campanha (por nome/id) →
+ * conjunto (1 usa / >1 pergunta / 0 pergunta) → asset (por id/descrição, gate `ready`) → molde (do mesmo
+ * tipo, senão reestrutura; sem reusável → pergunta destino) → eco+confirma. O anúncio nasce PAUSADO e a
+ * ativação é 2º OK. §8: nunca escolhe sozinho o ambíguo. Espelha `proposeCreateCampaign`.
+ */
+export async function proposeAttachCreative(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  args: {
+    readonly campaignId?: string;
+    readonly campaignName?: string;
+    readonly adsetId?: string;
+    readonly asset?: string;
+    readonly assetId?: string;
+    readonly copyOverride?: { readonly primaryText?: string; readonly headline?: string };
+  },
+  origin: DraftOrigin = "on_demand",
+): Promise<ChatDraftProposal> {
+  const ac = await loadAgentContext(deps, ctx);
+  if (!ac) return { kind: "blocked", reason: "Não achei a conta/agente pra anexar o criativo." };
+  // Gate MVP: mesma capacidade da criação (binding `create_campaign`).
+  if (!ac.enabled.has("create_campaign")) {
+    return { kind: "blocked", reason: "Criar/anexar anúncios por aqui está desligado pra este agente. Dá pra ligar nas ações permitidas." };
+  }
+
+  // 1) Campanha-alvo (por id explícito ou nome fuzzy).
+  const campaigns = await deps.ports.ads.listEntities(ac.ref, "campaign");
+  let campaign: { id: string; name: string } | null = null;
+  if (args.campaignId) {
+    const found = campaigns.find((c) => c.id === args.campaignId);
+    if (found) campaign = { id: found.id, name: found.name };
+  } else if (args.campaignName && args.campaignName.trim().length > 0) {
+    const m = resolveNamedMatch(campaigns, args.campaignName, { name: (c) => c.name, keys: (c) => [c.id] });
+    if (m.kind === "one") campaign = { id: m.row.id, name: m.row.name };
+    else if (m.kind === "ambiguous") {
+      return { kind: "ask", echo: `Achei mais de uma campanha parecida com "${args.campaignName}": ${m.rows.map((r) => r.name).join(", ")}. Qual delas?` };
+    } else return { kind: "blocked", reason: `Não achei nenhuma campanha chamada "${args.campaignName}".` };
+  }
+  if (!campaign) return { kind: "ask", echo: "Em qual campanha você quer colocar o criativo? Me diz o nome dela." };
+
+  // 2) Conjunto-alvo (1 usa · >1 pergunta · 0 pergunta) — nunca cria conjunto sozinho.
+  let adsetId = args.adsetId;
+  if (!adsetId) {
+    const tree = await deps.ports.ads.readActivationTree(ac.ref, "campaign", campaign.id);
+    const decision = resolveAdsetChoice(tree.adsets.map((a) => ({ adsetId: a.id, ...(a.name ? { name: a.name } : {}), status: a.status })));
+    if (decision.kind === "use") adsetId = decision.adsetId;
+    else if (decision.kind === "ask") {
+      return { kind: "ask", echo: `A campanha "${campaign.name}" tem mais de um conjunto ativo: ${decision.options.map((o) => o.name ?? o.adsetId).join(", ")}. Em qual eu coloco o anúncio?` };
+    } else return { kind: "ask", echo: `A campanha "${campaign.name}" não tem conjunto ativo pra eu colocar o anúncio. Me diz em qual conjunto (ou ative um antes).` };
+  }
+
+  // 3) Asset da biblioteca (por id ou descrição) — gate `ready` (vídeo processando → honesto).
+  let assetId = args.assetId;
+  if (!assetId && args.asset && args.asset.trim().length > 0) {
+    const candidates = await describeLibraryCandidates(deps, ctx.orgId, ctx.adAccountId);
+    const picked = await pickCreativeByReference(deps.ports.llm, ac.model, args.asset, candidates.map(toLibraryCandidate), { orgId: ctx.orgId });
+    if (!picked) return { kind: "ask", echo: "Não consegui identificar esse criativo na biblioteca. Qual deles? Me diz o nome ou descreve." };
+    assetId = picked;
+  }
+  if (!assetId) return { kind: "ask", echo: "Qual criativo da biblioteca você quer colocar? Me diz o nome ou a descrição." };
+  const chosen = await loadAttachAsset(deps, ctx.orgId, ctx.adAccountId, assetId);
+  if (!chosen) return { kind: "blocked", reason: "Esse criativo não está disponível pra usar (foi arquivado ou deu erro no processamento). Me manda outro que eu coloco." };
+  const assetMedia = chosen.media;
+
+  // 4) Molde a clonar (mesmo tipo → troca limpa; outro tipo → reestrutura; sem reusável → pergunta).
+  const ads = await deps.ports.ads.readAdSetAds(ac.ref, adsetId);
+  const template = pickAttachTemplate(ads, assetMedia);
+  if (template.kind === "ask_destination") {
+    return { kind: "ask", echo: "Esse conjunto ainda não tem um anúncio que eu consiga usar de molde (imagem/vídeo). Me diz o destino do anúncio (o link ou a página) que eu monto pra você." };
+  }
+
+  // 5) Spec + persistência + eco+confirma.
+  const spec: CampaignDraftSpec = {
+    version: 1,
+    currency: ac.currency,
+    dailyBudgetMinor: ATTACH_BUDGET_SENTINEL_MINOR,
+    activation: "paused",
+    targetCampaignId: campaign.id,
+    targetCampaignName: campaign.name,
+    targetAdsetId: adsetId,
+    templateAdId: template.templateAdId,
+    assetId: chosen.assetId,
+    ...(args.copyOverride && (args.copyOverride.primaryText || args.copyOverride.headline) ? { copyOverride: args.copyOverride } : {}),
+  };
+  const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "attach", spec, origin, { level: "campaign", id: campaign.id, name: campaign.name });
+  const mediaWord = assetMedia === "video" ? "vídeo" : "imagem";
+  const otherWord = assetMedia === "video" ? "imagem" : "vídeo";
+  const echo = joinBalloons([
+    `Vou colocar esse ${mediaWord} na campanha *${campaign.name}* — um anúncio novo no conjunto, herdando o texto e o destino de um anúncio que já roda lá.`,
+    template.restructured ? `O conjunto só tem anúncio de ${otherWord}, então vou criar um de ${mediaWord} com o mesmo texto e destino.` : "",
+    chosen.processing ? "O vídeo ainda tá terminando de processar — quando você confirmar, se já estiver pronto eu crio o anúncio na hora; se não, é só confirmar de novo em instantes." : "",
+    `Começa ${activationPhrase("paused")} — depois de criar, te peço o ok pra ativar. Confirma?`,
+  ].filter(Boolean));
+  return { kind: "draft", echo, approvalId, draftId };
+}
+
 export async function proposeCreateCampaign(
   deps: WorkerDeps,
   ctx: DraftProposalContext,

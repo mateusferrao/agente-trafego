@@ -301,3 +301,35 @@ export function applyCreationGuardrails(
 
   return { allowed: draft, dropped: null };
 }
+
+// ─── Guardrail do ANEXAR (attach) ────────────────────────────────────────
+// Anexar um criativo a uma campanha EXISTENTE NÃO cria campanha nem gasto novo
+// (o anúncio nasce PAUSADO + 2ª aprovação de ativação) → não usa o cap de
+// campanhas novas/dia nem o clamp de budget. A rede é: kill-switch + o cap
+// GENÉRICO de entidades novas/dia (`maxEntitiesPerDay`, a mesma das 4 ações).
+// PURA; o nº de anexos de hoje vem da casca.
+
+/** Contexto cross-run do anexar (dado pela casca). */
+export interface AttachGuardrailContext {
+  /** nº de anúncios já anexados hoje (conta no cap de entidades/dia). */
+  readonly attachedToday: number;
+}
+
+export interface AttachGuardrailResult {
+  /** liberado a anexar; `false` = barrado (com motivo). */
+  readonly allowed: boolean;
+  /** motivo do bloqueio; `null` = passou. */
+  readonly reason: string | null;
+}
+
+export function applyAttachGuardrails(cfg: GuardrailConfig, ctx: AttachGuardrailContext): AttachGuardrailResult {
+  if (cfg.killSwitch) return { allowed: false, reason: "kill switch ativo" };
+  if (ctx.attachedToday >= cfg.maxEntitiesPerDay) {
+    return {
+      allowed: false,
+      // nomeia a config EXATA a ajustar (a de entidades/dia, não a de campanhas novas).
+      reason: `você atingiu o limite de entidades novas por dia (${cfg.maxEntitiesPerDay}). Aumente em Segurança › Limite de entidades por dia e aprove de novo`,
+    };
+  }
+  return { allowed: true, reason: null };
+}

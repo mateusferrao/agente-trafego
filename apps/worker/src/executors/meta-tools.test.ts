@@ -281,7 +281,7 @@ describe("revertCreation (Slice 11 — teardown de criação/escala)", () => {
     const { deps, mutate } = makeCreationDeps([{ id: "undo1", args: { mode: "archive" } }]);
     const res = await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc, mode: "pause" });
     expect(res.reverted).toBe(true);
-    expect(res.reason).toContain("arquivada");
+    expect(res.reason).toContain("arquivei"); // "já arquivei essa campanha antes" (voz entity-aware)
     expect(mutate).not.toHaveBeenCalled();
   });
 

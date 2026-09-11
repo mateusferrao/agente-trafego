@@ -10,8 +10,20 @@ import { CREATION_TOOL_KEYS } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { makeMetaToolExecutor, type RevertResult } from "../../executors/meta-tools.js";
+import { TOOL_KEY_ATTACH } from "./apply-draft.js";
 
-const CREATION_KEYS: ReadonlySet<string> = new Set(CREATION_TOOL_KEYS);
+// Roteamento do revert: as chaves que desmontam por TEARDOWN de criação (sem `before_state`/drift).
+// Set DEDICADO — NÃO reusa `CREATION_TOOL_KEYS` (aquele também alimenta o gate de bindings/`GATEABLE`,
+// onde o attach reusa `create_campaign`; contaminá-lo ligaria um binding fantasma `attach_creative`).
+// O attach entra aqui: seu `args.target` nível-ad + `revertCreation` (set_status PAUSED) pausam o
+// anúncio novo — o `executor.revert` (restore por drift) falharia (attach grava `beforeState: null`).
+const REVERT_AS_CREATION_KEYS: ReadonlySet<string> = new Set<string>([...CREATION_TOOL_KEYS, TOOL_KEY_ATTACH]);
+
+/** A tool-key desmonta por TEARDOWN de criação (pausa/arquiva a raiz criada) e NÃO por restore de
+ *  drift? Puro — guarda o roteamento do revert (criação/escala/anexo × ações com `before_state`). */
+export function revertsAsCreation(toolKey: string): boolean {
+  return REVERT_AS_CREATION_KEYS.has(toolKey);
+}
 
 export interface RevertByIdInput {
   readonly orgId: string;
@@ -63,8 +75,8 @@ export async function revertActionById(deps: WorkerDeps, input: RevertByIdInput)
   const accessToken = ports.vault.decrypt(account.tokenCripto);
   const ref = { adAccountId: account.metaAdAccountId, accessToken };
 
-  // Criação/escala = algoritmo de teardown próprio (sem before_state/drift); ação = restore por drift.
-  if (CREATION_KEYS.has(tc.toolKey)) {
+  // Criação/escala/anexo = algoritmo de teardown próprio (sem before_state/drift); ação = restore por drift.
+  if (REVERT_AS_CREATION_KEYS.has(tc.toolKey)) {
     return executor.revertCreation({ orgId: input.orgId, account: ref, toolCall: tc, mode: input.mode ?? "pause" });
   }
   return executor.revert({ orgId: input.orgId, account: ref, toolCall: tc, force: input.force ?? false });

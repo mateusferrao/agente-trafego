@@ -4,7 +4,9 @@ import type {
   Action,
   ActivationTree,
   AdEntity,
+  AdFormat,
   AdMetric,
+  EntityStatus,
   AudienceProfile,
   BreakdownDimension,
   BreakdownSegment,
@@ -194,6 +196,30 @@ export interface CreateAdInput {
   readonly creativeId: string;
   readonly name: string;
   readonly status: "active" | "paused";
+}
+
+/** Anúncio de um conjunto EXISTENTE — leitura pra escolher o MOLDE do attach. Neutro (id/format/
+ *  status); o object_story_spec (vocabulário Meta) nunca sai do adapter. */
+export interface AdSetAd {
+  readonly adId: string;
+  readonly creativeId?: string;
+  readonly name?: string;
+  readonly status: EntityStatus;
+  readonly format: AdFormat;
+}
+
+/** Mídia neutra a anexar (o adapter deriva a capa do vídeo internamente). */
+export type AttachMedia =
+  | { readonly kind: "image"; readonly imageHash: string }
+  | { readonly kind: "video"; readonly videoId: string };
+
+/** Cria um AdCreative CLONANDO o object_story_spec de `templateAdId` e trocando só a mídia (+copy).
+ *  Preserva destino/CTA/página/formulário; o vocabulário Meta fica todo no adapter. */
+export interface CreateAdCreativeFromTemplateInput {
+  readonly templateAdId: string;
+  readonly media: AttachMedia;
+  readonly name: string;
+  readonly copyOverride?: { readonly primaryText?: string; readonly headline?: string };
 }
 
 /** Upload de mídia p/ a plataforma (Fatia 7). Imagem → hash; vídeo → id (async). */
@@ -395,6 +421,12 @@ export interface AdsPlatformPort {
   createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string; targetingFallback: boolean }>;
   createAdCreative(account: AdAccountRef, input: CreateAdCreativeInput): Promise<{ creativeId: string }>;
   createAd(account: AdAccountRef, input: CreateAdInput): Promise<{ adId: string }>;
+  /** Anúncios de um conjunto EXISTENTE — pra escolher um MOLDE reusável (imagem/vídeo) do mesmo tipo
+   *  de mídia do asset a anexar (attach). Escopado ao adset, status/formato neutros. */
+  readAdSetAds(account: AdAccountRef, adsetId: string): Promise<readonly AdSetAd[]>;
+  /** Cria um AdCreative clonando o object_story_spec de `templateAdId` e trocando só a mídia (attach) —
+   *  preserva destino/CTA/página/formulário. A capa do vídeo é derivada internamente. */
+  createAdCreativeFromTemplate(account: AdAccountRef, input: CreateAdCreativeFromTemplateInput): Promise<{ creativeId: string }>;
   /** Infere Page/Pixel/objetivo/mídia/link do que a conta já usa (§6 — sem pages_show_list). */
   inferCreationDefaults(account: AdAccountRef): Promise<CreationDefaults>;
   /** Sobe imagem p/ a conta → `image_hash` estável (reusável em object_story_spec). */

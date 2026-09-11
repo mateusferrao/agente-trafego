@@ -31,7 +31,7 @@ export interface ApplyActivationInput {
 }
 
 export interface DraftForActivation {
-  readonly kind: "from_scratch" | "duplicate";
+  readonly kind: "from_scratch" | "duplicate" | "attach";
   readonly createdIds: Record<string, unknown>;
   readonly sourceRef: { readonly level: EntityLevel; readonly id: string } | null;
 }
@@ -74,6 +74,13 @@ async function copiedAdsetNotDelivering(deps: WorkerDeps, ref: AdAccountRef, cre
 export function entitiesToActivate(draft: DraftForActivation): ActivateTarget[] {
   const ids = draft.createdIds;
   const out: ActivateTarget[] = [];
+  // attach: só o ANÚNCIO novo é ativado — a campanha e o conjunto-alvo já estão ativos (religá-los
+  // seria errado: mexeria em entidades que não são nossas de mexer).
+  if (draft.kind === "attach") {
+    const adId = idAt(ids, "adId");
+    if (adId) out.push({ level: "ad", id: adId });
+    return out;
+  }
   if (draft.kind === "from_scratch") {
     const campaignId = idAt(ids, "campaignId");
     if (campaignId) out.push({ level: "campaign", id: campaignId });

@@ -195,6 +195,13 @@ export const campaignDraftSpecSchema = z.object({
   adsetName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
   // ─── só `duplicate` (escala) ───
   suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  // ─── só `attach` (anexar asset da biblioteca a campanha existente) ───
+  targetCampaignId: z.string().optional(),
+  targetCampaignName: z.string().optional(),
+  targetAdsetId: z.string().optional(),
+  templateAdId: z.string().optional(),
+  assetId: z.string().optional(),
+  copyOverride: z.object({ primaryText: z.string().optional(), headline: z.string().optional() }).optional(),
 });
 
 /** Estratégia de fonte do criativo (Slice 10) — deriva das tuplas fonte-única. */

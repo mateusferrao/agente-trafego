@@ -26,6 +26,21 @@ describe("campaignDraftSpecSchema — shape-validation (não regra de negócio)"
     expect(campaignDraftSpecSchema.safeParse(fromScratch).success).toBe(true);
   });
 
+  it("aceita um attach (anexar asset a campanha existente): alvo + molde + asset + copyOverride", () => {
+    const attach: CampaignDraftSpec = {
+      version: 1,
+      currency: "BRL",
+      dailyBudgetMinor: 5000, // herda/exibe o orçamento do conjunto-alvo (o attach não cria verba nova)
+      activation: "paused",
+      targetCampaignId: "camp_1",
+      targetAdsetId: "adset_1",
+      templateAdId: "ad_molde",
+      assetId: "asset_9",
+      copyOverride: { primaryText: "novo texto" },
+    };
+    expect(campaignDraftSpecSchema.safeParse(attach).success).toBe(true);
+  });
+
   it("aceita um duplicate mínimo (só budget/activation + suffixLabel)", () => {
     const dup: CampaignDraftSpec = {
       version: 1,

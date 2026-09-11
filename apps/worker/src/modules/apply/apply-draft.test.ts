@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { countCreationsLast24h, planOrphanCleanup, runFromScratchSaga } from "./apply-draft.js";
+import { countAttachesLast24h, countCreationsLast24h, loadAttachMedia, planOrphanCleanup, runAttachSaga, runFromScratchSaga } from "./apply-draft.js";
 import type { Database } from "@trafego/db/client";
 import type { CampaignDraft } from "@trafego/shared";
-import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
+import { AdsPlatformError, type AdAccountRef, type AttachMedia } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 
 // ── B2: plano de limpeza da órfã do-zero (decisão pura do catch) ──────────
@@ -182,5 +182,105 @@ describe("runFromScratchSaga — C2 multi-conjunto (criativo compartilhado)", ()
     expect(calls.adsets).toHaveLength(1);
     expect(calls.creatives).toHaveLength(2); // single: 1 criativo por variação
     expect(calls.ads).toHaveLength(2);
+  });
+});
+
+// ── PR C: saga de ANEXAR (clona molde + troca mídia → ad PAUSADO) ──────────
+function fakeAttachAds() {
+  const calls = { fromTemplate: [] as any[], ads: [] as any[] };
+  let cr = 0, ad = 0;
+  const ads = {
+    createAdCreativeFromTemplate: async (_ref: unknown, input: unknown) => { calls.fromTemplate.push(input); return { creativeId: `cr${++cr}` }; },
+    createAd: async (_ref: unknown, input: unknown) => { calls.ads.push(input); return { adId: `ad${++ad}` }; },
+  } as unknown as WorkerDeps["ports"]["ads"];
+  return { ads, calls };
+}
+function attachDraft(specOver: Partial<CampaignDraft["spec"]> = {}): CampaignDraft {
+  return {
+    kind: "attach",
+    spec: {
+      version: 1, currency: "BRL", dailyBudgetMinor: 1, activation: "paused",
+      targetCampaignId: "camp_1", targetAdsetId: "adset_1", templateAdId: "ad_mold", assetId: "asset_1",
+      ...specOver,
+    },
+    sourceRef: { level: "campaign", id: "camp_1", name: "D.A leads" },
+  } as CampaignDraft;
+}
+const VIDEO_MEDIA: AttachMedia = { kind: "video", videoId: "VID9" };
+
+describe("runAttachSaga — clona molde + troca mídia → ad PAUSADO", () => {
+  it("cria o criativo do molde (mídia trocada) + 1 anúncio PAUSADO no conjunto-alvo", async () => {
+    const { ads, calls } = fakeAttachAds();
+    const state: Record<string, unknown> = {};
+    const persist = async (patch: Record<string, unknown>) => { Object.assign(state, patch); };
+    await runAttachSaga(ads, attachDraft(), REF, state, persist, VIDEO_MEDIA);
+    expect(calls.fromTemplate).toHaveLength(1);
+    expect(calls.fromTemplate[0]).toMatchObject({ templateAdId: "ad_mold", media: VIDEO_MEDIA });
+    expect(calls.ads).toHaveLength(1);
+    expect(calls.ads[0]).toMatchObject({ adsetId: "adset_1", creativeId: "cr1", status: "paused" });
+    expect(state["creativeId"]).toBe("cr1");
+    expect(state["adId"]).toBe("ad1");
+  });
+
+  it("passa a copyOverride do dono pro clone (senão herda o molde)", async () => {
+    const { ads, calls } = fakeAttachAds();
+    await runAttachSaga(ads, attachDraft({ copyOverride: { primaryText: "meu texto" } }), REF, {}, async () => {}, VIDEO_MEDIA);
+    expect(calls.fromTemplate[0].copyOverride).toEqual({ primaryText: "meu texto" });
+  });
+
+  it("retoma sem duplicar: creativeId já persistido é pulado, só cria o anúncio", async () => {
+    const { ads, calls } = fakeAttachAds();
+    const state: Record<string, unknown> = { creativeId: "cr_existente" };
+    await runAttachSaga(ads, attachDraft(), REF, state, async (p) => { Object.assign(state, p); }, VIDEO_MEDIA);
+    expect(calls.fromTemplate).toHaveLength(0); // não recria o criativo
+    expect(calls.ads).toHaveLength(1);
+    expect(calls.ads[0].creativeId).toBe("cr_existente");
+  });
+});
+
+// ── loadAttachMedia: reload + gate de ready (vídeo processando → limited) ──
+function fakeAssetDb(row: Record<string, unknown> | null): Database {
+  return {
+    select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve(row ? [row] : []) }) }) }),
+  } as unknown as Database;
+}
+const ARGS = { orgId: "o1", adAccountId: "acc1", assetId: "asset_1" };
+
+describe("loadAttachMedia — gate de ready + mídia neutra", () => {
+  it("vídeo ready → status ready + media video", async () => {
+    const db = fakeAssetDb({ status: "ready", metaImageHash: null, metaVideoId: "VID9" });
+    expect(await loadAttachMedia(db, ARGS)).toEqual({ status: "ready", media: { kind: "video", videoId: "VID9" } });
+  });
+  it("imagem ready → status ready + media image", async () => {
+    const db = fakeAssetDb({ status: "ready", metaImageHash: "IMG1", metaVideoId: null });
+    expect(await loadAttachMedia(db, ARGS)).toEqual({ status: "ready", media: { kind: "image", imageHash: "IMG1" } });
+  });
+  it("vídeo pending (ainda processando) → status processing (o apply devolve limited)", async () => {
+    const db = fakeAssetDb({ status: "pending", metaImageHash: null, metaVideoId: "VID9" });
+    expect(await loadAttachMedia(db, ARGS)).toEqual({ status: "processing", media: { kind: "video", videoId: "VID9" } });
+  });
+  it("erro no processamento → null (não-utilizável)", async () => {
+    const db = fakeAssetDb({ status: "error", metaImageHash: null, metaVideoId: "VID9" });
+    expect(await loadAttachMedia(db, ARGS)).toBeNull();
+  });
+  it("sem mídia utilizável → null", async () => {
+    const db = fakeAssetDb({ status: "ready", metaImageHash: null, metaVideoId: null });
+    expect(await loadAttachMedia(db, ARGS)).toBeNull();
+  });
+  it("asset não encontrado → null", async () => {
+    expect(await loadAttachMedia(fakeAssetDb(null), ARGS)).toBeNull();
+  });
+});
+
+describe("countAttachesLast24h — conta só a chave do attach (não campanhas)", () => {
+  it("dry-run: conta só agent_tool_calls (apply-time real), sem o em-voo", async () => {
+    const { db, calls } = fakeDb([[{ n: 2 }]]);
+    expect(await countAttachesLast24h(db, { agentId: "a1", adAccountId: "acc1", dryRun: true })).toBe(2);
+    expect(calls).toEqual(["agentToolCalls"]);
+  });
+  it("soma aplicado (apply-time) + em-voo (attach creating do mesmo agente)", async () => {
+    const { db, calls } = fakeDb([[{ n: 1 }], [{ n: 2 }]]);
+    expect(await countAttachesLast24h(db, { agentId: "a1", adAccountId: "acc1", dryRun: false })).toBe(3);
+    expect(calls).toEqual(["agentToolCalls", "campaignDrafts"]);
   });
 });

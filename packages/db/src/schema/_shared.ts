@@ -154,7 +154,7 @@ export const messageDirection = pgEnum("message_direction", ["inbound", "outboun
 
 // ─── Criação de campanhas (Fatia 7) ──────────────────────────────────────
 // `from_scratch` = campanha do zero; `duplicate` = cópia/escala de um vencedor.
-export const draftKind = pgEnum("draft_kind", ["from_scratch", "duplicate"]);
+export const draftKind = pgEnum("draft_kind", ["from_scratch", "duplicate", "attach"]);
 // Discrimina a FORMA da aprovação (P0.1): `action` = ação de otimização (`action` set);
 // `draft` = aprovação de CRIAR o rascunho (gasto novo, `draft_id` set); `activation` =
 // aprovação de ATIVAR o que já foi criado (nasce sempre PAUSADO — 2º passo HITL, mesmo

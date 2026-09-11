@@ -73,7 +73,7 @@ export const draftApprovalOutput = z.object({
   status: approvalStatusOutput,
   expiresAt: z.string().nullable(),
   draftId: z.string(),
-  kind: z.enum(["from_scratch", "duplicate"]),
+  kind: z.enum(["from_scratch", "duplicate", "attach"]),
   origin: z.enum(["on_demand", "proactive"]),
   objective: z.string().nullable(),
   // budget diário em unidade MAIOR da moeda (ex: reais/dólares) — pareado com `currency`

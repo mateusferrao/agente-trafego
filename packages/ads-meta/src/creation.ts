@@ -1,6 +1,8 @@
 import type {
   AdAccountRef,
+  AdSetAd,
   CampaignBudgetLayout,
+  CreateAdCreativeFromTemplateInput,
   CreateAdCreativeInput,
   CreateAdInput,
   CreateAdSetInput,
@@ -11,7 +13,8 @@ import type {
   DuplicateResult,
   ModernizationNote,
 } from "@trafego/shared/ports";
-import type { AdMetric, AudienceProfile, ConversionGoal, DeliveryEstimate, PixelInfo, ResolvedAudienceSnapshot } from "@trafego/shared/types";
+import type { AdMetric, AudienceProfile, ConversionGoal, DeliveryEstimate, EntityStatus, PixelInfo, ResolvedAudienceSnapshot } from "@trafego/shared/types";
+import { swapMediaInStorySpec, type SwapMedia } from "./attach-creative.js";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION, type BatchSubRequest, type BatchSubResponse } from "./client.js";
@@ -29,7 +32,7 @@ import {
   whatsappCreativeCta,
   WHATSAPP_SEND_LINK,
 } from "./meta-conversion-map.js";
-import { copyOf, creativeFormatOf, isReusableCreative, metricsOf, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
+import { copyOf, creativeFormatOf, isReusableCreative, metricsOf, rankAdsForReuse, type RawAdCandidate, type RawObjectStorySpec } from "./creative-select.js";
 import { DEFAULT_TARGETING_GEO_COUNTRY, explicitTargetingToRaw } from "./targeting-map.js";
 
 /** Quantos anúncios buscar p/ ranquear o melhor criativo reusável (1 call, com insights). */
@@ -363,6 +366,29 @@ export interface AdsDebugLogger {
  * Serviço de CRIAÇÃO/DUPLICAÇÃO na Meta (Fatia 7). Isola o vocabulário Meta (`/copies`,
  * `status_option`, `deep_copy`) — o core/shared falam `DuplicateEntityInput`/`DuplicateResult`.
  */
+/** Linha crua de `{adset}/ads` p/ o attach — superset de RawAdCandidate (+name, +creative.id). */
+interface RawAdSetAdRow {
+  readonly id?: string;
+  readonly name?: string;
+  readonly effective_status?: string;
+  readonly creative?: { readonly id?: string; readonly object_story_spec?: RawObjectStorySpec };
+}
+
+/** effective_status da Meta → EntityStatus neutro. Subconjunto do `mapStatus` do adapter, local aqui
+ *  p/ evitar dependência circular creation↔adapter (§13 — extração comum = fast-follow). Não-ativo → "paused". */
+function adEffectiveStatus(effective?: string): EntityStatus {
+  switch (effective) {
+    case "ACTIVE":
+      return "active";
+    case "ARCHIVED":
+      return "archived";
+    case "DELETED":
+      return "deleted";
+    default:
+      return "paused";
+  }
+}
+
 export class MetaCreationService {
   constructor(private readonly client: MetaGraphClient, private readonly logger?: AdsDebugLogger) {}
 
@@ -862,6 +888,56 @@ export class MetaCreationService {
       status: input.status === "active" ? "ACTIVE" : "PAUSED",
     });
     return { adId };
+  }
+
+  /** Anúncios de um conjunto EXISTENTE — pra escolher um molde reusável do mesmo tipo de mídia (attach).
+   *  Traz o formato (via `creativeFormatOf`) e o status neutro; escopado ao adset (nunca account-wide). */
+  async readAdSetAds(account: AdAccountRef, adsetId: string): Promise<AdSetAd[]> {
+    const { data } = await this.client.request<{ data?: ReadonlyArray<RawAdSetAdRow> }>({
+      method: "GET",
+      path: `${adsetId}/ads`,
+      accessToken: account.accessToken,
+      params: {
+        fields:
+          "id,name,effective_status,creative{id,object_story_spec{page_id,link_data{image_hash,child_attachments},video_data{video_id},template_data,product_set_id}}",
+        limit: "50",
+      },
+    });
+    return (data.data ?? []).map((ad) => ({
+      adId: ad.id ?? "",
+      ...(ad.creative?.id ? { creativeId: ad.creative.id } : {}),
+      ...(ad.name ? { name: ad.name } : {}),
+      status: adEffectiveStatus(ad.effective_status),
+      format: creativeFormatOf(ad),
+    }));
+  }
+
+  /** Cria um AdCreative CLONANDO o object_story_spec do anúncio-molde e trocando só a mídia (+copy) —
+   *  preserva destino/CTA/página/formulário (`swapMediaInStorySpec`). A capa do vídeo é derivada do
+   *  próprio vídeo. Vocabulário Meta (object_story_spec) fica todo aqui. */
+  async createAdCreativeFromTemplate(account: AdAccountRef, input: CreateAdCreativeFromTemplateInput): Promise<{ creativeId: string }> {
+    const { data } = await this.client.request<{ creative?: { object_story_spec?: RawObjectStorySpec } }>({
+      method: "GET",
+      path: input.templateAdId,
+      accessToken: account.accessToken,
+      params: { fields: "creative{object_story_spec}" },
+    });
+    const template = data.creative?.object_story_spec;
+    if (!template) throw new AdsPlatformError("not_duplicable", `anúncio-molde ${input.templateAdId} sem object_story_spec (não dá pra clonar)`);
+    let media: SwapMedia;
+    if (input.media.kind === "image") {
+      media = { kind: "image", imageHash: input.media.imageHash };
+    } else {
+      const cover = await this.fetchVideoThumbnailUrl(account, input.media.videoId);
+      if (!cover) throw new AdsPlatformError("upstream", "capa do vídeo indisponível (ainda processando?)", "O vídeo ainda está processando — tente de novo em instantes.");
+      media = { kind: "video", videoId: input.media.videoId, coverImageUrl: cover };
+    }
+    const { spec } = swapMediaInStorySpec(template, media, input.copyOverride);
+    const creativeId = await this.createOnAccount(account, "adcreatives", {
+      name: input.name,
+      object_story_spec: JSON.stringify(spec),
+    });
+    return { creativeId };
   }
 
   /** POST multipart num edge da conta (upload de mídia — o client de query não faz multipart). */
