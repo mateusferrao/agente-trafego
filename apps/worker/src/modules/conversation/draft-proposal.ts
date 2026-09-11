@@ -2932,8 +2932,13 @@ export async function proposeCreateCampaign(
     if (decision === "ask") {
       if (!auto) return { kind: "ask", echo: sourceQuestion(args.mediaPreference) }; // proativo nunca pergunta
       resolvedStrategy = { mode: "both" };
+    } else if (decision === "serving") {
+      // preserva o servingPick configurado (`agent` × `best_performing`) quando a config já era serving;
+      // o dono dirigiu só a FONTE neste turno, não o critério de escolha dentro dela.
+      const pick = creativeStrategy.mode === "serving" ? (creativeStrategy.servingPick ?? "best_performing") : "best_performing";
+      resolvedStrategy = { mode: "serving", servingPick: pick };
     } else {
-      resolvedStrategy = decision === "serving" ? { mode: "serving", servingPick: "best_performing" } : { mode: decision };
+      resolvedStrategy = { mode: decision };
     }
     prefetchedPools = { serving, library };
   }
@@ -3103,11 +3108,15 @@ export async function proposeCreateCampaign(
     const filtered = filterByMedia(distinctList, args.mediaPreference);
     if (filtered.length > 0) distinctList = filtered;
     // Só diz "não achei" quando NENHUMA fonte tem a mídia (honesto). Se a OUTRA fonte tem (edge de pino:
-    // o dono fixou a fonte que não tem), aponta pra biblioteca em vez de mentir. `sourceAvail` foi computado
-    // na desambiguação de fonte acima (que SEMPRE roda quando há mediaPreference vídeo/imagem).
+    // o dono fixou a fonte que não tem), aponta pra fonte que REALMENTE tem em vez de mentir. `sourceAvail`
+    // foi computado na desambiguação de fonte acima, que roda sempre que há mediaPreference vídeo/imagem
+    // sem escolha forçada por asset/nome — o mesmo caminho que este ramo (pickedRefs vazio) exige.
     else if (!sourceAvail.servingHasMedia && !sourceAvail.libraryHasMedia)
       compositionNotes.push(`Não achei criativo ${mediaLabelPt(args.mediaPreference)} pra reusar — usei os criativos que a conta tem. Você troca cada um no site.`);
-    else compositionNotes.push(`Seus criativos ${mediaLabelPt(args.mediaPreference)} estão na biblioteca do site, não entre os que já veiculam — quer que eu use os da biblioteca? (responda "usa os da biblioteca")`);
+    else if (sourceAvail.libraryHasMedia)
+      compositionNotes.push(`Seus criativos ${mediaLabelPt(args.mediaPreference)} estão na biblioteca do site, não entre os que já veiculam — quer que eu use os da biblioteca? (responda "usa os da biblioteca")`);
+    else
+      compositionNotes.push(`Seus criativos ${mediaLabelPt(args.mediaPreference)} estão entre os que já veiculam na conta, não na biblioteca do site — quer que eu use os que já veiculam? (responda "usa os que já veiculam")`);
   } else if (pickedRefs.length === 0 && args.mediaPreference === "mixed") {
     // "vídeos E imagens" → GARANTE os dois tipos entre os distintos (alterna); avisa se só há um tipo.
     const mixed = interleaveMedia(distinctList);
