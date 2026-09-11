@@ -71,17 +71,20 @@ describe("buildChatRules — S0a: procedimento-por-tool migrou pra tools.ts", ()
 describe("buildChatRules — escolha de criativo por chat (kill-switch chatCreativePicker)", () => {
   it("picker OFF (v1 default): o AGENTE escolhe; NÃO oferece escolher; trocar é no site", () => {
     const rules = buildChatRules(false, true, false);
-    expect(rules).toContain("EU escolho o criativo");
-    expect(rules).toContain("NÃO ofereça ao usuário escolher os criativos");
+    expect(rules).toContain("EU escolho os criativos");
+    expect(rules).toContain("NÃO ofereça escolher um criativo por NOME");
     expect(rules).toContain("no site");
-    // não deve pedir os nomes / oferecer a escolha
+    // desambiguação de FONTE: pergunta quando a mídia existe nas duas fontes
+    expect(rules).toContain("eu PERGUNTO qual");
+    expect(rules).toContain("creativeSource");
+    // não deve pedir os nomes / oferecer a escolha por nome
     expect(rules).not.toContain("quer escolher os criativos");
   });
 
   it("picker ON: volta a oferecer a escolha por nome (fast-follow ligado)", () => {
     const rules = buildChatRules(false, true, true);
     expect(rules).toContain("quer escolher os criativos");
-    expect(rules).not.toContain("NÃO ofereça ao usuário escolher os criativos");
+    expect(rules).not.toContain("NÃO ofereça escolher um criativo por NOME");
   });
 });
 

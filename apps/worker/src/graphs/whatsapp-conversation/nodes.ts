@@ -76,7 +76,7 @@ import { latestAnalysisAsOf, renderWhatsappNumber, resolveWhatsappNumber } from 
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
 import { runReallocationSaga } from "../../modules/apply/reallocation-saga.js";
-import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft, type RefineDraftPatch, type SegmentPublicoInput } from "../../modules/conversation/draft-proposal.js";
+import { buildRefineEcho, CREATIVE_SOURCE_PINS, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type CreativeSourcePin, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft, type RefineDraftPatch, type SegmentPublicoInput } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext, reallocKindPeriod, type BudgetPeriodKind } from "../../modules/apply/write-context.js";
 import { adHasNoBudgetMessage, resolveMisplacedBudgetMessage } from "./budget-location.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
@@ -124,6 +124,10 @@ function isConversionGoal(v: unknown): v is ConversionGoal {
 /** Guard: `v` é uma preferência de mídia válida (video/image/mixed). */
 function isMediaPreference(v: unknown): v is MediaPreference {
   return typeof v === "string" && (MEDIA_PREFERENCES as readonly string[]).includes(v);
+}
+
+function isCreativeSourcePin(v: unknown): v is CreativeSourcePin {
+  return typeof v === "string" && (CREATIVE_SOURCE_PINS as readonly string[]).includes(v);
 }
 
 /** Guard: `v` é uma intenção de estrutura válida (C1) — o LLM manda texto livre. */
@@ -1020,6 +1024,8 @@ export function makeConversationNodes(
                 ...(typeof args["adCount"] === "number" ? { adCount: args["adCount"] as number } : {}),
                 ...(typeof args["distinctCreatives"] === "number" ? { distinctCreatives: args["distinctCreatives"] as number } : {}),
                 ...(isMediaPreference(args["mediaPreference"]) ? { mediaPreference: args["mediaPreference"] } : {}),
+                // FONTE do criativo (desambiguação): incondicional — vale mesmo com o picker por-nome OFF.
+                ...(isCreativeSourcePin(args["creativeSource"]) ? { creativeSource: args["creativeSource"] } : {}),
                 ...(creatives && creatives.length > 0 ? { creatives } : {}),
                 ...(fill === "agent" || fill === "only_picked" ? { fillRemaining: fill } : {}),
                 ...(typeof args["link"] === "string" && args["link"].trim().length > 0 ? { link: args["link"].trim() } : {}),

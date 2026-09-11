@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, cleanPixelQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, describeResolvedSnapshot, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, matchPixelsByQuery, normalizeAdCount, pageChoiceLabel, pixelChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, cleanPixelQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, describeResolvedSnapshot, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, matchPixelsByQuery, normalizeAdCount, normalizeCreativeSourcePin, pageChoiceLabel, pixelChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveCreativeSourceDecision, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
 import type { PageInfo, PixelInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
@@ -263,6 +263,59 @@ describe("buildCreativePool — vídeo da biblioteca sem capa: escolha explícit
       origin: "upload",
       source: "library",
     });
+  });
+});
+
+describe("resolveCreativeSourceDecision (o Roy pergunta a fonte quando ambíguo)", () => {
+  it("o dono NOMEOU a fonte → vence sempre (sem perguntar; re-entrada nunca dá 'ask')", () => {
+    expect(resolveCreativeSourceDecision({ pin: "library", media: "video", servingHasMedia: true, libraryHasMedia: true })).toBe("library");
+    expect(resolveCreativeSourceDecision({ pin: "serving", media: "video", servingHasMedia: false, libraryHasMedia: true })).toBe("serving");
+    expect(resolveCreativeSourceDecision({ pin: "both", media: undefined, servingHasMedia: false, libraryHasMedia: false })).toBe("both");
+  });
+  it("mídia ausente ou mixed → both (nunca pergunta)", () => {
+    expect(resolveCreativeSourceDecision({ pin: undefined, media: undefined, servingHasMedia: true, libraryHasMedia: true })).toBe("both");
+    expect(resolveCreativeSourceDecision({ pin: undefined, media: "mixed", servingHasMedia: true, libraryHasMedia: true })).toBe("both");
+  });
+  it("mídia nas DUAS fontes + sem pino → ask (§8 nunca escolhe sozinho)", () => {
+    expect(resolveCreativeSourceDecision({ pin: undefined, media: "video", servingHasMedia: true, libraryHasMedia: true })).toBe("ask");
+  });
+  it("mídia em SÓ uma fonte → essa fonte, sem perguntar", () => {
+    expect(resolveCreativeSourceDecision({ pin: undefined, media: "video", servingHasMedia: true, libraryHasMedia: false })).toBe("serving");
+    // o bug reportado: vídeo só na biblioteca → usa a biblioteca (antes mentia "não achei vídeo")
+    expect(resolveCreativeSourceDecision({ pin: undefined, media: "video", servingHasMedia: false, libraryHasMedia: true })).toBe("library");
+  });
+  it("mídia em NENHUMA fonte → both (fallback amplo; a nota honesta cobre)", () => {
+    expect(resolveCreativeSourceDecision({ pin: undefined, media: "video", servingHasMedia: false, libraryHasMedia: false })).toBe("both");
+  });
+});
+
+describe("normalizeCreativeSourcePin", () => {
+  it("mapeia o vocabulário neutro pro modo interno; desconhecido → undefined", () => {
+    expect(normalizeCreativeSourcePin("veiculando")).toBe("serving");
+    expect(normalizeCreativeSourcePin("biblioteca")).toBe("library");
+    expect(normalizeCreativeSourcePin("ambos")).toBe("both");
+    expect(normalizeCreativeSourcePin("qualquer")).toBeUndefined();
+    expect(normalizeCreativeSourcePin(undefined)).toBeUndefined();
+  });
+});
+
+describe("buildCreativePool com prefetched (reuso das fontes já buscadas — sem re-fetch)", () => {
+  const servingVid = { key: "sv", description: "serving video", ref: { videoId: "SV1", imageHash: "C1", assetId: "sv", origin: "reuse" as const, source: "serving" as const } };
+  const libImg = { key: "li", description: "lib image", ref: { imageHash: "L1", assetId: "li", origin: "upload" as const, source: "library" as const } };
+  // deps que ESTOURA se algum SELECT rodar — prova que o prefetched pulou toda busca.
+  const throwingDeps = { db: { select() { throw new Error("não deve buscar quando prefetched"); } } } as never;
+
+  it("mode 'both' → serving-first + biblioteca, sem tocar o banco", async () => {
+    const pool = await buildCreativePool(throwingDeps, ORG, ACC, REF, { mode: "both" }, { prefetched: { serving: [servingVid], library: [libImg] } });
+    expect(pool.map((c) => c.ref.assetId)).toEqual(["sv", "li"]); // serving primeiro
+  });
+  it("mode 'serving' com serving presente → biblioteca EXCLUÍDA (gate preservado)", async () => {
+    const pool = await buildCreativePool(throwingDeps, ORG, ACC, REF, { mode: "serving", servingPick: "best_performing" }, { prefetched: { serving: [servingVid], library: [libImg] } });
+    expect(pool.map((c) => c.ref.assetId)).toEqual(["sv"]);
+  });
+  it("mode 'library' → só a biblioteca", async () => {
+    const pool = await buildCreativePool(throwingDeps, ORG, ACC, REF, { mode: "library" }, { prefetched: { serving: [servingVid], library: [libImg] } });
+    expect(pool.map((c) => c.ref.assetId)).toEqual(["li"]);
   });
 });
 

@@ -2361,6 +2361,45 @@ export function hasOfflineCover(r: ChosenCreative): boolean {
   return !r.videoId || Boolean(r.imageHash);
 }
 
+/** Fonte de criativo que o dono pode NOMEAR ou RESPONDER (vocabulário neutro; sem jargão Meta/site cru). */
+export const CREATIVE_SOURCE_PINS = ["veiculando", "biblioteca", "ambos"] as const;
+export type CreativeSourcePin = (typeof CREATIVE_SOURCE_PINS)[number];
+
+/** Fonte dita/respondida pelo dono → modo interno da estratégia. `undefined` = não disse. PURO. */
+export function normalizeCreativeSourcePin(raw: string | undefined | null): "serving" | "library" | "both" | undefined {
+  return raw === "veiculando" ? "serving" : raw === "biblioteca" ? "library" : raw === "ambos" ? "both" : undefined;
+}
+
+/**
+ * De QUAL fonte tirar os criativos, ou se PERGUNTA (§8 — nunca escolhe sozinho em interpretação incerta).
+ * PURO (os 2 booleanos de disponibilidade vêm da casca):
+ *  - o dono NOMEOU a fonte (`pin`) → vence SEMPRE (re-entrada com pino nunca dá "ask" → sem loop);
+ *  - mídia ausente ou `mixed` → `both` (nunca pergunta);
+ *  - a mídia pedida existe nas DUAS fontes → `ask`; só numa → essa fonte; em NENHUMA → `both` (fallback amplo,
+ *    a nota honesta cobre — Slice 4). O caller só invoca quando há sinal (pino OU mídia), então o caminho
+ *    zero-config (sem sinal) nunca chega aqui.
+ */
+export function resolveCreativeSourceDecision(input: {
+  readonly pin: "serving" | "library" | "both" | undefined;
+  readonly media: MediaPreference | undefined;
+  readonly servingHasMedia: boolean;
+  readonly libraryHasMedia: boolean;
+}): "serving" | "library" | "both" | "ask" {
+  if (input.pin) return input.pin;
+  if (input.media === undefined || input.media === "mixed") return "both";
+  if (input.servingHasMedia && input.libraryHasMedia) return "ask";
+  if (input.servingHasMedia) return "serving";
+  if (input.libraryHasMedia) return "library";
+  return "both";
+}
+
+/** Pergunta de FONTE quando a mídia pedida existe nas duas fontes (§8). Só chamada p/ vídeo/imagem
+ *  (mixed/ausente resolvem em `both`, nunca perguntam). PURA. */
+function sourceQuestion(media: MediaPreference | undefined): string {
+  const noun = media === "video" ? "vídeos" : media === "image" ? "imagens" : "criativos";
+  return `Esses ${noun} podem vir dos que já *veiculam* na sua conta ou dos que você *subiu no site* (biblioteca). Quais você quer — os que já veiculam ou os da biblioteca?`;
+}
+
 /** Pool de candidatos (veiculando + biblioteca) conforme a ESTRATÉGIA do agente — mesma fonte de
  *  chooseCreative (números ao vivo + visão), reusada p/ pegar criativos DISTINTOS adicionais.
  *  `includeCoverlessVideo` (ESCOLHA explícita do dono): mantém vídeos da biblioteca SEM capa guardada
@@ -2372,14 +2411,21 @@ export async function buildCreativePool(
   accountId: string,
   ref: AdAccountRef,
   strategy: CreativeSourceStrategy,
-  opts?: { includeCoverlessVideo?: boolean },
+  opts?: { includeCoverlessVideo?: boolean; prefetched?: { serving: DescribedCandidate[]; library: DescribedCandidate[] } },
 ): Promise<DescribedCandidate[]> {
   const pool: DescribedCandidate[] = [];
-  if (strategy.mode !== "library") pool.push(...(await describeServingCandidates(deps, orgId, accountId, ref)));
-  // Fatia 2 (paridade com a lista): sem veiculando CAPTURADO (nunca analisou / tudo pausado), busca
-  // os anúncios AO VIVO (inclui pausados) pra o dono conseguir NOMEAR um criativo que a lista mostrou.
-  if (pool.length === 0 && strategy.mode !== "library") pool.push(...(await describeLiveServingCandidates(deps, ref)));
-  if (strategy.mode !== "serving" || pool.length === 0) pool.push(...(await describeLibraryCandidates(deps, orgId, accountId)));
+  if (opts?.prefetched) {
+    // Fonte já buscada a montante (desambiguação de fonte no producer) — reusa, sem re-buscar
+    // (`serving` já inclui o fallback ao vivo). O gate de modo é o MESMO da busca direta abaixo.
+    if (strategy.mode !== "library") pool.push(...opts.prefetched.serving);
+    if (strategy.mode !== "serving" || pool.length === 0) pool.push(...opts.prefetched.library);
+  } else {
+    if (strategy.mode !== "library") pool.push(...(await describeServingCandidates(deps, orgId, accountId, ref)));
+    // Fatia 2 (paridade com a lista): sem veiculando CAPTURADO (nunca analisou / tudo pausado), busca
+    // os anúncios AO VIVO (inclui pausados) pra o dono conseguir NOMEAR um criativo que a lista mostrou.
+    if (pool.length === 0 && strategy.mode !== "library") pool.push(...(await describeLiveServingCandidates(deps, ref)));
+    if (strategy.mode !== "serving" || pool.length === 0) pool.push(...(await describeLibraryCandidates(deps, orgId, accountId)));
+  }
   // Numa ESCOLHA explícita, mantém tudo (o apply resolve a capa do vídeo ao vivo); no auto-fill, só o
   // que é montável offline (não arrisca padding que dependa de fetch #10). Ver `hasOfflineCover`.
   return opts?.includeCoverlessVideo ? pool : pool.filter((c) => hasOfflineCover(c.ref));
@@ -2662,6 +2708,10 @@ export async function proposeCreateCampaign(
     /** INTENÇÃO de criativo do dono (S4): reusar o que converte × testar algo novo. Presente →
      *  override da estratégia de fonte (`creativeSourceForIntent`); ausente = a config do agente. */
     readonly creativeIntent?: CreativeIntent;
+    /** FONTE do criativo NOMEADA/RESPONDIDA pelo dono (desambiguação de fonte): "veiculando" (os que já
+     *  rodam na Meta), "biblioteca" (os que subiu no site) ou "ambos". Presente → fixa a fonte (sem
+     *  perguntar). Ausente + mídia pedida em ambas as fontes → o produtor PERGUNTA (`kind:"ask"`). */
+    readonly creativeSource?: CreativeSourcePin;
     /** OVERRIDE explícito do dono do Advantage (C3): "liga o Advantage" = true; "tira" = false.
      *  Vence a inferência. Ausente = infere de `localBusiness` (ou não mexe). */
     readonly advantage?: boolean;
@@ -2860,6 +2910,34 @@ export async function proposeCreateCampaign(
   // configurada; ausente = a config do agente (comportamento anterior). O ângulo entra no matcher.
   const creativeStrategy = args.creativeIntent ? creativeSourceForIntent(args.creativeIntent) : ac.creativeSource;
 
+  // ── FONTE de criativo: o Roy PERGUNTA quando a mídia pedida existe nas DUAS fontes (§8) ──
+  // Só quando há SINAL (o dono nomeou a fonte OU pediu uma mídia) e não é escolha explícita por nome/asset.
+  // Sem sinal → zero-config intacto (nenhum fetch extra). O resultado sobrepõe a estratégia de fonte pro
+  // `chooseCreative` E o `buildCreativePool` (que reusa os pools já buscados — sem double-fetch).
+  const byNamePicks = args.forcedCreativeAssetId ? [] : (args.creatives ?? []).map((s) => s.trim()).filter(Boolean);
+  const sourcePin = normalizeCreativeSourcePin(args.creativeSource);
+  let resolvedStrategy = creativeStrategy;
+  let prefetchedPools: { serving: DescribedCandidate[]; library: DescribedCandidate[] } | undefined;
+  let sourceAvail = { servingHasMedia: false, libraryHasMedia: false };
+  if (!args.forcedCreativeAssetId && byNamePicks.length === 0 && (sourcePin != null || args.mediaPreference != null)) {
+    // peek das duas fontes UMA vez (ordem = a do buildCreativePool: serving com fallback ao vivo).
+    let serving = await describeServingCandidates(deps, ctx.orgId, ctx.adAccountId, ac.ref);
+    if (serving.length === 0) serving = await describeLiveServingCandidates(deps, ac.ref);
+    const library = await describeLibraryCandidates(deps, ctx.orgId, ctx.adAccountId);
+    sourceAvail = {
+      servingHasMedia: filterByMedia(serving.map((c) => c.ref), args.mediaPreference).length > 0,
+      libraryHasMedia: filterByMedia(library.map((c) => c.ref), args.mediaPreference).length > 0,
+    };
+    const decision = resolveCreativeSourceDecision({ pin: sourcePin, media: args.mediaPreference, ...sourceAvail });
+    if (decision === "ask") {
+      if (!auto) return { kind: "ask", echo: sourceQuestion(args.mediaPreference) }; // proativo nunca pergunta
+      resolvedStrategy = { mode: "both" };
+    } else {
+      resolvedStrategy = decision === "serving" ? { mode: "serving", servingPick: "best_performing" } : { mode: decision };
+    }
+    prefetchedPools = { serving, library };
+  }
+
   // Criativo: FORÇADO (o que o usuário mandou no WhatsApp, Slice 7) OU pool único — melhor
   // veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR CASA com o contexto
   // (objetivo + negócio + orientações + estágio de público + tema do vencedor) via matcher LLM barato.
@@ -2879,7 +2957,7 @@ export async function proposeCreateCampaign(
           ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
           ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
         },
-        creativeStrategy,
+        resolvedStrategy,
         {
           goal,
           businessContext: ac.businessContext,
@@ -2968,7 +3046,7 @@ export async function proposeCreateCampaign(
   // pool inclui vídeos SEM capa guardada (o dono pode ESCOLHER um que a lista mostrou — o apply
   // resolve a capa ao vivo); o auto-fill (poolRefs) filtra pra só o montável offline (sem padding
   // que dependa de fetch de thumbnail). Assim a ESCOLHA explícita nunca some da resolução (diz×faz §7).
-  const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, creativeStrategy, { includeCoverlessVideo: true });
+  const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, resolvedStrategy, { includeCoverlessVideo: true, ...(prefetchedPools ? { prefetched: prefetchedPools } : {}) });
   const poolRefs = pool.filter((c) => hasOfflineCover(c.ref)).map((c) => c.ref);
 
   // PICKER (Slice 3): o dono ESCOLHEU criativos por nome ("o campeão", "o vídeo da praia"). Resolve
@@ -3023,8 +3101,13 @@ export async function proposeCreateCampaign(
   // filtro de mídia NÃO se aplica quando o dono escolheu assets específicos (a escolha explícita vence).
   if (pickedRefs.length === 0 && (args.mediaPreference === "video" || args.mediaPreference === "image")) {
     const filtered = filterByMedia(distinctList, args.mediaPreference);
-    if (filtered.length === 0) compositionNotes.push(`Não achei criativo ${mediaLabelPt(args.mediaPreference)} pra reusar — usei os criativos que a conta tem. Você troca cada um no site.`);
-    else distinctList = filtered;
+    if (filtered.length > 0) distinctList = filtered;
+    // Só diz "não achei" quando NENHUMA fonte tem a mídia (honesto). Se a OUTRA fonte tem (edge de pino:
+    // o dono fixou a fonte que não tem), aponta pra biblioteca em vez de mentir. `sourceAvail` foi computado
+    // na desambiguação de fonte acima (que SEMPRE roda quando há mediaPreference vídeo/imagem).
+    else if (!sourceAvail.servingHasMedia && !sourceAvail.libraryHasMedia)
+      compositionNotes.push(`Não achei criativo ${mediaLabelPt(args.mediaPreference)} pra reusar — usei os criativos que a conta tem. Você troca cada um no site.`);
+    else compositionNotes.push(`Seus criativos ${mediaLabelPt(args.mediaPreference)} estão na biblioteca do site, não entre os que já veiculam — quer que eu use os da biblioteca? (responda "usa os da biblioteca")`);
   } else if (pickedRefs.length === 0 && args.mediaPreference === "mixed") {
     // "vídeos E imagens" → GARANTE os dois tipos entre os distintos (alterna); avisa se só há um tipo.
     const mixed = interleaveMedia(distinctList);
