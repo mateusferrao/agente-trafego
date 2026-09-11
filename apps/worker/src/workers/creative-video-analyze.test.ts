@@ -25,7 +25,7 @@ const payload = (over: Partial<CreativeVideoAnalyzePayload> = {}): CreativeVideo
   instanceId: "inst1",
   messageKey: { id: "MSG1", remoteJid: "5511@s.whatsapp.net", fromMe: false },
   mimetype: "video/mp4",
-  caption: "o que acha desse vídeo?",
+  caption: "coloque este vídeo na campanha D.A leads", // legenda com INSTRUÇÃO → encaminha pro Grafo B
   ...over,
 });
 
@@ -34,64 +34,122 @@ function makeDeps(over: Partial<VideoAnalyzeDeps> = {}) {
   const resolve = vi.fn(async (..._a: unknown[]) => VISION as CreativeVisionResult | null);
   const complete = vi.fn(async (..._a: unknown[]) => ({ output: "Achei forte o gancho; só adiantaria o CTA.", usage: { inputTokens: 1, outputTokens: 1 } }));
   const fetchMediaBase64 = vi.fn(async (..._a: unknown[]) => Buffer.from("fakevideobytes").toString("base64") as string | null);
+  const handoffToConversation = vi.fn(async (..._a: unknown[]) => {});
+  const releaseHold = vi.fn(async (..._a: unknown[]) => {});
   const deps: VideoAnalyzeDeps = {
     vision: { resolve },
     llm: { complete } as unknown as VideoAnalyzeDeps["llm"],
     messaging: { fetchMediaBase64 },
     sendToConversation: send,
+    handoffToConversation,
+    releaseHold,
     messageModel: "m",
     videoModelMaxBytes: 20 * 1024 * 1024,
     libraryMaxBytes: 50 * 1024 * 1024,
     logger: { debug: vi.fn(), warn: vi.fn() },
     ...over,
   };
-  return { deps, send, resolve, complete, fetchMediaBase64 };
+  return { deps, send, resolve, complete, fetchMediaBase64, handoffToConversation, releaseHold };
 }
 
-describe("makeVideoAnalyze (Slice 2 — análise de vídeo dos nossos bytes)", () => {
-  it("dentro do teto → manda o vídeo (video_url) ao resolver + redige e empurra a resposta", async () => {
-    const { deps, send, resolve, complete } = makeDeps();
+describe("makeVideoAnalyze — B (unificar no Grafo B quando há legenda)", () => {
+  it("COM legenda → produz a visão e ENCAMINHA pro Grafo B (não redige opinião solta)", async () => {
+    const { deps, send, resolve, complete, handoffToConversation, releaseHold } = makeDeps();
     await makeVideoAnalyze(deps)(payload());
-    // o resolver recebeu o vídeo COMPLETO como video_url (data-url), não frames.
+    // produz a visão (video_url completo → cacheada pro recall do Grafo B)
+    const arg = resolve.mock.calls[0]![0] as { videoUrl?: string; imageUrls: string[] };
+    expect(arg.videoUrl).toMatch(/^data:video\/mp4;base64,/);
+    expect(resolve).toHaveBeenCalledOnce();
+    // não fala pelo fast-path; o Grafo B é dono da resposta
+    expect(complete).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(handoffToConversation).toHaveBeenCalledOnce();
+    // o próprio handoff libera o hold (na wiring real) → o worker NÃO chama releaseHold à parte
+    expect(releaseHold).not.toHaveBeenCalled();
+  });
+
+  it("SEM legenda → redige a opinião do fast-path (como antes) e não encaminha; libera o hold", async () => {
+    const { deps, send, resolve, complete, handoffToConversation, releaseHold } = makeDeps();
+    await makeVideoAnalyze(deps)(payload({ caption: null }));
     const arg = resolve.mock.calls[0]![0] as { videoUrl?: string; imageUrls: string[] };
     expect(arg.videoUrl).toMatch(/^data:video\/mp4;base64,/);
     expect(arg.imageUrls).toEqual([]);
     expect(complete).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledWith({ kind: "contact", contactId: "c1" }, "Achei forte o gancho; só adiantaria o CTA.", expect.objectContaining({ split: true }));
+    expect(handoffToConversation).not.toHaveBeenCalled();
+    expect(releaseHold).toHaveBeenCalledOnce(); // libera pra msg concorrente flushar
   });
 
-  it("sem bytes → avisa honesto (não fica em silêncio), sem chamar visão", async () => {
-    const { deps, send, resolve } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => null) } });
+  it("visão FALHA (null) + legenda → ainda encaminha (a ação não depende da visão), sem aviso solto", async () => {
+    const { deps, send, complete, handoffToConversation } = makeDeps({ vision: { resolve: vi.fn(async () => null) } });
+    await makeVideoAnalyze(deps)(payload());
+    expect(complete).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(handoffToConversation).toHaveBeenCalledOnce();
+  });
+
+  it("visão FALHA (null) SEM legenda → aviso honesto (fast-path)", async () => {
+    const { deps, send, complete, handoffToConversation } = makeDeps({ vision: { resolve: vi.fn(async () => null) } });
+    await makeVideoAnalyze(deps)(payload({ caption: null }));
+    expect(complete).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledOnce();
+    expect(handoffToConversation).not.toHaveBeenCalled();
+  });
+
+  it("sem bytes → avisa honesto, sem visão e SEM encaminhar (não há asset); libera o hold", async () => {
+    const { deps, send, resolve, handoffToConversation, releaseHold } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => null) } });
     await makeVideoAnalyze(deps)(payload());
     expect(resolve).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledOnce();
+    expect(handoffToConversation).not.toHaveBeenCalled();
+    expect(releaseHold).toHaveBeenCalledOnce();
   });
 
-  it("acima do teto do MODELO mas dentro do intake → promete a biblioteca (honesto: o intake salva)", async () => {
-    const big = Buffer.alloc(30 * 1024 * 1024).toString("base64"); // 30MB: > modelo(20) e < intake(50)
-    const { deps, resolve, send } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => big) } });
+  it("30MB (>modelo, <intake) + legenda → ENCAMINHA (o intake salva o asset; o Grafo B age)", async () => {
+    const big = Buffer.alloc(30 * 1024 * 1024).toString("base64");
+    const { deps, resolve, send, handoffToConversation } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => big) } });
     await makeVideoAnalyze(deps)(payload());
+    expect(resolve).not.toHaveBeenCalled(); // grande demais pra visão ao vivo
+    expect(send).not.toHaveBeenCalled();
+    expect(handoffToConversation).toHaveBeenCalledOnce();
+  });
+
+  it("30MB SEM legenda → promete a biblioteca (honesto), sem encaminhar", async () => {
+    const big = Buffer.alloc(30 * 1024 * 1024).toString("base64");
+    const { deps, resolve, send, handoffToConversation } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => big) } });
+    await makeVideoAnalyze(deps)(payload({ caption: null }));
     expect(resolve).not.toHaveBeenCalled();
     const [, msg] = send.mock.calls[0]!;
     expect(msg).toContain("guardei na biblioteca");
+    expect(handoffToConversation).not.toHaveBeenCalled();
   });
 
-  it("acima do teto do INTAKE → NÃO promete biblioteca (o intake rejeita) → aponta o site", async () => {
-    const huge = Buffer.alloc(60 * 1024 * 1024).toString("base64"); // 60MB: > intake(50)
-    const { deps, resolve, send } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => huge) } });
+  it("60MB (>intake) + legenda → aponta o site, SEM encaminhar (o intake rejeita → não há asset); libera o hold", async () => {
+    const huge = Buffer.alloc(60 * 1024 * 1024).toString("base64");
+    const { deps, resolve, send, handoffToConversation, releaseHold } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => huge) } });
     await makeVideoAnalyze(deps)(payload());
     expect(resolve).not.toHaveBeenCalled();
     const [, msg] = send.mock.calls[0]!;
     expect(msg).toContain("no site");
     expect(msg).not.toContain("biblioteca e a análise");
+    expect(handoffToConversation).not.toHaveBeenCalled();
+    expect(releaseHold).toHaveBeenCalledOnce();
   });
 
-  it("probe por fileLength acima do intake → aponta o site ANTES de baixar (sem fetch)", async () => {
-    const { deps, send, fetchMediaBase64 } = makeDeps();
+  it("probe fileLength 30MB (>modelo, <intake) + legenda → encaminha ANTES de baixar (sem fetch)", async () => {
+    const { deps, fetchMediaBase64, handoffToConversation } = makeDeps();
+    await makeVideoAnalyze(deps)(payload({ fileLength: 30 * 1024 * 1024 }));
+    expect(fetchMediaBase64).not.toHaveBeenCalled();
+    expect(handoffToConversation).toHaveBeenCalledOnce();
+  });
+
+  it("probe fileLength 60MB (>intake) → aponta o site ANTES de baixar, sem encaminhar", async () => {
+    const { deps, send, fetchMediaBase64, handoffToConversation } = makeDeps();
     await makeVideoAnalyze(deps)(payload({ fileLength: 60 * 1024 * 1024 }));
     expect(fetchMediaBase64).not.toHaveBeenCalled();
     const [, msg] = send.mock.calls[0]!;
     expect(msg).toContain("no site");
+    expect(handoffToConversation).not.toHaveBeenCalled();
   });
 
   it("passa meta.orgId à visão p/ o custo da análise ser metrado (§11)", async () => {
@@ -101,19 +159,12 @@ describe("makeVideoAnalyze (Slice 2 — análise de vídeo dos nossos bytes)", (
     expect(arg.meta?.orgId).toBe("org-42");
   });
 
-  it("visão falha (null) → aviso honesto", async () => {
-    const { deps, send, complete } = makeDeps({ vision: { resolve: vi.fn(async () => null) } });
-    await makeVideoAnalyze(deps)(payload());
-    expect(complete).not.toHaveBeenCalled();
-    expect(send).toHaveBeenCalledOnce();
-  });
-
-  it("erro do LLM na redação → aviso honesto (não quebra)", async () => {
+  it("erro do LLM na redação (sem legenda) → aviso honesto (não quebra)", async () => {
     const complete = vi.fn(async () => {
       throw new LLMProviderError("upstream", "timeout");
     });
     const { deps, send } = makeDeps({ llm: { complete } as unknown as VideoAnalyzeDeps["llm"] });
-    await makeVideoAnalyze(deps)(payload());
+    await makeVideoAnalyze(deps)(payload({ caption: null }));
     expect(send).toHaveBeenCalledOnce();
   });
 

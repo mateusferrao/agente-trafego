@@ -181,6 +181,10 @@ async function routeMessage(
       await scheduleConversationFlush(d.flushQueue, flushPayload, d.debounceMs);
     }
     if (videoQuestion && inbound.kind === "video") {
+      // SEGURA o flush (mesmo hold do áudio): a legenda do vídeo só vira turno DEPOIS que a análise
+      // roda no worker próprio (que libera o hold). Sem isso, uma msg concorrente flusharia sozinha e
+      // partiria o turno (a instrução do vídeo não coalesceria). TTL = backstop se o worker sumir.
+      await markTranscribing(d.redis, conversationId, d.transcribingTtlSec);
       // busca dos bytes + análise (vídeo completo → modelo) rodam no worker próprio; ack imediato.
       await d.creativeVideoAnalyzeQueue.add(
         CREATIVE_VIDEO_ANALYZE_JOB,

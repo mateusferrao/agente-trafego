@@ -92,6 +92,8 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
   };
   const flushQueue = { add: vi.fn(async () => ({})), remove: vi.fn(async () => 1) };
   const transcriptionQueue = { add: vi.fn(async () => ({})) };
+  const mediaIntakeQueue = { add: vi.fn(async () => ({})) };
+  const creativeVideoAnalyzeQueue = { add: vi.fn(async () => ({})) };
   const sendToConversation = vi.fn(async () => true);
   const deps = {
     repo,
@@ -99,6 +101,8 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     redis,
     flushQueue,
     transcriptionQueue,
+    mediaIntakeQueue,
+    creativeVideoAnalyzeQueue,
     sendToConversation,
     logger: { debug: vi.fn() },
     debounceMs: 5000,
@@ -109,8 +113,17 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     groupParticipantsCacheTtlSec: 3600,
     ...overrides,
   } as unknown as InboundRouterDeps;
-  return { deps, repo, messaging, redis, multiChain, flushQueue, transcriptionQueue, sendToConversation };
+  return { deps, repo, messaging, redis, multiChain, flushQueue, transcriptionQueue, mediaIntakeQueue, creativeVideoAnalyzeQueue, sendToConversation };
 }
+
+const VIDEO_KEY = { id: "MID-1", remoteJid: "5511999999999@s.whatsapp.net", fromMe: false };
+const VIDEO_WITH_CAPTION: InboundMessage = {
+  ...BASE,
+  kind: "video",
+  video: { mimetype: "video/mp4" },
+  caption: "coloque este vídeo na campanha D.A leads",
+  messageKey: VIDEO_KEY,
+};
 
 describe("makeInboundRouter — DM", () => {
   it("texto: grava, bufferiza e agenda o flush (sem transcrição/aviso)", async () => {
@@ -145,6 +158,27 @@ describe("makeInboundRouter — DM", () => {
     );
     expect(t.flushQueue.add).toHaveBeenCalled();
     expect(t.redis.rpush).not.toHaveBeenCalled(); // nada no buffer ainda (só após transcrever)
+  });
+
+  it("vídeo com legenda (instrução): SEGURA o flush, salva em silêncio, enfileira a análise e dá o ack — a legenda NÃO vai pro buffer aqui (o worker encaminha depois)", async () => {
+    const t = makeDeps();
+    await makeInboundRouter(t.deps)("inst-1", VIDEO_WITH_CAPTION);
+    // hold: marca transcribing (segura o flush até a análise rodar)
+    expect(t.multiChain.incr).toHaveBeenCalledWith("wa:transcribing:conv-1");
+    // intake salva em SILÊNCIO (o turno/análise é a voz)
+    expect(t.mediaIntakeQueue.add).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ conversationId: "conv-1", suppressNotice: true }),
+      expect.anything(),
+    );
+    // análise (worker próprio) enfileirada com a legenda
+    expect(t.creativeVideoAnalyzeQueue.add).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ conversationId: "conv-1", caption: "coloque este vídeo na campanha D.A leads" }),
+      expect.anything(),
+    );
+    expect(t.sendToConversation).toHaveBeenCalledOnce(); // ack imediato
+    expect(t.redis.rpush).not.toHaveBeenCalled(); // a legenda NÃO entra no buffer aqui (o worker empurra após a visão)
   });
 
   it("mídia não-suportada: grava + aviso throttled, sem buffer/flush/transcrição", async () => {
