@@ -15,6 +15,7 @@ import type {
 import type { CreativeVisionResult } from "@trafego/shared";
 import { LLMProviderError } from "@trafego/shared/ports";
 import type { Logger } from "pino";
+import { downloadAsDataUrl } from "./download.js";
 
 export interface VisionResolverDeps {
   readonly db: Database;
@@ -161,13 +162,36 @@ export function createVisionResolver(deps: VisionResolverDeps): CreativeVisionPo
         .limit(1);
       if (cached) return cached.result;
 
-      // 2) miss → LLM multimodal. Falha/parse → degrada a null (não quebra a análise).
+      // 2) miss → baixa os frames http (fbcdn/CDN) como data URL base64 INLINE antes de montar a
+      // mensagem: a URL assinada rotaciona e, se entregue crua, o provider a busca server-side tarde
+      // e volta 410 Gone (`download.ts`). Baixamos aqui, no miss (nunca re-baixa cacheado), logo antes
+      // do fetch tardio do provider → janela menor. Degrada por frame (morto → dropa); zero frame
+      // válido → sem análise. Só o caminho de frames; `videoUrl` (intake, já data URL base64) intacto.
+      let visionInput = input;
+      let framesDropped = false;
+      if (!input.videoUrl && input.imageUrls.length > 0) {
+        const resolved = (
+          await Promise.all(input.imageUrls.map((u) => (u.startsWith("http") ? downloadAsDataUrl(u) : Promise.resolve(u))))
+        ).filter((u): u is string => u !== null);
+        if (resolved.length === 0) {
+          deps.logger.warn({ creativeId: input.creativeId }, "vision:frames indisponíveis (download falhou); sem análise de criativo");
+          return null;
+        }
+        // Falha de download costuma ser TRANSITÓRIA (fbcdn oscila). Se algum frame caiu, ainda
+        // analiso com o que veio (melhor que nada pro push deste run), mas NÃO cacheio essa análise
+        // parcial — senão ela ficaria colada no cache permanente (chaveado só por contentHash) e todo
+        // run futuro herdaria a versão pobre mesmo com os frames de volta.
+        framesDropped = resolved.length < input.imageUrls.length;
+        visionInput = { ...input, imageUrls: resolved };
+      }
+
+      // 3) miss → LLM multimodal. Falha/parse → degrada a null (não quebra a análise).
       let result: CreativeVisionResult;
       try {
         const completion = await deps.llm.completeStructured<RawVision>({
           // vídeo completo → modelo video-capable; frames/imagem → modelo de visão padrão.
           model: input.videoUrl ? (deps.videoModel ?? deps.model) : deps.model,
-          messages: buildVisionMessages(input),
+          messages: buildVisionMessages(visionInput),
           responseSchema: VISION_JSON_SCHEMA,
           responseSchemaName: "creative_vision",
           temperature: VISION_TEMPERATURE,
@@ -182,11 +206,14 @@ export function createVisionResolver(deps: VisionResolverDeps): CreativeVisionPo
         return null;
       }
 
-      // 3) grava no cache (idempotente por conteúdo+versão).
-      await deps.db
-        .insert(creativeVisionAnalyses)
-        .values({ contentHash: input.contentHash, analyzerVersion: deps.analyzerVersion, result })
-        .onConflictDoNothing();
+      // 4) grava no cache (idempotente por conteúdo+versão) — pula quando a análise foi parcial
+      // (algum frame caiu no download): não polui o cache permanente; o próximo run re-tenta.
+      if (!framesDropped) {
+        await deps.db
+          .insert(creativeVisionAnalyses)
+          .values({ contentHash: input.contentHash, analyzerVersion: deps.analyzerVersion, result })
+          .onConflictDoNothing();
+      }
       return result;
     },
   };
